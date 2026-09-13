@@ -68,11 +68,23 @@ DistributedTopology DistributedTopology::build(const StructuredMesh& mesh,
     std::vector<const ConnectivityPatch*> canonical;
     for (const auto& block : mesh.blocks()) {
         for (const auto& connection : block.connectivities) {
-            if (connection.receiver_block == connection.donor_block) {
-                throw TopologyError("self-connectivity is not supported by stage D");
-            }
             if (connection.receiver_block < connection.donor_block) {
                 canonical.push_back(&connection);
+            } else if (connection.receiver_block == connection.donor_block) {
+                const auto reciprocal_iterator = std::find_if(
+                    block.connectivities.begin(),
+                    block.connectivities.end(),
+                    [&](const ConnectivityPatch& candidate) {
+                        return &candidate != &connection
+                            && reciprocal(connection, candidate, block.cell_dimension());
+                    });
+                if (reciprocal_iterator != block.connectivities.end()) {
+                    if (connection_key(connection) < connection_key(*reciprocal_iterator)) {
+                        canonical.push_back(&connection);
+                    }
+                } else if (reciprocal(connection, connection, block.cell_dimension())) {
+                    canonical.push_back(&connection);
+                }
             }
         }
     }
@@ -100,7 +112,9 @@ DistributedTopology DistributedTopology::build(const StructuredMesh& mesh,
         }
 
         const auto connection_id = static_cast<ConnectionId>(index);
-        for (const auto* directed : {&forward, &*reverse_iterator}) {
+        std::vector<const ConnectivityPatch*> directed_connections {&forward};
+        if (&forward != &*reverse_iterator) directed_connections.push_back(&*reverse_iterator);
+        for (const auto* directed : directed_connections) {
             auto connection = *directed;
             connection.id = connection_id;
             connection.donor_rank = distribution.owner(connection.donor_block);
@@ -120,8 +134,12 @@ DistributedTopology DistributedTopology::build(const StructuredMesh& mesh,
     std::sort(result.exchanges_.begin(),
               result.exchanges_.end(),
               [](const DirectedExchange& lhs, const DirectedExchange& rhs) {
-                  return std::tuple {lhs.connection, lhs.halo.receiver_block}
-                  < std::tuple {rhs.connection, rhs.halo.receiver_block};
+                  return std::tuple {lhs.connection,
+                                     lhs.halo.receiver_block,
+                                     lhs.halo.connectivity_name}
+                      < std::tuple {rhs.connection,
+                                     rhs.halo.receiver_block,
+                                     rhs.halo.connectivity_name};
               });
     return result;
 }

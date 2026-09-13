@@ -1,7 +1,9 @@
 #include <wcns/mesh/metrics.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 
 namespace wcns {
 namespace {
@@ -101,8 +103,28 @@ void store_cell_center(StructuredBlock& block, int i, int j, int k, Vector3 cent
 
 void compute_2d_metrics(StructuredBlock& block)
 {
-    if (block.physical_dimension() != 2) {
-        throw GeometryError("2D metrics currently require two-dimensional physical space");
+    if (block.physical_dimension() == 3) {
+        // Some CGNS writers store planar 2D grids with XYZ coordinates.  The
+        // existing 2D metric formulas remain valid only for a constant-Z plane.
+        Real minimum_z = std::numeric_limits<Real>::infinity();
+        Real maximum_z = -std::numeric_limits<Real>::infinity();
+        const auto vertices = block.vertex_extent();
+        for (int j = 0; j < vertices.nj; ++j) {
+            for (int i = 0; i < vertices.ni; ++i) {
+                const Real z = block.coordinates.z(i, j, 0);
+                if (!std::isfinite(z)) {
+                    throw GeometryError("2D embedded grid contains a non-finite Z coordinate");
+                }
+                minimum_z = std::min(minimum_z, z);
+                maximum_z = std::max(maximum_z, z);
+            }
+        }
+        const Real scale = std::max({Real {1}, std::abs(minimum_z), std::abs(maximum_z)});
+        const Real tolerance = Real {512} * std::numeric_limits<Real>::epsilon() * scale;
+        if (maximum_z - minimum_z > tolerance) {
+            throw GeometryError(
+                "2D physical-dimension-3 grid must lie in a constant-Z Cartesian plane");
+        }
     }
     const auto cells = block.cell_extent();
 

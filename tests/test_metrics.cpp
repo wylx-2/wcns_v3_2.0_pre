@@ -42,4 +42,19 @@ void test_metrics()
     inverted.coordinates.y(0, 1, 0) = 1.0;
     inverted.coordinates.z.fill(0.0);
     WCNS_REQUIRE_THROWS(wcns::GeometryError, wcns::compute_metrics(inverted));
+
+    StructuredBlock embedded(3, "embedded", 0, 2, 3, {2, 2, 1}, 1);
+    embedded.coordinates.x(0, 0, 0) = 0.0;
+    embedded.coordinates.y(0, 0, 0) = 0.0;
+    embedded.coordinates.x(1, 0, 0) = 1.0;
+    embedded.coordinates.y(1, 0, 0) = 0.0;
+    embedded.coordinates.x(1, 1, 0) = 1.0;
+    embedded.coordinates.y(1, 1, 0) = 1.0;
+    embedded.coordinates.x(0, 1, 0) = 0.0;
+    embedded.coordinates.y(0, 1, 0) = 1.0;
+    embedded.coordinates.z.fill(4.0);
+    wcns::compute_metrics(embedded);
+    WCNS_REQUIRE_NEAR(embedded.cell_metrics.volume(0, 0, 0), 1.0, 1.0e-15);
+    embedded.coordinates.z(1, 1, 0) = 4.1;
+    WCNS_REQUIRE_THROWS(wcns::GeometryError, wcns::compute_metrics(embedded));
 }

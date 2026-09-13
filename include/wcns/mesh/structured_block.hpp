@@ -5,6 +5,7 @@
 #include <wcns/mesh/geometry.hpp>
 #include <wcns/mesh/topology.hpp>
 #include <wcns/solver/flow_fields.hpp>
+#include <wcns/solver/turbulence_fields.hpp>
 
 #include <stdexcept>
 #include <string>
@@ -63,6 +64,7 @@ public:
     std::vector<BoundaryPatch> boundaries;
     std::vector<ConnectivityPatch> connectivities;
     FlowFields flow;
+    TurbulenceFieldSet turbulence;
 
 private:
     static BlockId checked_id(BlockId id)

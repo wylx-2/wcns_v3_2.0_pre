@@ -42,6 +42,7 @@ public:
     [[nodiscard]] std::string broadcast_string(std::string value, RankId root = 0) const;
     [[nodiscard]] std::vector<Real> gather_reals(std::vector<Real> local_values,
                                                  RankId root = 0) const;
+    [[nodiscard]] std::vector<Real> all_gather_reals(std::vector<Real> local_values) const;
     [[nodiscard]] std::vector<Real> scatter_reals(const std::vector<Real>& root_values,
                                                   const std::vector<std::size_t>& counts,
                                                   RankId root = 0) const;

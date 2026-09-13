@@ -323,6 +323,12 @@ Real quantity_scale_factor(const QuantityDescriptor& information,
     case QuantityScale::Temperature: return context.reference.temperature();
     case QuantityScale::Momentum: return context.reference.density() * context.reference.velocity();
     case QuantityScale::Viscosity: return context.reference.viscosity();
+    case QuantityScale::KinematicViscosity:
+        return context.reference.velocity() * context.reference.length();
+    case QuantityScale::InverseTime:
+        return context.reference.velocity() / context.reference.length();
+    case QuantityScale::Dissipation:
+        return std::pow(context.reference.velocity(), 3) / context.reference.length();
     case QuantityScale::LengthPower:
         return std::pow(context.reference.length(),
                         information.length_power == -1 ? dimension : information.length_power);
@@ -466,6 +472,56 @@ void FieldQuantityRegistry::register_quantity(std::shared_ptr<const IFieldQuanti
     if (!quantities_.emplace(name, std::move(quantity)).second) {
         throw std::invalid_argument("duplicate field quantity: " + name);
     }
+}
+
+void FieldQuantityRegistry::register_turbulence_field(
+    const TurbulenceFieldDescriptor& model_descriptor)
+{
+    model_descriptor.validate();
+    QuantityDescriptor descriptor;
+    descriptor.name = model_descriptor.name;
+    switch (model_descriptor.scale) {
+    case TurbulenceFieldScale::Dimensionless:
+        descriptor.scale = QuantityScale::Dimensionless;
+        break;
+    case TurbulenceFieldScale::VelocitySquared:
+        descriptor.scale = QuantityScale::SpecificEnergy;
+        descriptor.dimensional_unit = "m2/s2";
+        break;
+    case TurbulenceFieldScale::KinematicViscosity:
+        descriptor.scale = QuantityScale::KinematicViscosity;
+        descriptor.dimensional_unit = "m2/s";
+        break;
+    case TurbulenceFieldScale::DynamicViscosity:
+        descriptor.scale = QuantityScale::Viscosity;
+        descriptor.dimensional_unit = "Pa s";
+        break;
+    case TurbulenceFieldScale::InverseTime:
+        descriptor.scale = QuantityScale::InverseTime;
+        descriptor.dimensional_unit = "1/s";
+        break;
+    case TurbulenceFieldScale::Dissipation:
+        descriptor.scale = QuantityScale::Dissipation;
+        descriptor.dimensional_unit = "m2/s3";
+        break;
+    case TurbulenceFieldScale::Length:
+        descriptor.scale = QuantityScale::LengthPower;
+        descriptor.length_power = 1;
+        descriptor.dimensional_unit = "m";
+        break;
+    }
+    const auto name = model_descriptor.name;
+    register_quantity(field(std::move(descriptor),
+                            [name](const StructuredBlock& block,
+                                   const MetricField&,
+                                   Index3 index,
+                                   const QuantityContext&) {
+                                if (!block.turbulence.contains(name)) {
+                                    throw PhysicsError("block is missing turbulence field: "
+                                                       + name);
+                                }
+                                return block.turbulence.at(index, name);
+                            }));
 }
 
 bool FieldQuantityRegistry::contains(const std::string& name) const noexcept

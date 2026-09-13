@@ -124,6 +124,38 @@ RunMode parse_run_mode(const std::string& value)
     throw CaseConfigurationError("unknown run mode: " + value);
 }
 
+TimeIntegratorKind parse_time_integrator(const std::string& value)
+{
+    if (value == "ssprk3") return TimeIntegratorKind::SspRk3;
+    if (value == "lu_sgs") return TimeIntegratorKind::LuSgs;
+    throw CaseConfigurationError("unknown time integrator: " + value);
+}
+
+PreconditionerKind parse_preconditioner(const std::string& value)
+{
+    if (value == "none") return PreconditionerKind::None;
+    if (value == "weiss_smith") return PreconditionerKind::WeissSmith;
+    throw CaseConfigurationError("unknown preconditioner: " + value);
+}
+
+TurbulenceModelKind parse_turbulence_model(const std::string& value)
+{
+    try {
+        return turbulence_model_kind(value);
+    } catch (const std::invalid_argument&) {
+        throw CaseConfigurationError("unknown turbulence model: " + value);
+    }
+}
+
+WallTreatment parse_wall_treatment(const std::string& value)
+{
+    try {
+        return wall_treatment(value);
+    } catch (const std::invalid_argument&) {
+        throw CaseConfigurationError("unknown turbulence wall treatment: " + value);
+    }
+}
+
 FieldOutputFormat parse_field_output_format(const std::string& value)
 {
     if (value == "cgns") return FieldOutputFormat::Cgns;
@@ -244,6 +276,11 @@ const std::set<std::string>& fixed_keys()
         "transport.sutherland.reference_viscosity_ratio",
         "transport.sutherland.temperature",
         "transport.sutherland.temperature_ratio",
+        "turbulence.model",
+        "turbulence.prandtl",
+        "turbulence.wall_treatment",
+        "time.integrator",
+        "preconditioner.type",
         "gas.gamma",
         "gas.molar_mass",
         "gas.specific_gas_constant",
@@ -580,6 +617,24 @@ const char* run_mode_name(RunMode mode)
     case RunMode::Unsteady: return "unsteady";
     }
     throw CaseConfigurationError("invalid run mode");
+}
+
+const char* time_integrator_name(TimeIntegratorKind integrator)
+{
+    switch (integrator) {
+    case TimeIntegratorKind::SspRk3: return "ssprk3";
+    case TimeIntegratorKind::LuSgs: return "lu_sgs";
+    }
+    throw CaseConfigurationError("invalid time integrator");
+}
+
+const char* preconditioner_name(PreconditionerKind preconditioner)
+{
+    switch (preconditioner) {
+    case PreconditionerKind::None: return "none";
+    case PreconditionerKind::WeissSmith: return "weiss_smith";
+    }
+    throw CaseConfigurationError("invalid preconditioner");
 }
 
 const char* field_output_format_name(FieldOutputFormat format)
@@ -1145,6 +1200,38 @@ std::string OutputConfig::summary() const
     return result.str();
 }
 
+void TimeAlgorithmConfig::validate() const
+{
+    static_cast<void>(time_integrator_name(integrator));
+}
+
+std::string TimeAlgorithmConfig::summary() const
+{
+    validate();
+    return std::string("time(integrator=") + time_integrator_name(integrator) + ')';
+}
+
+std::string TimeAlgorithmConfig::restart_signature() const
+{
+    return "time_v2;integrator=" + std::string(time_integrator_name(integrator));
+}
+
+void PreconditionerConfig::validate() const
+{
+    static_cast<void>(preconditioner_name(kind));
+}
+
+std::string PreconditionerConfig::summary() const
+{
+    validate();
+    return std::string("preconditioner(type=") + preconditioner_name(kind) + ')';
+}
+
+std::string PreconditionerConfig::restart_signature() const
+{
+    return "preconditioner_v1;type=" + std::string(preconditioner_name(kind));
+}
+
 void CaseRunConfig::validate() const
 {
     if (!std::isfinite(cfl) || cfl <= 0.0) {
@@ -1180,10 +1267,46 @@ CaseConfig CaseConfig::from_text(const std::string& text)
 
     CaseConfig result;
     const auto version = parse_integer(require(entries, "schema_version"), "schema_version");
-    if (version != supported_schema_version) {
+    if (version < minimum_schema_version || version > supported_schema_version) {
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     result.schema_version = static_cast<int>(version);
+    const std::array<const char*, 5> v2_keys {{
+        "turbulence.model",
+        "turbulence.prandtl",
+        "turbulence.wall_treatment",
+        "time.integrator",
+        "preconditioner.type",
+    }};
+    if (version == 1) {
+        for (const auto* key : v2_keys) {
+            if (entries.find(key) != entries.end()) {
+                throw CaseConfigurationError(std::string("schema 1 does not accept v2 key: ")
+                                             + key);
+            }
+        }
+    } else {
+        result.turbulence.kind
+            = parse_turbulence_model(require(entries, "turbulence.model"));
+        const bool has_turbulence_prandtl = entries.find("turbulence.prandtl") != entries.end();
+        const bool has_wall_treatment
+            = entries.find("turbulence.wall_treatment") != entries.end();
+        if (result.turbulence.kind == TurbulenceModelKind::None
+            && (has_turbulence_prandtl || has_wall_treatment)) {
+            throw CaseConfigurationError(
+                "turbulence.model=none does not accept model-specific turbulence keys");
+        }
+        result.turbulence.turbulent_prandtl = optional_real(
+            entries, "turbulence.prandtl", result.turbulence.turbulent_prandtl);
+        if (has_wall_treatment) {
+            result.turbulence.wall_treatment
+                = parse_wall_treatment(require(entries, "turbulence.wall_treatment"));
+        }
+        result.time_algorithm.integrator
+            = parse_time_integrator(require(entries, "time.integrator"));
+        result.preconditioner.kind
+            = parse_preconditioner(require(entries, "preconditioner.type"));
+    }
     result.case_name = require(entries, "case.name");
     result.mesh_path = require(entries, "mesh.path");
     result.profile = ProfileFactory::from_string(require(entries, "algorithm.profile")).kind();
@@ -1551,7 +1674,7 @@ CaseConfig CaseConfig::from_file(const std::string& path)
 
 void CaseConfig::validate() const
 {
-    if (schema_version != supported_schema_version) {
+    if (schema_version < minimum_schema_version || schema_version > supported_schema_version) {
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     if (case_name.empty() || mesh_path.empty()) {
@@ -1560,6 +1683,28 @@ void CaseConfig::validate() const
     const auto gas_model = make_gas_model();
     static_cast<void>(make_reference_scales(gas_model));
     transport.validate();
+    try {
+        turbulence.validate();
+        time_algorithm.validate();
+        preconditioner.validate();
+    } catch (const std::invalid_argument& error) {
+        throw CaseConfigurationError(error.what());
+    }
+    if (schema_version == 2) {
+        if (turbulence.kind != TurbulenceModelKind::None) {
+            throw CaseConfigurationError(
+                std::string("turbulence model is reserved but not implemented in stage W: ")
+                + turbulence_model_name(turbulence.kind));
+        }
+        if (time_algorithm.integrator != TimeIntegratorKind::SspRk3) {
+            throw CaseConfigurationError(
+                "time.integrator=lu_sgs is reserved for stage AA and cannot run yet");
+        }
+        if (preconditioner.kind != PreconditionerKind::None) {
+            throw CaseConfigurationError(
+                "preconditioner.type=weiss_smith is reserved for stage AA and cannot run yet");
+        }
+    }
     static_cast<void>(make_profile());
     partition.validate(profile);
     initial.validate();
@@ -1686,6 +1831,10 @@ std::string CaseConfig::summary() const
     for (const auto& [name, data] : physical_data) {
         result << ",boundary_data." << name << '(' << data.summary() << ')';
     }
+    if (schema_version == 2) {
+        result << ',' << turbulence.summary() << ',' << time_algorithm.summary() << ','
+               << preconditioner.summary();
+    }
     result << ',' << source_terms.summary() << ',' << run.summary() << ',' << output.summary()
            << ",restart.path=" << (restart_path.empty() ? "<none>" : restart_path) << ",digest=0x"
            << std::hex << digest_ << ')';
@@ -1703,7 +1852,9 @@ std::string CaseConfig::legacy_v1_restart_signature() const
         return lhs.first < rhs.first;
     });
     std::ostringstream result;
-    result << "schema=" << schema_version << ";profile=" << make_profile().restart_signature()
+    // This signature is the schema-1 compatibility identity even when the
+    // active parser input is schema 2 with the exact none/SSPRK3/none mapping.
+    result << "schema=1;profile=" << make_profile().restart_signature()
            << ";flux_difference=" << flux_difference_mode_name(flux_difference)
            << ";reconstruction=" << reconstruction.restart_signature()
            << ";riemann=" << riemann.restart_signature()
@@ -1728,7 +1879,13 @@ std::string CaseConfig::legacy_v1_restart_signature() const
 
 std::string CaseConfig::restart_signature() const
 {
-    return legacy_v1_restart_signature() + ";transport=" + transport.restart_signature();
+    std::string result
+        = legacy_v1_restart_signature() + ";transport=" + transport.restart_signature();
+    if (schema_version == 2) {
+        result += ";" + turbulence.restart_signature() + ";"
+            + time_algorithm.restart_signature() + ";" + preconditioner.restart_signature();
+    }
+    return result;
 }
 
 } // namespace wcns

@@ -504,11 +504,19 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
             const auto stored_signature = required(descriptors, "WCNS_RestartSignature");
             const bool legacy_default_transport
                 = config_.transport.restart_signature() == TransportConfig {}.restart_signature();
+            const auto schema_one_signature = config_.legacy_v1_restart_signature()
+                + ";transport=" + config_.transport.restart_signature();
+            const bool schema_two_none_compatibility = config_.schema_version == 2
+                && config_.turbulence.kind == TurbulenceModelKind::None
+                && config_.time_algorithm.integrator == TimeIntegratorKind::SspRk3
+                && config_.preconditioner.kind == PreconditionerKind::None
+                && stored_signature == schema_one_signature;
             if (stored_signature != config_.restart_signature()
+                && !schema_two_none_compatibility
                 && !(legacy_default_transport
                      && stored_signature == config_.legacy_v1_restart_signature())) {
                 throw std::runtime_error(
-                    "checkpoint numerical signature differs (including transport)");
+                    "checkpoint numerical signature differs (including v2 algorithms)");
             }
             root.restored.initial.step = parse_size(required(descriptors, "WCNS_Step"), "step");
             root.restored.initial.time = parse_real(required(descriptors, "WCNS_Time"), "time");

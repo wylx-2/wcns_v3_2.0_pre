@@ -173,12 +173,16 @@ add_library(wcns_solver STATIC
     src/solver/spatial_operator.cpp
     src/solver/time_integrator.cpp
     src/solver/transport_model.cpp
+    src/solver/turbulence_fields.cpp
+    src/solver/turbulence_model.cpp
+    src/solver/turbulence_transport.cpp
     src/solver/viscous_flux.cpp
     src/solver/viscous_gradient.cpp
     src/solver/viscous_halo.cpp
     src/solver/viscous_boundary.cpp
     src/solver/viscous_operator.cpp
     src/solver/viscous_wcns_solver.cpp
+    src/solver/wall_distance.cpp
     src/solver/wcns_reconstruction.cpp
 )
 add_library(wcns::solver ALIAS wcns_solver)

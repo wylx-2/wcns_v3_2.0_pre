@@ -66,10 +66,65 @@ output.checkpoint.enabled = false
 )";
 }
 
+std::string valid_v2_config()
+{
+    auto result = valid_config();
+    const auto version = result.find("schema_version = 1");
+    result.replace(version, std::string("schema_version = 1").size(), "schema_version = 2");
+    const auto line_end = result.find('\n', version);
+    result.insert(line_end + 1,
+                  "turbulence.model = none\n"
+                  "time.integrator = ssprk3\n"
+                  "preconditioner.type = none\n");
+    return result;
+}
+
 } // namespace
 
 void test_case_config()
 {
+    {
+        const auto config = wcns::CaseConfig::from_text(valid_v2_config());
+        WCNS_REQUIRE(config.schema_version == 2);
+        WCNS_REQUIRE(config.turbulence.kind == wcns::TurbulenceModelKind::None);
+        WCNS_REQUIRE(config.time_algorithm.integrator == wcns::TimeIntegratorKind::SspRk3);
+        WCNS_REQUIRE(config.preconditioner.kind == wcns::PreconditionerKind::None);
+        WCNS_REQUIRE(config.summary().find("turbulence(model=none") != std::string::npos);
+        WCNS_REQUIRE(config.restart_signature().find("turbulence_v1") != std::string::npos);
+        const auto schema_one = wcns::CaseConfig::from_text(valid_config());
+        WCNS_REQUIRE(config.legacy_v1_restart_signature()
+                         + ";transport=" + config.transport.restart_signature()
+                     == schema_one.restart_signature());
+
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(
+                                valid_config() + "turbulence.model = none\n"));
+        auto missing = valid_v2_config();
+        const auto preconditioner = missing.find("preconditioner.type = none\n");
+        missing.erase(preconditioner, std::string("preconditioner.type = none\n").size());
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError, wcns::CaseConfig::from_text(missing));
+
+        auto model_key = valid_v2_config();
+        const auto model = model_key.find("turbulence.model = none");
+        model_key.replace(model,
+                          std::string("turbulence.model = none").size(),
+                          "turbulence.model = sa_neg");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(model_key));
+
+        auto none_parameter = valid_v2_config();
+        none_parameter += "turbulence.prandtl = 0.9\n";
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(none_parameter));
+
+        auto implicit = valid_v2_config();
+        const auto integrator = implicit.find("time.integrator = ssprk3");
+        implicit.replace(integrator,
+                         std::string("time.integrator = ssprk3").size(),
+                         "time.integrator = lu_sgs");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(implicit));
+    }
     {
         const auto config = wcns::CaseConfig::from_text(valid_config());
         WCNS_REQUIRE(config.schema_version == 1);
