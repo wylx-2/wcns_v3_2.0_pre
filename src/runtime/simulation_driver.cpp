@@ -1,5 +1,7 @@
 #include <wcns/runtime/simulation_driver.hpp>
 
+#include <wcns/solver/rans_two_equation_transport.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -27,21 +29,21 @@ void report_solver_exception(const MpiRuntime& mpi, const char* phase, const std
 template <class Solver> SolverDiagnostics collect_diagnostics(const Solver& solver)
 {
     const auto robustness = solver.global_robustness_diagnostics();
-    return {
-        solver.global_reconstruction_fallback_count(),
-        solver.global_riemann_face_count(),
-        solver.global_riemann_fallback_count(),
-        robustness.face_levels,
-        robustness.troubled_cells,
-        robustness.local_recomputations,
-        robustness.step_retries,
-        robustness.proposed_time_step,
-        robustness.accepted_time_step,
-        robustness.minimum_density,
-        robustness.minimum_pressure,
-        robustness.minimum_temperature,
-        robustness.minimum_internal_energy,
-    };
+    SolverDiagnostics result;
+    result.reconstruction_fallbacks = solver.global_reconstruction_fallback_count();
+    result.riemann_faces = solver.global_riemann_face_count();
+    result.riemann_fallbacks = solver.global_riemann_fallback_count();
+    result.robustness_face_levels = robustness.face_levels;
+    result.robustness_troubled_cells = robustness.troubled_cells;
+    result.robustness_local_recomputations = robustness.local_recomputations;
+    result.robustness_step_retries = robustness.step_retries;
+    result.robustness_proposed_time_step = robustness.proposed_time_step;
+    result.robustness_accepted_time_step = robustness.accepted_time_step;
+    result.minimum_density = robustness.minimum_density;
+    result.minimum_pressure = robustness.minimum_pressure;
+    result.minimum_temperature = robustness.minimum_temperature;
+    result.minimum_internal_energy = robustness.minimum_internal_energy;
+    return result;
 }
 
 } // namespace
@@ -173,13 +175,15 @@ ResidualNorms ViscousSimulationSolver::residual_norms() const
     auto result
         = compute_global_residual_norms(mpi_, local_blocks_, metrics_, partition_, profile_);
     if (!solver_.turbulence_residuals().empty()) {
+        const int model_components
+            = solver_.turbulence_residuals().begin()->second.components();
         append_global_model_residual_norms(mpi_,
                                            local_blocks_,
                                            metrics_,
                                            partition_,
                                            profile_,
                                            solver_.turbulence_residuals(),
-                                           1,
+                                           model_components,
                                            result);
     }
     return result;
@@ -187,7 +191,14 @@ ResidualNorms ViscousSimulationSolver::residual_norms() const
 
 SolverDiagnostics ViscousSimulationSolver::diagnostics() const
 {
-    return collect_diagnostics(solver_);
+    auto result = collect_diagnostics(solver_);
+    const auto wall = solver_.global_wall_function_diagnostics();
+    result.wall_function_faces = wall.face_count;
+    result.wall_function_out_of_range = wall.out_of_range_count;
+    result.wall_function_minimum_y_plus = wall.minimum_y_plus;
+    result.wall_function_maximum_y_plus = wall.maximum_y_plus;
+    result.turbulence_floor_repairs = solver_.global_turbulence_floor_repairs();
+    return result;
 }
 
 void CompositeSimulationObserver::add(ISimulationObserver& observer)

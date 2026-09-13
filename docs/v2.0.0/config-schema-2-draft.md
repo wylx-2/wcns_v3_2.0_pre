@@ -1,10 +1,9 @@
 # WCNS schema 2 配置草案（阶段 V 冻结输入）
 
-状态：**阶段 X-A 已扩展 schema 2；项目负责人已批准把 AA 前置并授权连续推进，AA 尚未
-开始实现。** 当前可运行湍流选择为 `none|sa_neg`，时间推进仍为 `ssprk3`，预处理仍为
-`none`；LU-SGS/预处理键先由 AA 为层流/SA 实现，SST/k-epsilon/LES 及其隐式组合再由 Y/Z
-补齐。尚未实现的键必须明确拒绝而不是静默降级。每次扩展必须同步合法/非法配置测试、summary、
-manifest 和 restart signature。
+状态：**AA 已实现 LU-SGS、BDF2 双时间和 Weiss--Smith；阶段 Y 候选已实现 SST-2003m、
+实验性标准 k-epsilon 与两方程隐式耦合，正在执行定量算例卡口。** 当前可运行选择为
+`none|sa_neg|k_omega_sst|k_epsilon`；LES 键仍由 Z 实现，尚未实现的键必须明确拒绝而不是
+静默降级。每次扩展必须同步合法/非法配置测试、summary、manifest 和 restart signature。
 
 ## 1. 兼容迁移
 
@@ -36,9 +35,14 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | 键 | 候选值/类型 | 数值签名 | 约束 |
 |---|---|---|---|
 | `turbulence.model` | `none|sa_neg|k_omega_sst|k_epsilon|smagorinsky|scale_similarity|mixed_smagorinsky_similarity|dynamic_smagorinsky|wale` | 是 | LES 仅 3D unsteady |
+| `turbulence.experimental` | bool | 是 | 当前只允许 k-epsilon，且必须为 true |
 | `turbulence.prandtl` | positive real | 是 | RANS 模型启用时 |
 | `turbulence.wall_treatment` | `resolved|wall_function` | 是 | k-epsilon 必须 wall_function |
-| `turbulence.farfield.*` | 模型专属正量 | 是 | 只允许当前模型所需键 |
+| `turbulence.freestream.intensity` | real in `(0,1]` | 是 | SST/k-epsilon |
+| `turbulence.freestream.length_scale` | positive real | 是 | SST/k-epsilon |
+| `turbulence.model_floor` | positive real | 是 | SST/k-epsilon；运算保护及有计数的接受态正值投影 |
+| `turbulence.two_equation.source_treatment` | `explicit|local_implicit` | 是 | SST/k-epsilon |
+| `turbulence.wall_function.y_plus_min/max` | positive real, max > min | 是 | wall_function 适用区间与诊断 |
 | `turbulence.sa.farfield_nu_tilde_ratio` | real in `[3,5]` | 是 | 仅 `sa_neg`；基准 3 |
 | `turbulence.sa.source_treatment` | `explicit|local_implicit` | 是 | 仅 `sa_neg`；只处理局部源 Jacobian |
 | `les.filter.type` | `box3_tensor` | 是 | LES 必需 |
@@ -56,8 +60,8 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | `time.dual_time.absolute_tolerance` | positive real | 是 | 默认 `1e-10` |
 | `time.dual_time.relative_tolerance` | positive real | 是 | 默认 `1e-8` |
 | `time.dual_time.cfl` | positive real | 是 | 默认 5 |
-| `lu_sgs.jacobian` | `scalar_spectral` | 是 | 首版唯一支持值 |
-| `lu_sgs.sweeps` | integer 1 | 是 | 一次内迭代一个完整前后扫 |
+| `lu_sgs.jacobian` | `scalar_spectral` | 是 | 首版唯一值；共享标量对角，平均流面块保留 Euler $A_n$ |
+| `lu_sgs.sweeps` | integer in `[1,4]` | 是 | 默认 1；额外扫为同一线性系统的缺陷修正 |
 | `lu_sgs.relaxation` | real in `(0,1]` | 是 | 默认 1；非法候选另做全局回溯 |
 | `preconditioner.type` | `none|weiss_smith` | 是 | weiss_smith 只配 Roe+LU-SGS |
 | `preconditioner.mach_cutoff` | real in `(0,1]` | 是 | Weiss--Smith 默认 `1e-3` |
@@ -90,11 +94,36 @@ schema_version = 2
 turbulence.model = k_omega_sst
 turbulence.prandtl = 0.9
 turbulence.wall_treatment = resolved
+turbulence.freestream.intensity = 0.0003872983346207417
+turbulence.freestream.length_scale = 0.000006928203230275509
+turbulence.model_floor = 1e-12
+turbulence.two_equation.source_treatment = local_implicit
 time.integrator = lu_sgs
-lu_sgs.jacobian = block_source
+lu_sgs.jacobian = scalar_spectral
 lu_sgs.sweeps = 1
 preconditioner.type = weiss_smith
 algorithm.riemann = roe
+run.mode = steady
+```
+
+实验性标准 k-epsilon：
+
+```text
+schema_version = 2
+turbulence.model = k_epsilon
+turbulence.experimental = true
+turbulence.prandtl = 0.9
+turbulence.wall_treatment = wall_function
+turbulence.freestream.intensity = 0.01
+turbulence.freestream.length_scale = 0.1
+turbulence.model_floor = 1e-12
+turbulence.two_equation.source_treatment = local_implicit
+turbulence.wall_function.y_plus_min = 30
+turbulence.wall_function.y_plus_max = 300
+time.integrator = lu_sgs
+lu_sgs.jacobian = scalar_spectral
+lu_sgs.sweeps = 1
+preconditioner.type = none
 run.mode = steady
 ```
 
@@ -127,6 +156,8 @@ run.mode = unsteady
 | Weiss--Smith + HLLC/Rusanov | v2 首版只支持 Roe |
 | Weiss--Smith + SSPRK3 | 预处理伪时间系统不完整 |
 | k-epsilon + resolved | 标准高 Re 模型壁面条件不适用 |
+| k-epsilon 未显式给出 `turbulence.experimental=true` | 当前物理证据不足以开放默认配置 |
+| 非 k-epsilon + `turbulence.experimental` | 实验声明不能污染其他模型身份 |
 | `none` + 任意 RANS/LES 专属键 | 模型无关参数污染签名 |
 | dynamic model 缺 test filter | Germano 恒等式不完整 |
 | 非动态模型出现 `les.dynamic.*` | 无效/误导参数 |

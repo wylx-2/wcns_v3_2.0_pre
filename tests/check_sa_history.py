@@ -24,6 +24,7 @@ def main() -> int:
         "nu_tilde_linf",
         "nu_tilde_reference_linf",
         "nu_tilde_normalized_linf",
+        "nu_tilde_floor_repairs",
     }
     if not required.issubset(header):
         raise SystemExit(f"SA history is missing columns: {sorted(required - set(header))}")

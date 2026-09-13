@@ -71,6 +71,7 @@ void test_boundary_face_physics();
 void test_quantity_registry();
 void test_turbulence_fields();
 void test_turbulence_model_interface();
+void test_two_equation_turbulence_models();
 void test_sa_negative_model();
 void test_turbulence_transport_interface();
 void test_turbulence_viscous_coupling();
@@ -156,6 +157,7 @@ int main()
         test_quantity_registry();
         test_turbulence_fields();
         test_turbulence_model_interface();
+        test_two_equation_turbulence_models();
         test_sa_negative_model();
         test_turbulence_transport_interface();
         test_turbulence_viscous_coupling();

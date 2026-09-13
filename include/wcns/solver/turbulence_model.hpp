@@ -44,8 +44,14 @@ enum class TurbulenceSourceTreatment {
 struct TurbulenceModelConfig {
     TurbulenceModelKind kind = TurbulenceModelKind::None;
     WallTreatment wall_treatment = WallTreatment::Resolved;
+    bool experimental = false;
     Real turbulent_prandtl = 0.9;
     Real sa_farfield_nu_tilde_ratio = 3.0;
+    Real freestream_turbulence_intensity = 0.01;
+    Real freestream_length_scale = 0.1;
+    Real model_floor = 1.0e-12;
+    Real wall_function_y_plus_min = 30.0;
+    Real wall_function_y_plus_max = 300.0;
     TurbulenceSourceTreatment source_treatment = TurbulenceSourceTreatment::Explicit;
 
     void validate() const;

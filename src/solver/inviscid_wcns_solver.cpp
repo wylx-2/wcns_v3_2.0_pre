@@ -123,6 +123,33 @@ ImplicitIncrementSet form_implicit_increments(
                         local_count += 1.0;
                         ++offset;
                     }
+                    if (riemann_parameters.weiss_smith) {
+                        TemperaturePrimitiveState temperature_state {};
+                        ConservativeState residual {};
+                        for (int component = 0; component < euler_components; ++component) {
+                            const auto index = static_cast<std::size_t>(component);
+                            temperature_state[index]
+                                = block.flow.temperature_primitive(i, j, k, component);
+                            residual[index] = rhs(i, j, k, component);
+                        }
+                        const auto pressure_state = pressure_primitive(temperature_state,
+                                                                       gas,
+                                                                       reference,
+                                                                       floors,
+                                                                       block.cell_dimension());
+                        const auto transformed = weiss_smith_precondition_residual(
+                            pressure_state,
+                            residual,
+                            gas,
+                            floors,
+                            riemann_parameters.preconditioner,
+                            0.0,
+                            block.cell_dimension());
+                        for (int component = 0; component < euler_components; ++component) {
+                            rhs(i, j, k, component)
+                                = transformed[static_cast<std::size_t>(component)];
+                        }
+                    }
                 }
             }
         }
@@ -135,15 +162,36 @@ ImplicitIncrementSet form_implicit_increments(
                                                          reference,
                                                          floors,
                                                          pseudo_cfl,
-                                                         physical_diagonal,
+                                                         preconditioner == nullptr
+                                                             ? physical_diagonal
+                                                             : 0.0,
                                                          preconditioner);
-        result.fields.emplace(
-            block.id(),
-            solve_scalar_lu_sgs(rhs,
-                                system.diagonal,
-                                system.coupling,
-                                block.cell_dimension(),
-                                iteration));
+        if (preconditioner != nullptr && physical) {
+            const auto diagonal_blocks = build_preconditioned_time_diagonal_blocks(
+                block,
+                metrics.at(block.id()),
+                gas,
+                reference,
+                floors,
+                system.diagonal,
+                physical_diagonal,
+                *preconditioner);
+            result.fields.emplace(
+                block.id(),
+                solve_block_lu_sgs(rhs,
+                                   diagonal_blocks,
+                                   system.coupling,
+                                   block.cell_dimension(),
+                                   iteration));
+        } else {
+            result.fields.emplace(
+                block.id(),
+                solve_scalar_lu_sgs(rhs,
+                                    system.diagonal,
+                                    system.coupling,
+                                    block.cell_dimension(),
+                                    iteration));
+        }
     }
     const Real global_square_sum = mpi.sum(local_square_sum);
     const Real global_count = mpi.sum(local_count);
@@ -163,7 +211,7 @@ Real commit_implicit_mean_flow(const MpiRuntime& mpi,
                                Real time)
 {
     const auto baseline = capture_conservative_state(blocks);
-    for (int backtrack = 0; backtrack <= 7; ++backtrack) {
+    for (int backtrack = 0; backtrack <= 20; ++backtrack) {
         const Real relaxation = std::ldexp(1.0, -backtrack);
         auto candidate = baseline;
         for (std::size_t block_index = 0; block_index < blocks.size(); ++block_index) {

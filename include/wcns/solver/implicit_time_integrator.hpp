@@ -41,7 +41,20 @@ struct ScalarSpectralSystem {
     Real physical_time_diagonal = 0.0,
     const WeissSmithParameters* preconditioner = nullptr,
     Real viscous_preconditioner_scale = 0.0,
-    const Field<Real>* additional_cell_spectral_radius = nullptr);
+    const Field<Real>* additional_face_coupling = nullptr);
+
+// Adds the physical BDF term alpha*Gamma_0*Gamma_p^{-1} to a scalar-spectral
+// pseudo-time diagonal.  The scalar input must not already contain alpha.
+[[nodiscard]] Field<Real> build_preconditioned_time_diagonal_blocks(
+    const StructuredBlock& block,
+    const MetricField& metric,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    const NumericalFloors& floors,
+    const Field<Real>& scalar_diagonal,
+    Real physical_time_diagonal,
+    const WeissSmithParameters& preconditioner,
+    Real viscous_preconditioner_scale = 0.0);
 
 // Coupling components are lower/upper I, lower/upper J, lower/upper K.
 // The diagonal may have one component (shared scalar spectral radius) or one
@@ -51,6 +64,35 @@ struct ScalarSpectralSystem {
                                               const Field<Real>& coupling,
                                               int dimension,
                                               const LuSgsIterationConfig& config = {});
+
+// diagonal_blocks stores a dense row-major block for every cell. Spatial
+// neighbour coupling remains scalar-spectral and therefore multiplies the
+// identity; source-term cross coupling is retained inside each dense block.
+[[nodiscard]] Field<Real> solve_block_lu_sgs(const Field<Real>& right_hand_side,
+                                             const Field<Real>& diagonal_blocks,
+                                             const Field<Real>& coupling,
+                                             int dimension,
+                                             const LuSgsIterationConfig& config = {});
+
+// Builds dense Euler A+/(-A-) neighbour blocks while retaining the same
+// scalar spectral diagonal used by the baseline LU-SGS approximation.
+[[nodiscard]] Field<Real> build_euler_face_coupling_blocks(
+    const StructuredBlock& block,
+    const MetricField& metric,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    const NumericalFloors& floors,
+    const Field<Real>* additional_face_coupling = nullptr);
+
+// Face blocks are row-major matrices ordered lower/upper I,J,K.  The diagonal
+// remains scalar, so this captures Euler characteristic coupling without a
+// per-cell dense factorization.
+[[nodiscard]] Field<Real> solve_face_block_lu_sgs(
+    const Field<Real>& right_hand_side,
+    const Field<Real>& diagonal,
+    const Field<Real>& face_blocks,
+    int dimension,
+    const LuSgsIterationConfig& config = {});
 
 enum class BdfOrder {
     First = 1,

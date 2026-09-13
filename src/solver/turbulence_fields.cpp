@@ -65,6 +65,33 @@ std::string TurbulenceFieldDescriptor::signature() const
     return result.str();
 }
 
+TurbulenceFloorProjection
+project_positive_turbulence_state(Real conservative,
+                                  Real density,
+                                  const TurbulenceFieldDescriptor& descriptor)
+{
+    descriptor.validate();
+    if (!descriptor.strictly_positive) {
+        throw std::invalid_argument(
+            "positive turbulence projection requires a strictly-positive descriptor");
+    }
+    if (!std::isfinite(conservative) || !std::isfinite(density) || density <= 0.0) {
+        throw std::invalid_argument(
+            "positive turbulence projection requires finite conservative state and density");
+    }
+    const Real specific = conservative / density;
+    if (!std::isfinite(specific)) {
+        throw std::invalid_argument(
+            "positive turbulence projection produced a non-finite specific state");
+    }
+    if (specific > descriptor.lower_bound) {
+        return {conservative, specific, false};
+    }
+    const Real projected
+        = std::nextafter(descriptor.lower_bound, std::numeric_limits<Real>::infinity());
+    return {density * projected, projected, true};
+}
+
 TurbulenceFieldSet::TurbulenceFieldSet(
     Extent3 extent,
     int ghost_width,

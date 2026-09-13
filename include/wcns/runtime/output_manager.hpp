@@ -93,6 +93,8 @@ private:
     std::string statistics_final_path_;
     std::ofstream statistics_stream_;
     std::vector<std::string> files_;
+    std::vector<std::size_t> turbulence_floor_repairs_total_;
+    std::size_t last_diagnostic_step_ = 0;
 };
 
 } // namespace wcns

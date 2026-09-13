@@ -42,6 +42,38 @@ struct WeissSmithState {
                                                 Real viscous_speed = 0.0,
                                                 int dimension = 3);
 
+// Weiss-Smith matrix expressed in W=(rho,u,v,w,p).  Unlike the temperature-
+// primitive form above, this form only needs the pressure state used by a
+// Riemann solver and is therefore suitable for preconditioned Roe dissipation.
+[[nodiscard]] WeissSmithState
+weiss_smith_pressure_state(const PressurePrimitiveState& state,
+                           Normal3 unit_normal,
+                           const GasModel& gas,
+                           const NumericalFloors& floors,
+                           const WeissSmithParameters& parameters,
+                           Real viscous_speed = 0.0,
+                           int dimension = 3);
+
+// Left preconditioning for a conservative residual.  Gamma_0 is the physical
+// dQ/dW matrix and Gamma_p is the Weiss-Smith pseudo-time matrix, so the
+// conservative update is driven by Gamma_0 Gamma_p^{-1} R(Q).
+[[nodiscard]] Matrix5
+weiss_smith_conservative_preconditioner(const PressurePrimitiveState& state,
+                                        const GasModel& gas,
+                                        const NumericalFloors& floors,
+                                        const WeissSmithParameters& parameters,
+                                        Real viscous_speed = 0.0,
+                                        int dimension = 3);
+
+[[nodiscard]] ConservativeState
+weiss_smith_precondition_residual(const PressurePrimitiveState& state,
+                                  const ConservativeState& residual,
+                                  const GasModel& gas,
+                                  const NumericalFloors& floors,
+                                  const WeissSmithParameters& parameters,
+                                  Real viscous_speed = 0.0,
+                                  int dimension = 3);
+
 [[nodiscard]] Matrix5 multiply(const Matrix5& left, const Matrix5& right);
 
 } // namespace wcns

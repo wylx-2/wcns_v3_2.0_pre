@@ -395,9 +395,6 @@ TurbulenceViscousContribution evaluate_turbulence_viscous_face(
         || turbulence_model->family() == TurbulenceModelFamily::None) {
         return result;
     }
-    if (!block.turbulence.contains("nu_tilde")) {
-        throw PhysicsConfigurationError("active turbulence model is missing nu_tilde storage");
-    }
     TurbulenceCellContext context;
     context.mean_state = trace.state;
     for (int variable = 0; variable < viscous_primitive_components; ++variable) {
@@ -408,14 +405,34 @@ TurbulenceViscousContribution evaluate_turbulence_viscous_face(
                                  [static_cast<std::size_t>(direction)];
         }
     }
-    Real nu_tilde = interpolate_turbulence_face(
-        block, profile, axis, face, block.turbulence.component("nu_tilde"));
-    if (physical_boundary != nullptr
+    const bool no_slip = physical_boundary != nullptr
         && (physical_boundary->type == BoundaryType::NoSlipAdiabaticWall
-            || physical_boundary->type == BoundaryType::NoSlipIsothermalWall)) {
-        nu_tilde = 0.0;
+            || physical_boundary->type == BoundaryType::NoSlipIsothermalWall);
+    if (no_slip && turbulence_model->config().wall_treatment == WallTreatment::Resolved) {
+        return result;
     }
-    context.model_values = {nu_tilde};
+    for (const auto& descriptor : turbulence_model->fields()) {
+        if (descriptor.role != TurbulenceFieldRole::Transported) continue;
+        if (!block.turbulence.contains(descriptor.name)) {
+            throw PhysicsConfigurationError("active turbulence model is missing "
+                                            + descriptor.name + " storage");
+        }
+        Real value = interpolate_turbulence_face(
+            block, profile, axis, face, block.turbulence.component(descriptor.name));
+        if (no_slip && descriptor.name == "nu_tilde") value = 0.0;
+        if (descriptor.strictly_positive && value <= descriptor.lower_bound) {
+            auto donor = face;
+            --donor[static_cast<std::size_t>(axis)];
+            for (int logical = 0; logical < block.cell_dimension(); ++logical) {
+                const auto entry = static_cast<std::size_t>(logical);
+                donor[entry] = std::clamp(
+                    donor[entry], 0, block.cell_extent()[entry] - 1);
+            }
+            value = block.turbulence.at(donor, descriptor.name);
+        }
+        context.model_values.push_back(value);
+        context.model_gradients.push_back({{0.0, 0.0, 0.0}});
+    }
     context.molecular_kinematic_viscosity
         = transport.viscosity(trace.state[temperature_value])
         / (trace.state[temperature_density] * reference.reynolds());
@@ -423,6 +440,21 @@ TurbulenceViscousContribution evaluate_turbulence_viscous_face(
     context.reference_mach = reference.mach();
     context.heat_capacity_ratio = gas.gamma();
     context.dimension = block.cell_dimension();
+    if (block.turbulence.contains("wall_distance")) {
+        Real distance = interpolate_turbulence_face(
+            block, profile, axis, face, block.turbulence.component("wall_distance"));
+        if (!std::isfinite(distance) || distance <= 0.0) {
+            auto cell = face;
+            --cell[static_cast<std::size_t>(axis)];
+            for (int logical = 0; logical < block.cell_dimension(); ++logical) {
+                const auto entry = static_cast<std::size_t>(logical);
+                cell[entry] = std::clamp(
+                    cell[entry], 0, block.cell_extent()[entry] - 1);
+            }
+            distance = block.turbulence.at(cell, "wall_distance");
+        }
+        context.wall_distance = distance;
+    }
     result = turbulence_model->viscous_contribution(context);
     return result;
 }

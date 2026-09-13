@@ -126,6 +126,165 @@ if(WCNS_ENABLE_CGNS)
         ${CMAKE_CURRENT_BINARY_DIR}/implicit_sa_steady.wcns
         @ONLY
     )
+    set(WCNS_TWO_EQUATION_IMPLICIT_TIME_LINES
+        "time.integrator = lu_sgs\ntime.physical.scheme = bdf2\ntime.dual_time.max_iterations = 20\n# Restart smoke accepts the initialized physical layer; convergence quality is\n# covered by the dedicated RANS validation cases rather than this I/O fixture.\ntime.dual_time.absolute_tolerance = 1e6\ntime.dual_time.relative_tolerance = 1e-8\ntime.dual_time.cfl = 0.01\nlu_sgs.sweeps = 1\nlu_sgs.jacobian = scalar_spectral\nlu_sgs.relaxation = 0.5")
+    set(WCNS_TWO_EQUATION_TIME_LINES ${WCNS_TWO_EQUATION_IMPLICIT_TIME_LINES})
+    set(WCNS_TWO_EQUATION_CASE sst-steady)
+    set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit-sst-steady)
+    set(WCNS_TWO_EQUATION_MODEL k_omega_sst)
+    set(WCNS_TWO_EQUATION_WALL resolved)
+    set(WCNS_TWO_EQUATION_WALL_LINES "# no wall-function range")
+    set(WCNS_TWO_EQUATION_MODE steady)
+    set(WCNS_TWO_EQUATION_RUN_LINES "# steady pseudo-time")
+    set(WCNS_TWO_EQUATION_CHECKPOINT false)
+    set(WCNS_TWO_EQUATION_RESTART_LINE "# fresh two-equation run")
+    set(WCNS_TWO_EQUATION_MAX_STEPS 1)
+    set(WCNS_TWO_EQUATION_QUANTITIES
+        "rho,u,p,k,omega,mu_t_over_mu,sst_f1,sst_f2,turbulence_production,turbulence_destruction,cross_diffusion,wall_distance,wall_y_plus")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_sst_steady.wcns
+        @ONLY
+    )
+    set(WCNS_TWO_EQUATION_CASE k-epsilon-steady)
+    set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit-k-epsilon-steady)
+    set(WCNS_TWO_EQUATION_MODEL k_epsilon)
+    set(WCNS_TWO_EQUATION_WALL wall_function)
+    set(WCNS_TWO_EQUATION_WALL_LINES
+        "turbulence.experimental = true\nturbulence.wall_function.y_plus_min = 30\nturbulence.wall_function.y_plus_max = 300")
+    set(WCNS_TWO_EQUATION_QUANTITIES
+        "rho,u,p,k,epsilon,mu_t_over_mu,turbulence_production,turbulence_destruction,wall_distance,wall_y_plus")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_k_epsilon_steady.wcns
+        @ONLY
+    )
+    set(WCNS_TWO_EQUATION_TIME_LINES "time.integrator = ssprk3")
+    set(WCNS_TWO_EQUATION_CHECKPOINT false)
+    set(WCNS_TWO_EQUATION_RESTART_LINE "# fresh explicit two-equation run")
+    foreach(two_equation_model IN ITEMS sst k_epsilon)
+        if(two_equation_model STREQUAL "sst")
+            set(WCNS_TWO_EQUATION_MODEL k_omega_sst)
+            set(WCNS_TWO_EQUATION_WALL resolved)
+            set(WCNS_TWO_EQUATION_WALL_LINES "# no wall-function range")
+            set(WCNS_TWO_EQUATION_QUANTITIES
+                "rho,u,p,k,omega,mu_t_over_mu,sst_f1,sst_f2,turbulence_production,turbulence_destruction,cross_diffusion,wall_distance,wall_y_plus")
+        else()
+            set(WCNS_TWO_EQUATION_MODEL k_epsilon)
+            set(WCNS_TWO_EQUATION_WALL wall_function)
+            set(WCNS_TWO_EQUATION_WALL_LINES
+                "turbulence.experimental = true\nturbulence.wall_function.y_plus_min = 30\nturbulence.wall_function.y_plus_max = 300")
+            set(WCNS_TWO_EQUATION_QUANTITIES
+                "rho,u,p,k,epsilon,mu_t_over_mu,turbulence_production,turbulence_destruction,wall_distance,wall_y_plus")
+        endif()
+        set(WCNS_TWO_EQUATION_CASE ${two_equation_model}-explicit-steady)
+        set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/implicit-${two_equation_model}-explicit-steady)
+        set(WCNS_TWO_EQUATION_MODE steady)
+        set(WCNS_TWO_EQUATION_RUN_LINES "# steady explicit pseudo-time")
+        set(WCNS_TWO_EQUATION_MAX_STEPS 1)
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/explicit_${two_equation_model}_steady.wcns
+            @ONLY
+        )
+    endforeach()
+    set(WCNS_TWO_EQUATION_TIME_LINES ${WCNS_TWO_EQUATION_IMPLICIT_TIME_LINES})
+    foreach(two_equation_model IN ITEMS sst k_epsilon)
+        if(two_equation_model STREQUAL "sst")
+            set(WCNS_TWO_EQUATION_MODEL k_omega_sst)
+            set(WCNS_TWO_EQUATION_WALL resolved)
+            set(WCNS_TWO_EQUATION_WALL_LINES "# no wall-function range")
+            set(WCNS_TWO_EQUATION_QUANTITIES
+                "rho,u,p,k,omega,mu_t_over_mu,sst_f1,sst_f2,turbulence_production,turbulence_destruction,cross_diffusion,wall_distance,wall_y_plus")
+        else()
+            set(WCNS_TWO_EQUATION_MODEL k_epsilon)
+            set(WCNS_TWO_EQUATION_WALL wall_function)
+            set(WCNS_TWO_EQUATION_WALL_LINES
+                "turbulence.experimental = true\nturbulence.wall_function.y_plus_min = 30\nturbulence.wall_function.y_plus_max = 300")
+            set(WCNS_TWO_EQUATION_QUANTITIES
+                "rho,u,p,k,epsilon,mu_t_over_mu,turbulence_production,turbulence_destruction,wall_distance,wall_y_plus")
+        endif()
+        set(WCNS_TWO_EQUATION_CASE ${two_equation_model}-checkpoint-source)
+        set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/implicit-${two_equation_model}-checkpoint-source)
+        set(WCNS_TWO_EQUATION_MODE unsteady)
+        set(WCNS_TWO_EQUATION_RUN_LINES "run.t_end = 0.001\ntime.physical.step = 0.001")
+        set(WCNS_TWO_EQUATION_CHECKPOINT true)
+        set(WCNS_TWO_EQUATION_RESTART_LINE "# fresh two-equation run")
+        set(WCNS_TWO_EQUATION_MAX_STEPS 1)
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_model}_checkpoint_source.wcns
+            @ONLY
+        )
+        set(WCNS_TWO_EQUATION_CASE ${two_equation_model}-checkpoint-restart)
+        set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/implicit-${two_equation_model}-checkpoint-restart)
+        set(WCNS_TWO_EQUATION_RUN_LINES "run.t_end = 0.002\ntime.physical.step = 0.001")
+        set(WCNS_TWO_EQUATION_CHECKPOINT false)
+        set(WCNS_TWO_EQUATION_MAX_STEPS 2)
+        set(WCNS_TWO_EQUATION_RESTART_LINE
+            "restart.path = ${CMAKE_CURRENT_BINARY_DIR}/implicit-${two_equation_model}-checkpoint-source/implicit-${two_equation_model}-checkpoint-source.checkpoint.latest.cgns")
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_model}_checkpoint_restart.wcns
+            @ONLY
+        )
+    endforeach()
+    set(WCNS_TWO_EQUATION_CASE wrong-model-checkpoint-restart)
+    set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit-wrong-model-checkpoint-restart)
+    set(WCNS_TWO_EQUATION_MODEL k_epsilon)
+    set(WCNS_TWO_EQUATION_WALL wall_function)
+    set(WCNS_TWO_EQUATION_WALL_LINES
+        "turbulence.experimental = true\nturbulence.wall_function.y_plus_min = 30\nturbulence.wall_function.y_plus_max = 300")
+    set(WCNS_TWO_EQUATION_MODE unsteady)
+    set(WCNS_TWO_EQUATION_RUN_LINES "run.t_end = 0.002\ntime.physical.step = 0.001")
+    set(WCNS_TWO_EQUATION_CHECKPOINT false)
+    set(WCNS_TWO_EQUATION_MAX_STEPS 2)
+    set(WCNS_TWO_EQUATION_QUANTITIES
+        "rho,u,p,k,epsilon,mu_t_over_mu,turbulence_production,turbulence_destruction,wall_distance,wall_y_plus")
+    set(WCNS_TWO_EQUATION_RESTART_LINE
+        "restart.path = ${CMAKE_CURRENT_BINARY_DIR}/implicit-sst-checkpoint-source/implicit-sst-checkpoint-source.checkpoint.latest.cgns")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_wrong_model_checkpoint_restart.wcns
+        @ONLY
+    )
+    set(WCNS_TWO_EQUATION_MODE steady)
+    set(WCNS_TWO_EQUATION_RUN_LINES "# rank-consistency pseudo-time")
+    set(WCNS_TWO_EQUATION_CHECKPOINT false)
+    set(WCNS_TWO_EQUATION_RESTART_LINE "# fresh rank-consistency run")
+    set(WCNS_TWO_EQUATION_MAX_STEPS 1)
+    foreach(two_equation_model IN ITEMS sst k_epsilon)
+        if(two_equation_model STREQUAL "sst")
+            set(WCNS_TWO_EQUATION_MODEL k_omega_sst)
+            set(WCNS_TWO_EQUATION_WALL resolved)
+            set(WCNS_TWO_EQUATION_WALL_LINES "# no wall-function range")
+            set(WCNS_TWO_EQUATION_QUANTITIES
+                "rho,u,p,k,omega,mu_t_over_mu,sst_f1,sst_f2,turbulence_production,turbulence_destruction,cross_diffusion,wall_distance,wall_y_plus")
+        else()
+            set(WCNS_TWO_EQUATION_MODEL k_epsilon)
+            set(WCNS_TWO_EQUATION_WALL wall_function)
+            set(WCNS_TWO_EQUATION_WALL_LINES
+                "turbulence.experimental = true\nturbulence.wall_function.y_plus_min = 30\nturbulence.wall_function.y_plus_max = 300")
+            set(WCNS_TWO_EQUATION_QUANTITIES
+                "rho,u,p,k,epsilon,mu_t_over_mu,turbulence_production,turbulence_destruction,wall_distance,wall_y_plus")
+        endif()
+        set(WCNS_TWO_EQUATION_CASE ${two_equation_model}-rank-consistency)
+        foreach(rank_label IN ITEMS serial mpi2 mpi4)
+            set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+                ${CMAKE_CURRENT_BINARY_DIR}/two-equation-${two_equation_model}-${rank_label})
+            configure_file(
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+                ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_model}_${rank_label}.wcns
+                @ONLY
+            )
+        endforeach()
+    endforeach()
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/boundary_partition_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/boundary_partition_case.wcns
@@ -375,6 +534,96 @@ if(WCNS_ENABLE_CGNS)
         wcns.run.implicit_sa.steady.serial
         PROPERTIES FIXTURES_REQUIRED cgns_files
     )
+    foreach(two_equation_case IN ITEMS sst k_epsilon)
+        add_test(
+            NAME wcns.run.explicit_${two_equation_case}.steady.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/explicit_${two_equation_case}_steady.wcns
+        )
+        set_tests_properties(
+            wcns.run.explicit_${two_equation_case}.steady.serial
+            PROPERTIES FIXTURES_REQUIRED cgns_files
+        )
+        add_test(
+            NAME wcns.run.implicit_${two_equation_case}.steady.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_case}_steady.wcns
+        )
+        set_tests_properties(
+            wcns.run.implicit_${two_equation_case}.steady.serial
+            PROPERTIES
+                FIXTURES_REQUIRED cgns_files
+                FIXTURES_SETUP implicit_${two_equation_case}_steady_files
+        )
+        if(two_equation_case STREQUAL "sst")
+            set(WCNS_TWO_EQUATION_SECOND_FIELD omega)
+            set(WCNS_TWO_EQUATION_STEADY_STEM implicit-sst-steady)
+        else()
+            set(WCNS_TWO_EQUATION_SECOND_FIELD epsilon)
+            set(WCNS_TWO_EQUATION_STEADY_STEM implicit-k-epsilon-steady)
+        endif()
+        add_test(
+            NAME wcns.${two_equation_case}_history_floor_diagnostics.serial
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/check_two_equation_history.py
+                ${CMAKE_CURRENT_BINARY_DIR}/${WCNS_TWO_EQUATION_STEADY_STEM}/${WCNS_TWO_EQUATION_STEADY_STEM}.history.r1.txt
+                ${CMAKE_CURRENT_BINARY_DIR}/${WCNS_TWO_EQUATION_STEADY_STEM}/${WCNS_TWO_EQUATION_STEADY_STEM}.manifest.r1.txt
+                k
+                ${WCNS_TWO_EQUATION_SECOND_FIELD}
+        )
+        set_tests_properties(
+            wcns.${two_equation_case}_history_floor_diagnostics.serial
+            PROPERTIES FIXTURES_REQUIRED implicit_${two_equation_case}_steady_files
+        )
+        add_test(
+            NAME wcns.run.implicit_${two_equation_case}.checkpoint_source.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_case}_checkpoint_source.wcns
+        )
+        set_tests_properties(
+            wcns.run.implicit_${two_equation_case}.checkpoint_source.serial
+            PROPERTIES
+                FIXTURES_REQUIRED cgns_files
+                FIXTURES_SETUP implicit_${two_equation_case}_checkpoint
+                RESOURCE_LOCK wcns_implicit_${two_equation_case}_checkpoint
+        )
+        add_test(
+            NAME wcns.run.implicit_${two_equation_case}.checkpoint_restart.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_case}_checkpoint_restart.wcns
+        )
+        set_tests_properties(
+            wcns.run.implicit_${two_equation_case}.checkpoint_restart.serial
+            PROPERTIES
+                FIXTURES_REQUIRED implicit_${two_equation_case}_checkpoint
+                RESOURCE_LOCK wcns_implicit_${two_equation_case}_checkpoint
+        )
+    endforeach()
+    add_test(
+        NAME wcns.run.implicit_wrong_model_checkpoint_restart.serial
+        COMMAND ${CMAKE_COMMAND}
+            -DPROGRAM=$<TARGET_FILE:wcns_run>
+            -DCONFIG=${CMAKE_CURRENT_BINARY_DIR}/implicit_wrong_model_checkpoint_restart.wcns
+            -DEXPECTED_EXIT=1
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_expect_exit.cmake
+    )
+    set_tests_properties(
+        wcns.run.implicit_wrong_model_checkpoint_restart.serial
+        PROPERTIES FIXTURES_REQUIRED implicit_sst_checkpoint
+    )
+    foreach(two_equation_case IN ITEMS sst k_epsilon)
+        add_test(
+            NAME wcns.run.implicit_${two_equation_case}.rank_consistency.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_case}_serial.wcns
+        )
+        set_tests_properties(
+            wcns.run.implicit_${two_equation_case}.rank_consistency.serial
+            PROPERTIES
+                FIXTURES_REQUIRED cgns_files
+                FIXTURES_SETUP two_equation_${two_equation_case}_rank_serial
+        )
+    endforeach()
     add_test(
         NAME wcns.run.implicit_checkpoint.source.serial
         COMMAND wcns_run
@@ -1198,6 +1447,97 @@ if(WCNS_ENABLE_CGNS)
             wcns.run.freestream.2
             PROPERTIES FIXTURES_REQUIRED cgns_files
         )
+        foreach(rank_count IN ITEMS 2 4)
+            foreach(implicit_case IN ITEMS steady dual_time)
+                add_test(
+                    NAME wcns.run.implicit_freestream.${implicit_case}.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_freestream_${implicit_case}.wcns
+                )
+                set_tests_properties(
+                    wcns.run.implicit_freestream.${implicit_case}.${rank_count}
+                    PROPERTIES FIXTURES_REQUIRED cgns_files
+                )
+            endforeach()
+            add_test(
+                NAME wcns.run.implicit_sa.steady.${rank_count}
+                COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                    $<TARGET_FILE:wcns_run>
+                    --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_sa_steady.wcns
+            )
+            set_tests_properties(
+                wcns.run.implicit_sa.steady.${rank_count}
+                PROPERTIES FIXTURES_REQUIRED cgns_files
+            )
+            foreach(two_equation_case IN ITEMS sst k_epsilon)
+                add_test(
+                    NAME wcns.run.explicit_${two_equation_case}.steady.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/explicit_${two_equation_case}_steady.wcns
+                )
+                set_tests_properties(
+                    wcns.run.explicit_${two_equation_case}.steady.${rank_count}
+                    PROPERTIES FIXTURES_REQUIRED cgns_files
+                )
+                add_test(
+                    NAME wcns.run.implicit_${two_equation_case}.steady.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_case}_steady.wcns
+                )
+                set_tests_properties(
+                    wcns.run.implicit_${two_equation_case}.steady.${rank_count}
+                    PROPERTIES FIXTURES_REQUIRED cgns_files
+                )
+                add_test(
+                    NAME wcns.run.implicit_${two_equation_case}.checkpoint_restart.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_case}_checkpoint_restart.wcns
+                )
+                set_tests_properties(
+                    wcns.run.implicit_${two_equation_case}.checkpoint_restart.${rank_count}
+                    PROPERTIES
+                        FIXTURES_REQUIRED implicit_${two_equation_case}_checkpoint
+                        RESOURCE_LOCK wcns_implicit_${two_equation_case}_checkpoint
+                )
+                add_test(
+                    NAME wcns.run.implicit_${two_equation_case}.rank_consistency.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_${two_equation_case}_mpi${rank_count}.wcns
+                )
+                set_tests_properties(
+                    wcns.run.implicit_${two_equation_case}.rank_consistency.${rank_count}
+                    PROPERTIES
+                        FIXTURES_REQUIRED cgns_files
+                        FIXTURES_SETUP two_equation_${two_equation_case}_rank_${rank_count}
+                )
+                if(two_equation_case STREQUAL "sst")
+                    set(WCNS_TWO_EQUATION_COMPARISON_FIELD omega)
+                else()
+                    set(WCNS_TWO_EQUATION_COMPARISON_FIELD epsilon)
+                endif()
+                set(WCNS_TWO_EQUATION_RANK_FIELD
+                    implicit-${two_equation_case}-rank-consistency.field.step00000001.time1p000000000eP00.cgns)
+                add_test(
+                    NAME wcns.implicit_${two_equation_case}.rank_consistency.${rank_count}
+                    COMMAND wcns_cgns_field_compare
+                        ${CMAKE_CURRENT_BINARY_DIR}/two-equation-${two_equation_case}-serial/${WCNS_TWO_EQUATION_RANK_FIELD}
+                        ${CMAKE_CURRENT_BINARY_DIR}/two-equation-${two_equation_case}-mpi${rank_count}/${WCNS_TWO_EQUATION_RANK_FIELD}
+                        1e-9
+                        k
+                        ${WCNS_TWO_EQUATION_COMPARISON_FIELD}
+                )
+                set_tests_properties(
+                    wcns.implicit_${two_equation_case}.rank_consistency.${rank_count}
+                    PROPERTIES FIXTURES_REQUIRED
+                        "two_equation_${two_equation_case}_rank_serial;two_equation_${two_equation_case}_rank_${rank_count}"
+                )
+            endforeach()
+        endforeach()
         foreach(periodic_case IN ITEMS translation_2d rotation_3d)
             add_test(
                 NAME wcns.run.periodic_${periodic_case}.2

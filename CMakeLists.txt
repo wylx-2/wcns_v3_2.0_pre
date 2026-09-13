@@ -169,6 +169,7 @@ add_library(wcns_solver STATIC
     src/solver/physical_boundary.cpp
     src/solver/riemann_solver.cpp
     src/solver/robustness.cpp
+    src/solver/rans_two_equation_transport.cpp
     src/solver/sa_negative.cpp
     src/solver/sa_negative_transport.cpp
     src/solver/source_operator.cpp
@@ -176,6 +177,7 @@ add_library(wcns_solver STATIC
     src/solver/time_integrator.cpp
     src/solver/implicit_time_integrator.cpp
     src/solver/low_mach_preconditioner.cpp
+    src/solver/two_equation_models.cpp
     src/solver/transport_model.cpp
     src/solver/turbulence_fields.cpp
     src/solver/turbulence_model.cpp
@@ -225,6 +227,14 @@ if(WCNS_ENABLE_CGNS)
         tools/generate_release_cgns.cpp
     )
     target_link_libraries(wcns_generate_release_cgns PRIVATE wcns::core wcns::cgns)
+
+    add_executable(
+        wcns_generate_couette_validation_cgns
+        tools/generate_couette_validation_cgns.cpp
+    )
+    target_link_libraries(
+        wcns_generate_couette_validation_cgns PRIVATE wcns::core wcns::cgns
+    )
 
     add_executable(
         wcns_validate_release_case

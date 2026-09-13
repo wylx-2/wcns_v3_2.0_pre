@@ -102,7 +102,7 @@ int main(int argc, char** argv)
         int ni = 0;
         int nj = 0;
         if (!(input >> blocks >> ni >> nj) || blocks != 1 || ni < 3 || nj < 3
-            || wall_first <= 1 || wall_first >= wall_last || wall_last >= ni) {
+            || wall_first <= 1 || wall_first >= wall_last || wall_last > ni) {
             throw std::runtime_error("unsupported TMR PLOT3D header or wall range");
         }
         const auto count = static_cast<std::size_t>(ni) * static_cast<std::size_t>(nj);
@@ -149,27 +149,43 @@ int main(int argc, char** argv)
                                   &coordinate),
                    "cg_coord_write converted CoordinateY");
 
-        write_boundary(output.id(), base, zone, "FarfieldILower", BCFarfield, {1, 1, 1, nj});
-        write_boundary(output.id(), base, zone, "FarfieldIUpper", BCFarfield, {ni, 1, ni, nj});
-        write_boundary(output.id(), base, zone, "FarfieldJUpper", BCFarfield, {1, nj, ni, nj});
-        write_boundary(output.id(),
-                       base,
-                       zone,
-                       "Wall",
-                       BCWallViscousHeatFlux,
-                       {wall_first, 1, wall_last, 1});
-        write_connection(output.id(),
-                         base,
-                         zone,
-                         "WakeLowerToUpper",
-                         {1, 1, wall_first, 1},
-                         {ni, 1, wall_last, 1});
-        write_connection(output.id(),
-                         base,
-                         zone,
-                         "WakeUpperToLower",
-                         {ni, 1, wall_last, 1},
-                         {1, 1, wall_first, 1});
+        if (wall_last == ni) {
+            // The standard TMR zero-pressure-gradient plate begins part way
+            // along JLower and continues to the outflow boundary.
+            write_boundary(output.id(), base, zone, "Inflow", BCInflowSubsonic,
+                           {1, 1, 1, nj});
+            write_boundary(output.id(), base, zone, "Outflow", BCOutflowSubsonic,
+                           {ni, 1, ni, nj});
+            write_boundary(output.id(), base, zone, "Top", BCFarfield,
+                           {1, nj, ni, nj});
+            write_boundary(output.id(), base, zone, "BottomUpstream", BCSymmetryPlane,
+                           {1, 1, wall_first, 1});
+            write_boundary(output.id(), base, zone, "Wall", BCWallViscousHeatFlux,
+                           {wall_first, 1, wall_last, 1});
+        } else {
+            // Closed C/O-grid airfoils use the two lower-boundary ranges as a
+            // self connection across the wake cut.
+            write_boundary(output.id(), base, zone, "FarfieldILower", BCFarfield,
+                           {1, 1, 1, nj});
+            write_boundary(output.id(), base, zone, "FarfieldIUpper", BCFarfield,
+                           {ni, 1, ni, nj});
+            write_boundary(output.id(), base, zone, "FarfieldJUpper", BCFarfield,
+                           {1, nj, ni, nj});
+            write_boundary(output.id(), base, zone, "Wall", BCWallViscousHeatFlux,
+                           {wall_first, 1, wall_last, 1});
+            write_connection(output.id(),
+                             base,
+                             zone,
+                             "WakeLowerToUpper",
+                             {1, 1, wall_first, 1},
+                             {ni, 1, wall_last, 1});
+            write_connection(output.id(),
+                             base,
+                             zone,
+                             "WakeUpperToLower",
+                             {ni, 1, wall_last, 1},
+                             {1, 1, wall_first, 1});
+        }
         output.close();
         std::cout << "converted TMR PLOT3D grid " << ni << 'x' << nj << " wall=["
                   << wall_first << ',' << wall_last << "]\n";

@@ -101,6 +101,40 @@ std::string valid_sa_config()
     return result;
 }
 
+std::string valid_two_equation_config(const std::string& model,
+                                      const std::string& wall_treatment)
+{
+    auto result = valid_v2_config();
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const auto position = result.find(from);
+        if (position == std::string::npos) {
+            throw std::logic_error("two-equation test fixture is incomplete");
+        }
+        result.replace(position, from.size(), to);
+    };
+    replace("turbulence.model = none", "turbulence.model = " + model);
+    replace("robustness.enabled = true", "robustness.enabled = false");
+    replace("run.viscous = false", "run.viscous = true");
+    const auto model_key = result.find("turbulence.model = " + model);
+    const auto line_end = result.find('\n', model_key);
+    result.insert(line_end + 1,
+                  (model == "k_epsilon" ? std::string("turbulence.experimental = true\n")
+                                        : std::string())
+                      + "turbulence.prandtl = 0.9\n"
+                  "turbulence.wall_treatment = "
+                      + wall_treatment
+                      + "\n"
+                        "turbulence.freestream.intensity = 0.02\n"
+                        "turbulence.freestream.length_scale = 0.15\n"
+                        "turbulence.model_floor = 1e-11\n"
+                        "turbulence.two_equation.source_treatment = local_implicit\n"
+                      + (wall_treatment == "wall_function"
+                             ? "turbulence.wall_function.y_plus_min = 30\n"
+                               "turbulence.wall_function.y_plus_max = 300\n"
+                             : ""));
+    return result;
+}
+
 std::string valid_lu_sgs_config(bool unsteady = false)
 {
     auto result = valid_v2_config();
@@ -188,6 +222,48 @@ void test_case_config()
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(invalid_source));
 
+        const auto sst
+            = wcns::CaseConfig::from_text(valid_two_equation_config("k_omega_sst", "resolved"));
+        WCNS_REQUIRE(sst.turbulence.kind == wcns::TurbulenceModelKind::KOmegaSst);
+        WCNS_REQUIRE(sst.turbulence.wall_treatment == wcns::WallTreatment::Resolved);
+        WCNS_REQUIRE_NEAR(sst.turbulence.freestream_turbulence_intensity, 0.02, 0.0);
+        WCNS_REQUIRE_NEAR(sst.turbulence.freestream_length_scale, 0.15, 0.0);
+        WCNS_REQUIRE_NEAR(sst.turbulence.model_floor, 1.0e-11, 0.0);
+        WCNS_REQUIRE(sst.restart_signature().find("model=k_omega_sst")
+                     != std::string::npos);
+
+        const auto k_epsilon = wcns::CaseConfig::from_text(
+            valid_two_equation_config("k_epsilon", "wall_function"));
+        WCNS_REQUIRE(k_epsilon.turbulence.kind == wcns::TurbulenceModelKind::KEpsilon);
+        WCNS_REQUIRE(k_epsilon.turbulence.wall_treatment
+                     == wcns::WallTreatment::WallFunction);
+        WCNS_REQUIRE(k_epsilon.turbulence.experimental);
+        WCNS_REQUIRE_NEAR(k_epsilon.turbulence.wall_function_y_plus_min, 30.0, 0.0);
+        WCNS_REQUIRE_NEAR(k_epsilon.turbulence.wall_function_y_plus_max, 300.0, 0.0);
+
+        auto invalid_k_epsilon = valid_two_equation_config("k_epsilon", "wall_function");
+        const auto wall = invalid_k_epsilon.find("wall_function");
+        invalid_k_epsilon.replace(wall, std::string("wall_function").size(), "resolved");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_k_epsilon));
+
+        auto missing_experimental
+            = valid_two_equation_config("k_epsilon", "wall_function");
+        const auto experimental_line
+            = missing_experimental.find("turbulence.experimental = true\n");
+        missing_experimental.erase(experimental_line,
+                                   std::string("turbulence.experimental = true\n").size());
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(missing_experimental));
+
+        auto invalid_intensity = valid_two_equation_config("k_omega_sst", "resolved");
+        const auto intensity = invalid_intensity.find("intensity = 0.02");
+        invalid_intensity.replace(intensity,
+                                  std::string("intensity = 0.02").size(),
+                                  "intensity = 0");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_intensity));
+
         auto none_parameter = valid_v2_config();
         none_parameter += "turbulence.prandtl = 0.9\n";
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
@@ -200,6 +276,22 @@ void test_case_config()
         WCNS_REQUIRE_NEAR(implicit.time_algorithm.lu_sgs_relaxation, 0.9, 0.0);
         WCNS_REQUIRE(implicit.summary().find("jacobian=scalar_spectral")
                      != std::string::npos);
+
+        auto three_sweeps_text = valid_lu_sgs_config();
+        const auto sweep_value = three_sweeps_text.find("lu_sgs.sweeps = 1");
+        three_sweeps_text.replace(sweep_value,
+                                  std::string("lu_sgs.sweeps = 1").size(),
+                                  "lu_sgs.sweeps = 3");
+        const auto three_sweeps = wcns::CaseConfig::from_text(three_sweeps_text);
+        WCNS_REQUIRE(three_sweeps.time_algorithm.lu_sgs_sweeps == 3);
+
+        auto invalid_sweeps = valid_lu_sgs_config();
+        const auto invalid_sweep_value = invalid_sweeps.find("lu_sgs.sweeps = 1");
+        invalid_sweeps.replace(invalid_sweep_value,
+                               std::string("lu_sgs.sweeps = 1").size(),
+                               "lu_sgs.sweeps = 5");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_sweeps));
 
         const auto dual = wcns::CaseConfig::from_text(valid_lu_sgs_config(true));
         WCNS_REQUIRE(dual.run.mode == wcns::RunMode::Unsteady);

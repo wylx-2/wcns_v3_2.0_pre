@@ -287,10 +287,17 @@ const std::set<std::string>& fixed_keys()
         "transport.sutherland.temperature",
         "transport.sutherland.temperature_ratio",
         "turbulence.model",
+        "turbulence.experimental",
         "turbulence.prandtl",
         "turbulence.wall_treatment",
         "turbulence.sa.farfield_nu_tilde_ratio",
         "turbulence.sa.source_treatment",
+        "turbulence.freestream.intensity",
+        "turbulence.freestream.length_scale",
+        "turbulence.model_floor",
+        "turbulence.two_equation.source_treatment",
+        "turbulence.wall_function.y_plus_min",
+        "turbulence.wall_function.y_plus_max",
         "time.integrator",
         "time.physical.scheme",
         "time.physical.step",
@@ -1232,7 +1239,7 @@ void TimeAlgorithmConfig::validate() const
         || dual_time_absolute_tolerance <= 0.0
         || !std::isfinite(dual_time_relative_tolerance)
         || dual_time_relative_tolerance <= 0.0 || !std::isfinite(dual_time_cfl)
-        || dual_time_cfl <= 0.0 || lu_sgs_sweeps != 1
+        || dual_time_cfl <= 0.0 || lu_sgs_sweeps < 1 || lu_sgs_sweeps > 4
         || !std::isfinite(lu_sgs_relaxation) || lu_sgs_relaxation <= 0.0
         || lu_sgs_relaxation > 1.0) {
         throw std::invalid_argument("invalid LU-SGS or dual-time configuration");
@@ -1324,12 +1331,19 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     result.schema_version = static_cast<int>(version);
-    const std::array<const char*, 18> v2_keys {{
+    const std::array<const char*, 25> v2_keys {{
         "turbulence.model",
+        "turbulence.experimental",
         "turbulence.prandtl",
         "turbulence.wall_treatment",
         "turbulence.sa.farfield_nu_tilde_ratio",
         "turbulence.sa.source_treatment",
+        "turbulence.freestream.intensity",
+        "turbulence.freestream.length_scale",
+        "turbulence.model_floor",
+        "turbulence.two_equation.source_treatment",
+        "turbulence.wall_function.y_plus_min",
+        "turbulence.wall_function.y_plus_max",
         "time.integrator",
         "time.physical.scheme",
         "time.physical.step",
@@ -1355,15 +1369,30 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         result.turbulence.kind
             = parse_turbulence_model(require(entries, "turbulence.model"));
         const bool has_turbulence_prandtl = entries.find("turbulence.prandtl") != entries.end();
+        const bool has_turbulence_experimental
+            = entries.find("turbulence.experimental") != entries.end();
         const bool has_wall_treatment
             = entries.find("turbulence.wall_treatment") != entries.end();
         const bool has_sa_farfield
             = entries.find("turbulence.sa.farfield_nu_tilde_ratio") != entries.end();
         const bool has_sa_source
             = entries.find("turbulence.sa.source_treatment") != entries.end();
+        const bool has_two_equation_freestream
+            = entries.find("turbulence.freestream.intensity") != entries.end()
+            || entries.find("turbulence.freestream.length_scale") != entries.end();
+        const bool has_model_floor = entries.find("turbulence.model_floor") != entries.end();
+        const bool has_two_equation_source
+            = entries.find("turbulence.two_equation.source_treatment") != entries.end();
+        const bool has_wall_function_range
+            = entries.find("turbulence.wall_function.y_plus_min") != entries.end()
+            || entries.find("turbulence.wall_function.y_plus_max") != entries.end();
+        const bool two_equation = result.turbulence.kind == TurbulenceModelKind::KOmegaSst
+            || result.turbulence.kind == TurbulenceModelKind::KEpsilon;
         if (result.turbulence.kind == TurbulenceModelKind::None
-            && (has_turbulence_prandtl || has_wall_treatment || has_sa_farfield
-                || has_sa_source)) {
+            && (has_turbulence_prandtl || has_turbulence_experimental
+                || has_wall_treatment || has_sa_farfield
+                || has_sa_source || has_two_equation_freestream || has_model_floor
+                || has_two_equation_source || has_wall_function_range)) {
             throw CaseConfigurationError(
                 "turbulence.model=none does not accept model-specific turbulence keys");
         }
@@ -1371,6 +1400,19 @@ CaseConfig CaseConfig::from_text(const std::string& text)
             && (has_sa_farfield || has_sa_source)) {
             throw CaseConfigurationError(
                 "turbulence.sa.* keys require turbulence.model=sa_neg");
+        }
+        if (result.turbulence.kind != TurbulenceModelKind::KEpsilon
+            && has_turbulence_experimental) {
+            throw CaseConfigurationError(
+                "turbulence.experimental is reserved for k_epsilon");
+        }
+        result.turbulence.experimental = optional_bool(
+            entries, "turbulence.experimental", result.turbulence.experimental);
+        if (!two_equation
+            && (has_two_equation_freestream || has_model_floor || has_two_equation_source
+                || has_wall_function_range)) {
+            throw CaseConfigurationError(
+                "two-equation turbulence keys require k_omega_sst or k_epsilon");
         }
         result.turbulence.turbulent_prandtl = optional_real(
             entries, "turbulence.prandtl", result.turbulence.turbulent_prandtl);
@@ -1385,6 +1427,28 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         if (has_sa_source) {
             result.turbulence.source_treatment = parse_turbulence_source_treatment(
                 require(entries, "turbulence.sa.source_treatment"));
+        }
+        result.turbulence.freestream_turbulence_intensity = optional_real(
+            entries,
+            "turbulence.freestream.intensity",
+            result.turbulence.freestream_turbulence_intensity);
+        result.turbulence.freestream_length_scale = optional_real(
+            entries,
+            "turbulence.freestream.length_scale",
+            result.turbulence.freestream_length_scale);
+        result.turbulence.model_floor = optional_real(
+            entries, "turbulence.model_floor", result.turbulence.model_floor);
+        result.turbulence.wall_function_y_plus_min = optional_real(
+            entries,
+            "turbulence.wall_function.y_plus_min",
+            result.turbulence.wall_function_y_plus_min);
+        result.turbulence.wall_function_y_plus_max = optional_real(
+            entries,
+            "turbulence.wall_function.y_plus_max",
+            result.turbulence.wall_function_y_plus_max);
+        if (has_two_equation_source) {
+            result.turbulence.source_treatment = parse_turbulence_source_treatment(
+                require(entries, "turbulence.two_equation.source_treatment"));
         }
         result.time_algorithm.integrator
             = parse_time_integrator(require(entries, "time.integrator"));
@@ -1831,7 +1895,9 @@ void CaseConfig::validate() const
     }
     if (schema_version == 2) {
         if (turbulence.kind != TurbulenceModelKind::None
-            && turbulence.kind != TurbulenceModelKind::SaNegative) {
+            && turbulence.kind != TurbulenceModelKind::SaNegative
+            && turbulence.kind != TurbulenceModelKind::KOmegaSst
+            && turbulence.kind != TurbulenceModelKind::KEpsilon) {
             throw CaseConfigurationError(
                 std::string("turbulence model is reserved but not implemented: ")
                 + turbulence_model_name(turbulence.kind));
@@ -1846,6 +1912,16 @@ void CaseConfig::validate() const
             if (robustness.enabled) {
                 throw CaseConfigurationError(
                     "stage X SA-neg does not yet support mean-flow step retry transactions");
+            }
+        }
+        if (turbulence.kind == TurbulenceModelKind::KOmegaSst
+            || turbulence.kind == TurbulenceModelKind::KEpsilon) {
+            if (!run.viscous) {
+                throw CaseConfigurationError("two-equation RANS requires run.viscous=true");
+            }
+            if (robustness.enabled) {
+                throw CaseConfigurationError(
+                    "two-equation RANS does not support mean-flow step retry transactions");
             }
         }
         if (time_algorithm.integrator == TimeIntegratorKind::LuSgs) {

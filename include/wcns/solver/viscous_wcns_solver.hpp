@@ -6,6 +6,8 @@
 
 namespace wcns {
 
+struct WallFunctionDiagnostics;
+
 struct ViscousStabilityCoefficients {
     Real phenglei_2d_ssprk3 = 4.0;
     Real phenglei_3d_ssprk3 = 4.0;
@@ -65,6 +67,8 @@ public:
     [[nodiscard]] std::size_t global_riemann_face_count() const;
     [[nodiscard]] std::size_t global_riemann_fallback_count() const;
     [[nodiscard]] RobustnessDiagnostics global_robustness_diagnostics() const;
+    [[nodiscard]] WallFunctionDiagnostics global_wall_function_diagnostics() const;
+    [[nodiscard]] std::vector<std::size_t> global_turbulence_floor_repairs() const;
     [[nodiscard]] const std::unordered_map<BlockId, Field<Real>>&
     turbulence_residuals() const noexcept
     {
@@ -115,6 +119,7 @@ private:
     GradientHaloExchanger gradient_exchanger_;
     std::unordered_map<BlockId, PrimitiveGradientField> turbulence_gradient_workspace_;
     GradientFieldRegistry turbulence_gradient_registry_;
+    std::unordered_map<BlockId, Field<Real>> two_equation_gradient_workspace_;
     std::unordered_map<BlockId, ViscousFaceFluxField> viscous_flux_workspace_;
     ViscousFaceFluxFieldRegistry viscous_flux_registry_;
     ViscousFaceFluxHaloPlan viscous_flux_plan_;
@@ -136,6 +141,7 @@ private:
     ReconstructionDiagnostics reconstruction_diagnostics_ {};
     RiemannDiagnostics riemann_diagnostics_ {};
     RobustnessDiagnostics robustness_diagnostics_ {};
+    std::vector<std::size_t> turbulence_floor_repairs_;
 };
 
 } // namespace wcns

@@ -448,6 +448,46 @@ void test_stage_l_riemann_solvers()
     WCNS_REQUIRE(low_mach_result.spectral_radius < ordinary_result.spectral_radius);
     WCNS_REQUIRE(low_mach_roe.summary().find("preconditioner=weiss_smith")
                  != std::string::npos);
+    const auto low_mach_reverse = low_mach_roe.solve(
+        low_mach_right, low_mach_left, {-1.0, 0.0, 0.0}, gas, floors);
+    for (int component = 0; component < euler_components; ++component) {
+        WCNS_REQUIRE_NEAR(
+            low_mach_result.flux_per_unit_area[static_cast<std::size_t>(component)],
+            -low_mach_reverse.flux_per_unit_area[static_cast<std::size_t>(component)],
+            2.0e-11);
+    }
+    const auto low_mach_uniform = low_mach_roe.solve(
+        low_mach_left, low_mach_left, {1.0, 0.0, 0.0}, gas, floors);
+    const auto low_mach_uniform_exact
+        = euler_flux(low_mach_left, {1.0, 0.0, 0.0}, ideal);
+    for (int component = 0; component < euler_components; ++component) {
+        WCNS_REQUIRE_NEAR(
+            low_mach_uniform.flux_per_unit_area[static_cast<std::size_t>(component)],
+            low_mach_uniform_exact[static_cast<std::size_t>(component)],
+            5.0e-12);
+    }
+    Real scaled_pressure_reference = 0.0;
+    for (const Real mach : {1.0e-1, 1.0e-2, 1.0e-3}) {
+        constexpr Real pressure_jump = 0.01;
+        const Real background_pressure = 1.0 / (gas.gamma() * mach * mach);
+        const PressurePrimitiveState asymptotic_left {
+            {1.0, 1.0, 0.0, 0.0, background_pressure - pressure_jump}};
+        const PressurePrimitiveState asymptotic_right {
+            {1.0, 1.0, 0.0, 0.0, background_pressure + pressure_jump}};
+        const auto result = low_mach_roe.solve(
+            asymptotic_left, asymptotic_right, {1.0, 0.0, 0.0}, gas, floors);
+        WCNS_REQUIRE(result.used_solver == "roe");
+        WCNS_REQUIRE(result.spectral_radius > 1.0);
+        WCNS_REQUIRE(result.spectral_radius < 2.0);
+        for (const Real value : result.flux_per_unit_area) {
+            WCNS_REQUIRE(std::isfinite(value));
+        }
+        const Real scaled_pressure
+            = ((asymptotic_right[4] - asymptotic_left[4]) / background_pressure)
+            / (mach * mach);
+        if (scaled_pressure_reference == 0.0) scaled_pressure_reference = scaled_pressure;
+        WCNS_REQUIRE_NEAR(scaled_pressure, scaled_pressure_reference, 2.0e-8);
+    }
 
     const PressurePrimitiveState supersonic_left {1.0, 4.0, 0.1, 0.0, 1.0};
     const PressurePrimitiveState supersonic_right {0.8, 3.5, -0.2, 0.0, 0.7};

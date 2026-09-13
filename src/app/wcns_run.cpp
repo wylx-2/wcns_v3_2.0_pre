@@ -13,6 +13,7 @@
 #include <wcns/runtime/structured_partition.hpp>
 #include <wcns/solver/inviscid_wcns_solver.hpp>
 #include <wcns/solver/sa_negative_transport.hpp>
+#include <wcns/solver/rans_two_equation_transport.hpp>
 #include <wcns/solver/viscous_wcns_solver.hpp>
 
 #include <cctype>
@@ -427,6 +428,9 @@ int main(int argc, char** argv)
         if (config.turbulence.kind == wcns::TurbulenceModelKind::SaNegative) {
             wcns::initialize_sa_negative_fields(
                 mpi, local_blocks, config.turbulence, reference.reynolds());
+        } else if (config.turbulence.kind == wcns::TurbulenceModelKind::KOmegaSst
+                   || config.turbulence.kind == wcns::TurbulenceModelKind::KEpsilon) {
+            wcns::initialize_two_equation_fields(mpi, local_blocks, config.turbulence);
         }
 
         wcns::QuantityContext quantity_context {

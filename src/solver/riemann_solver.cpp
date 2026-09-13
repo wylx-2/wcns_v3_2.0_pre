@@ -42,6 +42,106 @@ bool finite_state(const ConservativeState& state)
     return std::all_of(state.begin(), state.end(), [](Real value) { return std::isfinite(value); });
 }
 
+Matrix5 shifted_matrix(const Matrix5& matrix, Real shift)
+{
+    Matrix5 result = matrix;
+    for (int index = 0; index < euler_components; ++index) {
+        result[static_cast<std::size_t>(index)][static_cast<std::size_t>(index)] -= shift;
+    }
+    return result;
+}
+
+void add_scaled(Matrix5& destination, const Matrix5& source, Real scale)
+{
+    for (int row = 0; row < euler_components; ++row) {
+        for (int column = 0; column < euler_components; ++column) {
+            destination[static_cast<std::size_t>(row)][static_cast<std::size_t>(column)]
+                += scale
+                * source[static_cast<std::size_t>(row)][static_cast<std::size_t>(column)];
+        }
+    }
+}
+
+ConservativeState matrix_vector_product(const Matrix5& matrix,
+                                        const ConservativeState& vector)
+{
+    ConservativeState result {};
+    for (int row = 0; row < euler_components; ++row) {
+        for (int column = 0; column < euler_components; ++column) {
+            result[static_cast<std::size_t>(row)]
+                += matrix[static_cast<std::size_t>(row)][static_cast<std::size_t>(column)]
+                * vector[static_cast<std::size_t>(column)];
+        }
+    }
+    return result;
+}
+
+Real entropy_fixed_magnitude(Real eigenvalue, Real delta)
+{
+    Real magnitude = std::abs(eigenvalue);
+    if (magnitude < delta) {
+        magnitude = 0.5 * (magnitude * magnitude / delta + delta);
+    }
+    return magnitude;
+}
+
+Matrix5 roe_flux_jacobian(const EulerCharacteristicBasis& basis,
+                          const std::array<Real, euler_components>& eigenvalues)
+{
+    Matrix5 result {};
+    for (int column = 0; column < euler_components; ++column) {
+        ConservativeState unit {};
+        unit[static_cast<std::size_t>(column)] = 1.0;
+        auto characteristic = project_characteristic(unit, basis);
+        for (int wave = 0; wave < euler_components; ++wave) {
+            characteristic[static_cast<std::size_t>(wave)]
+                *= eigenvalues[static_cast<std::size_t>(wave)];
+        }
+        const auto physical = restore_characteristic(characteristic, basis);
+        for (int row = 0; row < euler_components; ++row) {
+            result[static_cast<std::size_t>(row)][static_cast<std::size_t>(column)]
+                = physical[static_cast<std::size_t>(row)];
+        }
+    }
+    return result;
+}
+
+// A_p has the three distinct eigenvalues (u_n, lambda_-, lambda_+).  Its
+// entropy-fixed absolute value is therefore the quadratic interpolation of
+// |lambda|_delta evaluated at A_p.  This avoids importing ordinary Roe
+// eigenvectors into the preconditioned system.
+Matrix5 absolute_preconditioned_jacobian(
+    const Matrix5& matrix,
+    const std::array<Real, 3>& eigenvalues,
+    const std::array<Real, 3>& magnitudes)
+{
+    Matrix5 result {};
+    for (int index = 0; index < 3; ++index) {
+        const int first = (index + 1) % 3;
+        const int second = (index + 2) % 3;
+        const Real denominator = (eigenvalues[static_cast<std::size_t>(index)]
+                                  - eigenvalues[static_cast<std::size_t>(first)])
+            * (eigenvalues[static_cast<std::size_t>(index)]
+               - eigenvalues[static_cast<std::size_t>(second)]);
+        const Real scale = std::max(
+            {1.0,
+             std::abs(eigenvalues[static_cast<std::size_t>(index)]),
+             std::abs(eigenvalues[static_cast<std::size_t>(first)]),
+             std::abs(eigenvalues[static_cast<std::size_t>(second)])});
+        if (!std::isfinite(denominator)
+            || std::abs(denominator) <= std::numeric_limits<Real>::epsilon() * scale * scale) {
+            throw PhysicsError("Weiss-Smith eigenvalues are numerically degenerate");
+        }
+        const auto polynomial
+            = multiply(shifted_matrix(matrix, eigenvalues[static_cast<std::size_t>(first)]),
+                       shifted_matrix(matrix, eigenvalues[static_cast<std::size_t>(second)]));
+        add_scaled(result,
+                   polynomial,
+                   magnitudes[static_cast<std::size_t>(index)] / denominator);
+    }
+    return result;
+}
+
 struct RoeAverage {
     Normal3 velocity {};
     Real normal_velocity = 0.0;
@@ -117,24 +217,6 @@ Real state_speed(const PressurePrimitiveState& state)
     return std::sqrt(state[1] * state[1] + state[2] * state[2] + state[3] * state[3]);
 }
 
-Real state_preconditioned_spectral_radius(const PressurePrimitiveState& state,
-                                          Normal3 normal,
-                                          const IdealGas& gas,
-                                          Real viscous_speed,
-                                          const WeissSmithParameters& parameters)
-{
-    const Real sound = sound_speed(state, gas);
-    const Real reference
-        = weiss_smith_reference_speed(state_speed(state), sound, viscous_speed, parameters);
-    const Real beta = (reference / sound) * (reference / sound);
-    const auto eigenvalues
-        = weiss_smith_eigenvalues(normal_velocity(state, normal), sound, beta);
-    Real spectral_radius = 0.0;
-    for (const Real value : eigenvalues)
-        spectral_radius = std::max(spectral_radius, std::abs(value));
-    return spectral_radius;
-}
-
 RiemannResult preconditioned_rusanov_result(const PressurePrimitiveState& left,
                                             const PressurePrimitiveState& right,
                                             Normal3 normal,
@@ -149,16 +231,36 @@ RiemannResult preconditioned_rusanov_result(const PressurePrimitiveState& left,
     const auto right_conservative = to_conservative(right, ideal);
     const auto left_flux = euler_flux(left, normal, ideal);
     const auto right_flux = euler_flux(right, normal, ideal);
-    const Real spectral_radius = std::max(
-        state_preconditioned_spectral_radius(
-            left, normal, ideal, viscous_speed, parameters.preconditioner),
-        state_preconditioned_spectral_radius(
-            right, normal, ideal, viscous_speed, parameters.preconditioner));
+    PressurePrimitiveState average {};
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        average[index] = 0.5 * (left[index] + right[index]);
+    }
+    const auto preconditioned = weiss_smith_pressure_state(
+        average, normal, gas, floors, parameters.preconditioner, viscous_speed, 3);
+    auto full_speed_parameters = parameters.preconditioner;
+    full_speed_parameters.mach_cutoff = 1.0;
+    full_speed_parameters.viscous_cutoff = 0.0;
+    const auto physical = weiss_smith_pressure_state(
+        average, normal, gas, floors, full_speed_parameters, 0.0, 3);
+    Real spectral_radius = 0.0;
+    for (const Real eigenvalue : preconditioned.eigenvalues) {
+        spectral_radius = std::max(spectral_radius, std::abs(eigenvalue));
+    }
+    ConservativeState jump {};
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        jump[index] = right_conservative[index] - left_conservative[index];
+    }
+    auto primitive_jump = matrix_vector_product(physical.inverse, jump);
+    for (Real& value : primitive_jump) value *= spectral_radius;
+    const auto dissipation
+        = matrix_vector_product(preconditioned.gamma, primitive_jump);
     ConservativeState flux {};
     for (int component = 0; component < euler_components; ++component) {
         const auto index = static_cast<std::size_t>(component);
         flux[index] = 0.5 * (left_flux[index] + right_flux[index])
-            - 0.5 * spectral_radius * (right_conservative[index] - left_conservative[index]);
+            - 0.5 * dissipation[index];
     }
     return {flux,
             spectral_radius,
@@ -193,41 +295,83 @@ RiemannResult preconditioned_roe_result(const PressurePrimitiveState& left,
             state_speed(left), left_sound, viscous_speed, parameters.preconditioner);
         const Real right_reference = weiss_smith_reference_speed(
             state_speed(right), right_sound, viscous_speed, parameters.preconditioner);
-        const Real beta = std::max((left_reference / left_sound) * (left_reference / left_sound),
-                                   (right_reference / right_sound)
-                                       * (right_reference / right_sound));
-        const auto preconditioned
-            = weiss_smith_eigenvalues(average.normal_velocity, average.sound_speed, beta);
-        const std::array<Real, euler_components> eigenvalues {{
-            preconditioned[3],
-            preconditioned[0],
-            preconditioned[1],
-            preconditioned[2],
-            preconditioned[4],
-        }};
         const auto basis = make_roe_characteristic_basis(left, right, normal, gas, floors, 3);
         ConservativeState jump {};
         for (int component = 0; component < euler_components; ++component) {
             const auto index = static_cast<std::size_t>(component);
             jump[index] = right_conservative[index] - left_conservative[index];
         }
-        const auto strengths = project_characteristic(jump, basis);
+        const Real roe_density = std::sqrt(left[0] * right[0]);
+        const Real roe_pressure
+            = roe_density * average.sound_speed * average.sound_speed / gas.gamma();
+        const PressurePrimitiveState roe_state {{roe_density,
+                                                 average.velocity.x,
+                                                 average.velocity.y,
+                                                 average.velocity.z,
+                                                 roe_pressure}};
+        const auto preconditioned_state = weiss_smith_pressure_state(
+            roe_state, normal, gas, floors, parameters.preconditioner, viscous_speed, 3);
+        const Real beta = preconditioned_state.beta;
         const Real delta = parameters.entropy_fix_coefficient
-            * std::max({left_reference,
-                        right_reference,
-                        std::sqrt(beta) * average.sound_speed});
-        ConservativeState scaled_strengths {};
+            * std::max({left_reference, right_reference, preconditioned_state.reference_speed});
+        ConservativeState dissipation {};
         Real spectral_radius = 0.0;
-        for (int wave = 0; wave < euler_components; ++wave) {
-            Real magnitude = std::abs(eigenvalues[static_cast<std::size_t>(wave)]);
-            if (magnitude < delta) {
-                magnitude = 0.5 * (magnitude * magnitude / delta + delta);
+        if (beta >= 1.0 - 16.0 * std::numeric_limits<Real>::epsilon()) {
+            const std::array<Real, euler_components> eigenvalues {{
+                average.normal_velocity - average.sound_speed,
+                average.normal_velocity,
+                average.normal_velocity,
+                average.normal_velocity,
+                average.normal_velocity + average.sound_speed,
+            }};
+            const auto strengths = project_characteristic(jump, basis);
+            ConservativeState scaled_strengths {};
+            for (int wave = 0; wave < euler_components; ++wave) {
+                const Real magnitude = entropy_fixed_magnitude(
+                    eigenvalues[static_cast<std::size_t>(wave)], delta);
+                spectral_radius = std::max(spectral_radius, magnitude);
+                scaled_strengths[static_cast<std::size_t>(wave)]
+                    = magnitude * strengths[static_cast<std::size_t>(wave)];
             }
-            spectral_radius = std::max(spectral_radius, magnitude);
-            scaled_strengths[static_cast<std::size_t>(wave)]
-                = magnitude * strengths[static_cast<std::size_t>(wave)];
+            dissipation = restore_characteristic(scaled_strengths, basis);
+        } else {
+            const auto preconditioned
+                = weiss_smith_eigenvalues(average.normal_velocity, average.sound_speed, beta);
+            const std::array<Real, 3> distinct {{
+                preconditioned[0], preconditioned[3], preconditioned[4]}};
+            std::array<Real, 3> magnitudes {};
+            for (int wave = 0; wave < 3; ++wave) {
+                magnitudes[static_cast<std::size_t>(wave)] = entropy_fixed_magnitude(
+                    distinct[static_cast<std::size_t>(wave)], delta);
+                spectral_radius
+                    = std::max(spectral_radius, magnitudes[static_cast<std::size_t>(wave)]);
+            }
+
+            auto full_speed_parameters = parameters.preconditioner;
+            full_speed_parameters.mach_cutoff = 1.0;
+            full_speed_parameters.viscous_cutoff = 0.0;
+            const auto physical_state = weiss_smith_pressure_state(
+                roe_state, normal, gas, floors, full_speed_parameters, 0.0, 3);
+
+            const std::array<Real, euler_components> physical_eigenvalues {{
+                average.normal_velocity - average.sound_speed,
+                average.normal_velocity,
+                average.normal_velocity,
+                average.normal_velocity,
+                average.normal_velocity + average.sound_speed,
+            }};
+            const auto physical_jacobian = roe_flux_jacobian(basis, physical_eigenvalues);
+            const auto flux_primitive = multiply(physical_jacobian, physical_state.gamma);
+            const auto preconditioned_jacobian
+                = multiply(preconditioned_state.inverse, flux_primitive);
+            const auto absolute_jacobian = absolute_preconditioned_jacobian(
+                preconditioned_jacobian, distinct, magnitudes);
+            const auto primitive_jump
+                = matrix_vector_product(physical_state.inverse, jump);
+            dissipation = matrix_vector_product(
+                preconditioned_state.gamma,
+                matrix_vector_product(absolute_jacobian, primitive_jump));
         }
-        const auto dissipation = restore_characteristic(scaled_strengths, basis);
         ConservativeState flux {};
         for (int component = 0; component < euler_components; ++component) {
             const auto index = static_cast<std::size_t>(component);

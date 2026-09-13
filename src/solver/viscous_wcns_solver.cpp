@@ -1,11 +1,13 @@
 #include <wcns/solver/viscous_wcns_solver.hpp>
 
+#include <wcns/solver/rans_two_equation_transport.hpp>
 #include <wcns/solver/implicit_time_integrator.hpp>
 #include <wcns/solver/time_integrator.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -16,6 +18,9 @@ namespace {
 
 constexpr std::size_t maximum_exact_diagnostic_count
     = static_cast<std::size_t>(9007199254740992ULL);
+
+std::vector<TurbulenceFieldDescriptor>
+transported_descriptors(const ITurbulenceModel* model);
 
 bool same_floors(const NumericalFloors& lhs, const NumericalFloors& rhs)
 {
@@ -169,6 +174,8 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
 {
     config_.validate();
     turbulence_model_ = TurbulenceModelRegistry::create_builtin().create(config_.turbulence);
+    turbulence_floor_repairs_.assign(
+        transported_descriptors(turbulence_model_.get()).size(), std::size_t {0});
     const auto riemann_registry
         = RiemannSolverRegistry::with_builtins(config_.inviscid.riemann.parameters);
     config_.inviscid.riemann.validate(riemann_registry);
@@ -206,6 +213,7 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     operand_workspace_.reserve(local_count);
     gradient_workspace_.reserve(local_count);
     turbulence_gradient_workspace_.reserve(local_count);
+    two_equation_gradient_workspace_.reserve(local_count);
     viscous_flux_workspace_.reserve(local_count);
     turbulence_flux_workspace_.reserve(local_count);
     turbulence_residual_workspace_.reserve(local_count);
@@ -241,32 +249,49 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
             if (block.turbulence.empty()
                 || block.turbulence.descriptor_signature() != expected.descriptor_signature()) {
                 throw std::invalid_argument(
-                    "active SA-neg fields must be initialized before solver construction");
+                    "active turbulence fields must be initialized before solver construction");
             }
-            const auto model_gradient = turbulence_gradient_workspace_.emplace(
-                std::piecewise_construct,
-                std::forward_as_tuple(block.id()),
-                std::forward_as_tuple(
-                    block.cell_extent(), block.cell_dimension(), profile_.kind(), 1));
-            const auto model_flux = turbulence_flux_workspace_.emplace(
-                std::piecewise_construct,
-                std::forward_as_tuple(block.id()),
-                std::forward_as_tuple(
-                    block.cell_extent(), block.cell_dimension(), profile_.kind(), 1));
+            const auto descriptors = transported_descriptors(turbulence_model_.get());
+            const int variables = static_cast<int>(descriptors.size());
+            bool gradient_inserted = false;
+            bool flux_inserted = true;
+            if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                const auto model_gradient = turbulence_gradient_workspace_.emplace(
+                    std::piecewise_construct,
+                    std::forward_as_tuple(block.id()),
+                    std::forward_as_tuple(
+                        block.cell_extent(), block.cell_dimension(), profile_.kind(), 1));
+                const auto model_flux = turbulence_flux_workspace_.emplace(
+                    std::piecewise_construct,
+                    std::forward_as_tuple(block.id()),
+                    std::forward_as_tuple(
+                        block.cell_extent(), block.cell_dimension(), profile_.kind(), 1));
+                gradient_inserted = model_gradient.second;
+                flux_inserted = model_flux.second;
+                turbulence_gradient_registry_.add(block.id(), model_gradient.first->second);
+                turbulence_flux_registry_.add(block.id(), model_flux.first->second);
+            } else {
+                gradient_inserted = two_equation_gradient_workspace_
+                                        .emplace(std::piecewise_construct,
+                                                 std::forward_as_tuple(block.id()),
+                                                 std::forward_as_tuple(block.cell_extent(),
+                                                                       3 * variables,
+                                                                       0,
+                                                                       0.0))
+                                        .second;
+            }
             const auto model_residual = turbulence_residual_workspace_.emplace(
                 std::piecewise_construct,
                 std::forward_as_tuple(block.id()),
-                std::forward_as_tuple(block.cell_extent(), 1, 0, 0.0));
+                std::forward_as_tuple(block.cell_extent(), variables, 0, 0.0));
             const auto source_jacobian = turbulence_source_jacobian_workspace_.emplace(
                 std::piecewise_construct,
                 std::forward_as_tuple(block.id()),
-                std::forward_as_tuple(block.cell_extent(), 1, 0, 0.0));
-            if (!model_gradient.second || !model_flux.second || !model_residual.second
+                std::forward_as_tuple(block.cell_extent(), variables * variables, 0, 0.0));
+            if (!gradient_inserted || !flux_inserted || !model_residual.second
                 || !source_jacobian.second) {
-                throw std::logic_error("duplicate SA-neg workspace block");
+                throw std::logic_error("duplicate turbulence workspace block");
             }
-            turbulence_gradient_registry_.add(block.id(), model_gradient.first->second);
-            turbulence_flux_registry_.add(block.id(), model_flux.first->second);
         }
     }
     const bool any_history = std::any_of(local_blocks_.blocks().begin(),
@@ -301,7 +326,8 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
                                    history.previous_mean.data() + history.previous_mean.size())});
             if (turbulence_active()) {
                 if (history.previous_model.interior_extent() != block.cell_extent()
-                    || history.previous_model.components() != 1
+                    || history.previous_model.components()
+                        != static_cast<int>(transported_descriptors(turbulence_model_.get()).size())
                     || history.previous_model.ghost_width() != 0) {
                     throw std::invalid_argument("viscous implicit model history metadata differ");
                 }
@@ -318,7 +344,8 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
 
 bool ViscousWcnsSolver::turbulence_active() const noexcept
 {
-    return config_.turbulence.kind == TurbulenceModelKind::SaNegative;
+    return turbulence_model_ != nullptr
+        && turbulence_model_->family() == TurbulenceModelFamily::RansTransport;
 }
 
 void ViscousWcnsSolver::compute_residuals(Real stage_time, int rk_stage)
@@ -356,10 +383,15 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
     }
 
     if (turbulence_active()) {
-        synchronize_sa_negative_fields(turbulence_exchanger_,
-                                       local_blocks_,
-                                       sa_negative_farfield_value(config_.turbulence,
-                                                                  reference_.reynolds()));
+        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+            synchronize_sa_negative_fields(turbulence_exchanger_,
+                                           local_blocks_,
+                                           sa_negative_farfield_value(config_.turbulence,
+                                                                      reference_.reynolds()));
+        } else {
+            synchronize_two_equation_fields(
+                turbulence_exchanger_, local_blocks_, config_.turbulence, transport_, reference_);
+        }
     }
 
     reconstruction_diagnostics_ = {};
@@ -410,7 +442,7 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
     gradient_plan_.set_version(version_);
     gradient_exchanger_.exchange(gradient_registry_);
 
-    if (turbulence_active()) {
+    if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
         for (auto& block : local_blocks_.blocks()) {
             compute_sa_negative_gradient(turbulence_gradient_workspace_.at(block.id()),
                                          block,
@@ -434,7 +466,7 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                                          floors_,
                                          version_,
                                          turbulence_active() ? turbulence_model_.get() : nullptr);
-        if (turbulence_active()) {
+        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
             compute_sa_negative_flux_and_source(
                 turbulence_flux_workspace_.at(block.id()),
                 turbulence_residual_workspace_.at(block.id()),
@@ -450,11 +482,24 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                 gas_,
                 reference_,
                 version_);
+        } else if (turbulence_active()) {
+            compute_two_equation_residual_and_source(
+                turbulence_residual_workspace_.at(block.id()),
+                turbulence_source_jacobian_workspace_.at(block.id()),
+                two_equation_gradient_workspace_.at(block.id()),
+                block,
+                metrics_.at(block.id()),
+                inviscid_flux_workspace_.at(block.id()),
+                gradient_workspace_.at(block.id()),
+                *turbulence_model_,
+                transport_,
+                gas_,
+                reference_);
         }
     }
     viscous_flux_plan_.set_version(version_);
     viscous_flux_exchanger_.exchange(viscous_flux_registry_);
-    if (turbulence_active()) {
+    if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
         turbulence_flux_plan_.set_version(version_);
         turbulence_flux_exchanger_.exchange(turbulence_flux_registry_);
     }
@@ -471,7 +516,7 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                                   profile_,
                                   reference_.reynolds());
         add_source_terms(block, metrics_.at(block.id()), source_registry_, stage_time);
-        if (turbulence_active()) {
+        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
             assemble_sa_negative_residual(turbulence_residual_workspace_.at(block.id()),
                                           block,
                                           metrics_.at(block.id()),
@@ -485,15 +530,19 @@ void ViscousWcnsSolver::capture_turbulence_stage_state()
 {
     turbulence_initial_state_.clear();
     turbulence_stage_state_.clear();
+    const auto descriptors = transported_descriptors(turbulence_model_.get());
     for (const auto& block : local_blocks_.blocks()) {
         const auto cells = block.cell_extent();
-        std::vector<Real> values(cells.size());
+        std::vector<Real> values(cells.size() * descriptors.size());
         std::size_t offset = 0;
         for (int k = 0; k < cells.nk; ++k) {
             for (int j = 0; j < cells.nj; ++j) {
                 for (int i = 0; i < cells.ni; ++i) {
-                    values[offset++] = block.flow.conservative(i, j, k, density)
-                        * block.turbulence.at({i, j, k}, "nu_tilde");
+                    const Real rho = block.flow.conservative(i, j, k, density);
+                    for (const auto& descriptor : descriptors) {
+                        values[offset++]
+                            = rho * block.turbulence.at({i, j, k}, descriptor.name);
+                    }
                 }
             }
         }
@@ -508,8 +557,10 @@ void ViscousWcnsSolver::update_turbulence_stage(Real initial_weight,
 {
     if (!std::isfinite(initial_weight) || !std::isfinite(stage_weight)
         || !positive_finite(residual_weight)) {
-        throw std::invalid_argument("SA-neg SSPRK stage weights are invalid");
+        throw std::invalid_argument("turbulence SSPRK stage weights are invalid");
     }
+    const auto descriptors = transported_descriptors(turbulence_model_.get());
+    const int variables = static_cast<int>(descriptors.size());
     for (auto& block : local_blocks_.blocks()) {
         const auto cells = block.cell_extent();
         const auto& initial = turbulence_initial_state_.at(block.id());
@@ -520,23 +571,48 @@ void ViscousWcnsSolver::update_turbulence_stage(Real initial_weight,
         for (int k = 0; k < cells.nk; ++k) {
             for (int j = 0; j < cells.nj; ++j) {
                 for (int i = 0; i < cells.ni; ++i) {
-                    Real increment = residual_weight * residual(i, j, k, 0);
-                    if (config_.turbulence.source_treatment
-                        == TurbulenceSourceTreatment::LocalImplicit) {
-                        increment = local_implicit_turbulence_increment(
-                            residual(i, j, k, 0), jacobian(i, j, k, 0), residual_weight);
-                    }
-                    const Real candidate = initial_weight * initial[offset]
-                        + stage_weight * current[offset] + increment;
                     const Real rho = block.flow.conservative(i, j, k, density);
-                    const Real specific = candidate / rho;
-                    if (!std::isfinite(candidate) || !positive_finite(rho)
-                        || !std::isfinite(specific)) {
-                        throw PhysicsError("SA-neg SSPRK update is non-finite");
+                    for (int variable = 0; variable < variables; ++variable) {
+                        Real increment
+                            = residual_weight * residual(i, j, k, variable);
+                        if (config_.turbulence.source_treatment
+                            == TurbulenceSourceTreatment::LocalImplicit) {
+                            increment = local_implicit_turbulence_increment(
+                                residual(i, j, k, variable),
+                                jacobian(i,
+                                         j,
+                                         k,
+                                         variable * variables + variable),
+                                residual_weight);
+                        }
+                        Real candidate = initial_weight * initial[offset]
+                            + stage_weight * current[offset] + increment;
+                        const auto& descriptor
+                            = descriptors[static_cast<std::size_t>(variable)];
+                        if (!std::isfinite(candidate) || !positive_finite(rho)) {
+                            throw PhysicsError("turbulence SSPRK update is inadmissible");
+                        }
+                        Real specific = candidate / rho;
+                        if (descriptor.strictly_positive && std::isfinite(specific)) {
+                            const auto projection = project_positive_turbulence_state(
+                                candidate, rho, descriptor);
+                            candidate = projection.conservative;
+                            specific = projection.specific;
+                            if (projection.repaired) {
+                                ++turbulence_floor_repairs_[static_cast<std::size_t>(variable)];
+                            }
+                        }
+                        const bool admissible = std::isfinite(specific)
+                            && (descriptor.strictly_positive
+                                    ? specific > descriptor.lower_bound
+                                    : specific >= descriptor.lower_bound);
+                        if (!admissible) {
+                            throw PhysicsError("turbulence SSPRK update is inadmissible");
+                        }
+                        current[offset] = candidate;
+                        block.turbulence.at({i, j, k}, descriptor.name) = specific;
+                        ++offset;
                     }
-                    current[offset] = candidate;
-                    block.turbulence.at({i, j, k}, "nu_tilde") = specific;
-                    ++offset;
                 }
             }
         }
@@ -607,6 +683,7 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
     const NumericalFloors& floors,
     const TransportModel& transport,
     const ViscousStabilityCoefficients& stability,
+    const ITurbulenceModel* turbulence_model,
     AlgorithmProfileKind profile,
     const RiemannSolverParameters& riemann_parameters,
     const std::vector<TurbulenceFieldDescriptor>& descriptors,
@@ -635,31 +712,62 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
     for (const auto& block : local_blocks.blocks()) {
         const auto extent = block.cell_extent();
         const auto& metric = metrics.at(block.id());
-        Field<Real> additional(extent, 1, 0, 0.0);
+        Field<Real> additional(extent, 2 * block.cell_dimension(), 0, 0.0);
         const Real coefficient = stability.for_ssprk3(profile, block.cell_dimension());
         for (int k = 0; k < extent.nk; ++k) {
             for (int j = 0; j < extent.nj; ++j) {
                 for (int i = 0; i < extent.ni; ++i) {
                     const Index3 cell {i, j, k};
-                    Real area_square_sum = 0.0;
+                    const Real rho = block.flow.temperature_primitive(
+                        i, j, k, temperature_density);
+                    const Real temperature = block.flow.temperature_primitive(
+                        i, j, k, temperature_value);
+                    const Real mu = transport.viscosity(temperature);
+                    const Real molecular = mu / (rho * reference.reynolds());
+                    Real mean_diffusivity = molecular;
+                    Real model_diffusivity = 0.0;
+                    if (turbulence_model != nullptr
+                        && turbulence_model->family() == TurbulenceModelFamily::RansTransport) {
+                        TurbulenceCellContext context;
+                        for (int component = 0; component < fluid_components; ++component) {
+                            context.mean_state[static_cast<std::size_t>(component)]
+                                = block.flow.temperature_primitive(i, j, k, component);
+                        }
+                        for (const auto& descriptor : descriptors) {
+                            context.model_values.push_back(
+                                block.turbulence.at(cell, descriptor.name));
+                            context.model_gradients.push_back({{0.0, 0.0, 0.0}});
+                        }
+                        context.molecular_kinematic_viscosity = molecular;
+                        context.wall_distance = block.turbulence.at(cell, "wall_distance");
+                        context.reference_reynolds = reference.reynolds();
+                        context.reference_mach = reference.mach();
+                        context.heat_capacity_ratio = gas.gamma();
+                        context.dimension = block.cell_dimension();
+                        const auto contribution
+                            = turbulence_model->viscous_contribution(context);
+                        mean_diffusivity = std::max(
+                            mean_diffusivity,
+                            molecular + contribution.eddy_viscosity
+                                    / (rho * reference.reynolds()));
+                        for (const Real diffusion :
+                             turbulence_model->diffusion_coefficients(context)) {
+                            model_diffusivity = std::max(model_diffusivity, diffusion / rho);
+                        }
+                    }
+                    const Real volume = metric.jacobian()(i, j, k);
+                    const Real diffusivity = std::max(mean_diffusivity, model_diffusivity);
                     for (int logical = 0; logical < block.cell_dimension(); ++logical) {
                         const auto axis = static_cast<Axis>(logical);
                         for (int side = 0; side <= 1; ++side) {
                             auto face = cell;
                             face[static_cast<std::size_t>(axis)] += side;
-                            area_square_sum += area_squared(area_vector(metric, axis, face));
+                            additional(i, j, k, 2 * logical + side)
+                                = coefficient * diffusivity
+                                * area_squared(area_vector(metric, axis, face))
+                                / (2.0 * volume * volume);
                         }
                     }
-                    const Real rho = block.flow.temperature_primitive(
-                        i, j, k, temperature_density);
-                    const Real temperature = block.flow.temperature_primitive(
-                        i, j, k, temperature_value);
-                    const Real molecular = transport.viscosity(temperature)
-                        / (rho * reference.reynolds());
-                    const Real volume = metric.jacobian()(i, j, k);
-                    additional(i, j, k, 0)
-                        = coefficient * molecular * area_square_sum
-                        / (2.0 * volume * volume);
                 }
             }
         }
@@ -672,7 +780,9 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
                                                          reference,
                                                          floors,
                                                          pseudo_cfl,
-                                                         physical_diagonal,
+                                                         preconditioner == nullptr
+                                                             ? physical_diagonal
+                                                             : 0.0,
                                                          preconditioner,
                                                          1.0 / reference.reynolds(),
                                                          &additional);
@@ -702,21 +812,88 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
                         local_count += 1.0;
                         ++mean_offset;
                     }
+                    if (riemann_parameters.weiss_smith) {
+                        TemperaturePrimitiveState temperature_state {};
+                        ConservativeState residual {};
+                        for (int component = 0; component < euler_components; ++component) {
+                            const auto index = static_cast<std::size_t>(component);
+                            temperature_state[index]
+                                = block.flow.temperature_primitive(i, j, k, component);
+                            residual[index] = mean_rhs(i, j, k, component);
+                        }
+                        Real area_sum = 0.0;
+                        const Index3 cell {i, j, k};
+                        for (int logical = 0; logical < block.cell_dimension(); ++logical) {
+                            const auto axis = static_cast<Axis>(logical);
+                            for (int side = 0; side <= 1; ++side) {
+                                auto face = cell;
+                                face[static_cast<std::size_t>(axis)] += side;
+                                area_sum += std::sqrt(area_squared(area_vector(metric, axis, face)));
+                            }
+                        }
+                        const Real length
+                            = 2.0 * metric.jacobian()(i, j, k) / area_sum;
+                        const auto pressure_state = pressure_primitive(temperature_state,
+                                                                       gas,
+                                                                       reference,
+                                                                       floors,
+                                                                       block.cell_dimension());
+                        const auto transformed = weiss_smith_precondition_residual(
+                            pressure_state,
+                            residual,
+                            gas,
+                            floors,
+                            riemann_parameters.preconditioner,
+                            (1.0 / reference.reynolds()) / length,
+                            block.cell_dimension());
+                        for (int component = 0; component < euler_components; ++component) {
+                            mean_rhs(i, j, k, component)
+                                = transformed[static_cast<std::size_t>(component)];
+                        }
+                    }
                 }
             }
         }
-        result.mean.emplace(block.id(),
-                            solve_scalar_lu_sgs(mean_rhs,
-                                                system.diagonal,
-                                                system.coupling,
-                                                block.cell_dimension(),
-                                                iteration));
+        if (preconditioner == nullptr && descriptors.size() <= 1) {
+            const auto face_blocks = build_euler_face_coupling_blocks(
+                block, metric, gas, reference, floors, &additional);
+            result.mean.emplace(block.id(),
+                                solve_face_block_lu_sgs(mean_rhs,
+                                                        system.diagonal,
+                                                        face_blocks,
+                                                        block.cell_dimension(),
+                                                        iteration));
+        } else if (preconditioner != nullptr && physical) {
+            const auto diagonal_blocks = build_preconditioned_time_diagonal_blocks(
+                block,
+                metric,
+                gas,
+                reference,
+                floors,
+                system.diagonal,
+                physical_diagonal,
+                *preconditioner,
+                1.0 / reference.reynolds());
+            result.mean.emplace(block.id(),
+                                solve_block_lu_sgs(mean_rhs,
+                                                   diagonal_blocks,
+                                                   system.coupling,
+                                                   block.cell_dimension(),
+                                                   iteration));
+        } else {
+            result.mean.emplace(block.id(),
+                                solve_scalar_lu_sgs(mean_rhs,
+                                                    system.diagonal,
+                                                    system.coupling,
+                                                    block.cell_dimension(),
+                                                    iteration));
+        }
         if (!descriptors.empty()) {
             const int variables = static_cast<int>(descriptors.size());
             const auto& residual = model_residuals.at(block.id());
             const auto& source_jacobian = source_jacobians.at(block.id());
             Field<Real> model_rhs(extent, variables, 0, 0.0);
-            Field<Real> model_diagonal(extent, variables, 0, 0.0);
+            Field<Real> model_diagonal(extent, variables * variables, 0, 0.0);
             const auto* model_n = physical ? &current_model->at(block.id()) : nullptr;
             const auto* model_nm1 = physical ? &previous_model->at(block.id()) : nullptr;
             std::size_t model_offset = 0;
@@ -737,22 +914,32 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
                                                            physical_time_step);
                             }
                             model_rhs(i, j, k, variable) = value;
-                            model_diagonal(i, j, k, variable)
-                                = system.diagonal(i, j, k, 0)
-                                + std::max(0.0, -source_jacobian(i, j, k, variable));
                             local_square_sum += value * value;
                             local_count += 1.0;
                             ++model_offset;
+                        }
+                        for (int row = 0; row < variables; ++row) {
+                            for (int column = 0; column < variables; ++column) {
+                                const int entry = row * variables + column;
+                                model_diagonal(i, j, k, entry)
+                                    = (row == column
+                                           ? system.diagonal(i, j, k, 0)
+                                                 + (preconditioner == nullptr
+                                                        ? 0.0
+                                                        : physical_diagonal)
+                                           : 0.0)
+                                    - source_jacobian(i, j, k, entry);
+                            }
                         }
                     }
                 }
             }
             result.model.emplace(block.id(),
-                                 solve_scalar_lu_sgs(model_rhs,
-                                                     model_diagonal,
-                                                     system.coupling,
-                                                     block.cell_dimension(),
-                                                     iteration));
+                                 solve_block_lu_sgs(model_rhs,
+                                                    model_diagonal,
+                                                    system.coupling,
+                                                    block.cell_dimension(),
+                                                    iteration));
         }
     }
     const Real global_sum = mpi.sum(local_square_sum);
@@ -764,7 +951,12 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
     return result;
 }
 
-Real commit_viscous_implicit_increment(
+struct ViscousIncrementCommit {
+    Real relaxation = 0.0;
+    std::vector<std::size_t> floor_repairs;
+};
+
+ViscousIncrementCommit commit_viscous_implicit_increment(
     const MpiRuntime& mpi,
     const std::vector<StructuredBlock*>& blocks,
     const std::unordered_map<BlockId, Field<Real>>& mean_increments,
@@ -795,7 +987,10 @@ Real commit_viscous_implicit_increment(
         }
         model_baseline.emplace(block->id(), std::move(values));
     }
-    for (int backtrack = 0; backtrack <= 7; ++backtrack) {
+    std::string last_local_failure;
+    for (int backtrack = 0; backtrack <= 20; ++backtrack) {
+        last_local_failure.clear();
+        std::vector<std::size_t> local_floor_repairs(descriptors.size(), 0);
         const Real relaxation = std::ldexp(1.0, -backtrack);
         auto mean_candidate = mean_baseline;
         auto model_candidate = model_baseline;
@@ -825,13 +1020,37 @@ Real commit_viscous_implicit_increment(
                                 conservative += relaxation
                                     * model_iterator->second(
                                         i, j, k, static_cast<int>(variable));
-                                const Real specific = conservative / rho;
-                                if (!std::isfinite(specific)
+                                Real specific = conservative / rho;
+                                if (descriptors[variable].strictly_positive
+                                    && std::isfinite(conservative) && positive_finite(rho)
+                                    && std::isfinite(specific)) {
+                                    const auto projection = project_positive_turbulence_state(
+                                        conservative, rho, descriptors[variable]);
+                                    conservative = projection.conservative;
+                                    specific = projection.specific;
+                                    if (projection.repaired) ++local_floor_repairs[variable];
+                                }
+                                if (!std::isfinite(conservative) || !positive_finite(rho)
+                                    || !std::isfinite(specific)
                                     || (descriptors[variable].strictly_positive
                                         && specific <= descriptors[variable].lower_bound)
                                     || (!descriptors[variable].strictly_positive
                                         && specific < descriptors[variable].lower_bound)) {
                                     local_model_valid = false;
+                                    if (last_local_failure.empty()) {
+                                        std::ostringstream detail;
+                                        detail << "model=" << descriptors[variable].name
+                                               << ",block=" << block->id() << ",cell=(" << i
+                                               << ',' << j << ',' << k << "),specific="
+                                               << specific << ",conservative=" << conservative
+                                               << ",rho=" << rho << ",lower_bound="
+                                               << descriptors[variable].lower_bound
+                                               << ",increment="
+                                               << model_iterator->second(
+                                                      i, j, k, static_cast<int>(variable))
+                                               << ",relaxation=" << relaxation;
+                                        last_local_failure = detail.str();
+                                    }
                                 }
                                 ++model_offset;
                             }
@@ -842,6 +1061,16 @@ Real commit_viscous_implicit_increment(
         }
         const auto validation = validate_candidate_state(
             mean_candidate, blocks, gas, reference, floors, 1, time);
+        if (!validation.valid() && last_local_failure.empty()) {
+            const auto& cell = validation.troubled_cells.front();
+            std::ostringstream detail;
+            detail << "mean=" << cell.reason << ",block=" << cell.block << ",cell=("
+                   << cell.cell.i << ',' << cell.cell.j << ',' << cell.cell.k
+                   << "),rho=" << cell.density << ",p=" << cell.pressure
+                   << ",T=" << cell.temperature << ",e=" << cell.internal_energy
+                   << ",relaxation=" << relaxation;
+            last_local_failure = detail.str();
+        }
         if (mpi.all_true(validation.valid() && local_model_valid)) {
             commit_candidate_state(blocks, mean_candidate);
             for (auto* block : blocks) {
@@ -860,16 +1089,21 @@ Real commit_viscous_implicit_increment(
                     }
                 }
             }
-            return relaxation;
+            return {relaxation, std::move(local_floor_repairs)};
         }
     }
-    throw PhysicsError("viscous LU-SGS increment remained inadmissible after backtracking");
+    throw PhysicsError("viscous LU-SGS increment remained inadmissible after backtracking"
+                       + (last_local_failure.empty() ? std::string(" (remote rank failure)")
+                                                     : ": " + last_local_failure));
 }
 
 } // namespace
 
 Real ViscousWcnsSolver::advance(Real time_step, Real initial_time)
 {
+    std::fill(turbulence_floor_repairs_.begin(),
+              turbulence_floor_repairs_.end(),
+              std::size_t {0});
     Real accepted_time_step = time_step;
     if (!config_.inviscid.robustness.enabled) {
         robustness_diagnostics_ = {};
@@ -924,6 +1158,9 @@ Real ViscousWcnsSolver::advance_lu_sgs(Real pseudo_cfl,
                                        const LuSgsIterationConfig& iteration)
 {
     iteration.validate();
+    std::fill(turbulence_floor_repairs_.begin(),
+              turbulence_floor_repairs_.end(),
+              std::size_t {0});
     compute_residuals(time);
     const auto descriptors
         = transported_descriptors(turbulence_active() ? turbulence_model_.get() : nullptr);
@@ -935,6 +1172,7 @@ Real ViscousWcnsSolver::advance_lu_sgs(Real pseudo_cfl,
                                                              floors_,
                                                              transport_,
                                                              config_.stability,
+                                                             turbulence_model_.get(),
                                                              profile_.kind(),
                                                              config_.inviscid.riemann.parameters,
                                                              descriptors,
@@ -942,15 +1180,16 @@ Real ViscousWcnsSolver::advance_lu_sgs(Real pseudo_cfl,
                                                              turbulence_source_jacobian_workspace_,
                                                              pseudo_cfl,
                                                              iteration);
-    static_cast<void>(commit_viscous_implicit_increment(mpi_,
-                                                        block_workspace_,
-                                                        increments.mean,
-                                                        increments.model,
-                                                        descriptors,
-                                                        gas_,
-                                                        reference_,
-                                                        floors_,
-                                                        time));
+    const auto commit = commit_viscous_implicit_increment(mpi_,
+                                                          block_workspace_,
+                                                          increments.mean,
+                                                          increments.model,
+                                                          descriptors,
+                                                          gas_,
+                                                          reference_,
+                                                          floors_,
+                                                          time);
+    turbulence_floor_repairs_ = commit.floor_repairs;
     for (auto& block : local_blocks_.blocks())
         update_temperature_primitive_interior(block, gas_, reference_, floors_);
     robustness_diagnostics_ = {};
@@ -967,6 +1206,9 @@ Real ViscousWcnsSolver::advance_dual_time(Real physical_time_step,
     if (!positive_finite(physical_time_step)) {
         throw std::invalid_argument("viscous dual-time physical step is invalid");
     }
+    std::fill(turbulence_floor_repairs_.begin(),
+              turbulence_floor_repairs_.end(),
+              std::size_t {0});
     const auto descriptors
         = transported_descriptors(turbulence_active() ? turbulence_model_.get() : nullptr);
     const auto current_mean = capture_conservative_state(block_workspace_);
@@ -994,6 +1236,7 @@ Real ViscousWcnsSolver::advance_dual_time(Real physical_time_step,
             floors_,
             transport_,
             config_.stability,
+            turbulence_model_.get(),
             profile_.kind(),
             config_.inviscid.riemann.parameters,
             descriptors,
@@ -1033,16 +1276,19 @@ Real ViscousWcnsSolver::advance_dual_time(Real physical_time_step,
             return physical_time_step;
         }
         if (iteration == config.max_iterations) break;
-        static_cast<void>(commit_viscous_implicit_increment(mpi_,
-                                                            block_workspace_,
-                                                            increments.mean,
-                                                            increments.model,
-                                                            descriptors,
-                                                            gas_,
-                                                            reference_,
-                                                            floors_,
-                                                            initial_time
-                                                                + physical_time_step));
+        const auto commit = commit_viscous_implicit_increment(
+            mpi_,
+            block_workspace_,
+            increments.mean,
+            increments.model,
+            descriptors,
+            gas_,
+            reference_,
+            floors_,
+            initial_time + physical_time_step);
+        for (std::size_t variable = 0; variable < commit.floor_repairs.size(); ++variable) {
+            turbulence_floor_repairs_[variable] += commit.floor_repairs[variable];
+        }
     }
     restore_conservative_state(block_workspace_, current_mean);
     for (auto& block : local_blocks_.blocks()) {
@@ -1106,6 +1352,22 @@ RobustnessDiagnostics ViscousWcnsSolver::global_robustness_diagnostics() const
     return result;
 }
 
+WallFunctionDiagnostics ViscousWcnsSolver::global_wall_function_diagnostics() const
+{
+    return wcns::global_wall_function_diagnostics(mpi_, local_blocks_, config_.turbulence);
+}
+
+std::vector<std::size_t> ViscousWcnsSolver::global_turbulence_floor_repairs() const
+{
+    std::vector<std::size_t> result;
+    result.reserve(turbulence_floor_repairs_.size());
+    for (const auto local : turbulence_floor_repairs_) {
+        result.push_back(global_diagnostic_count(
+            mpi_, local, "turbulence floor-repair count"));
+    }
+    return result;
+}
+
 Real ViscousWcnsSolver::global_time_step(Real cfl)
 {
     if (!positive_finite(cfl)) {
@@ -1158,11 +1420,15 @@ Real ViscousWcnsSolver::global_time_step(Real cfl)
                     Real model_diffusivity = 0.0;
                     Real source_rate = 0.0;
                     if (turbulence_active()) {
+                        const auto descriptors
+                            = transported_descriptors(turbulence_model_.get());
                         TurbulenceCellContext context;
                         context.mean_state = state;
-                        context.model_values
-                            = {block.turbulence.at(cell, "nu_tilde")};
-                        context.model_gradients = {{{0.0, 0.0, 0.0}}};
+                        for (const auto& descriptor : descriptors) {
+                            context.model_values.push_back(
+                                block.turbulence.at(cell, descriptor.name));
+                            context.model_gradients.push_back({{0.0, 0.0, 0.0}});
+                        }
                         context.molecular_kinematic_viscosity
                             = mu / (rho * reference_.reynolds());
                         context.wall_distance
@@ -1171,15 +1437,29 @@ Real ViscousWcnsSolver::global_time_step(Real cfl)
                         context.reference_mach = reference_.mach();
                         context.heat_capacity_ratio = gas_.gamma();
                         context.dimension = block.cell_dimension();
-                        const auto evaluation = evaluate_sa_negative(context);
+                        const auto contribution
+                            = turbulence_model_->viscous_contribution(context);
                         mean_diffusivity = std::max(
                             mean_diffusivity,
                             mu / (rho * reference_.reynolds())
-                                + evaluation.eddy_kinematic_viscosity);
-                        model_diffusivity = evaluation.diffusion_coefficient;
+                                + contribution.eddy_viscosity
+                                    / (rho * reference_.reynolds()));
+                        for (const Real diffusion :
+                             turbulence_model_->diffusion_coefficients(context)) {
+                            model_diffusivity
+                                = std::max(model_diffusivity, diffusion / rho);
+                        }
                         if (config_.turbulence.source_treatment
                             == TurbulenceSourceTreatment::Explicit) {
-                            source_rate = std::max(0.0, -evaluation.source_derivative);
+                            const auto source = turbulence_model_->source_linearization(context);
+                            const int variables = static_cast<int>(source.source.size());
+                            for (int variable = 0; variable < variables; ++variable) {
+                                source_rate = std::max(
+                                    source_rate,
+                                    std::max(0.0,
+                                             -source.jacobian[static_cast<std::size_t>(
+                                                 variable * variables + variable)]));
+                            }
                         }
                     }
                     const Real denominator = inviscid_sum / (2.0 * jacobian)

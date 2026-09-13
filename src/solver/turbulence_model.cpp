@@ -1,4 +1,5 @@
 #include <wcns/solver/turbulence_model.hpp>
+#include <wcns/solver/two_equation_models.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -179,6 +180,184 @@ private:
     TurbulenceModelConfig config_;
 };
 
+TurbulenceViscousContribution two_equation_viscous_contribution(
+    const TurbulenceCellContext& context,
+    const TurbulenceModelConfig& config,
+    Real eddy_kinematic_viscosity)
+{
+    config.validate();
+    if ((context.dimension != 2 && context.dimension != 3)
+        || !std::isfinite(eddy_kinematic_viscosity) || eddy_kinematic_viscosity < 0.0
+        || !std::isfinite(context.reference_reynolds)
+        || context.reference_reynolds <= 0.0 || !std::isfinite(context.reference_mach)
+        || context.reference_mach <= 0.0 || !std::isfinite(context.heat_capacity_ratio)
+        || context.heat_capacity_ratio <= 1.0
+        || !std::isfinite(context.mean_state[temperature_density])
+        || context.mean_state[temperature_density] <= 0.0) {
+        throw PhysicsError("two-equation eddy viscosity is invalid");
+    }
+    const Real rho = context.mean_state[temperature_density];
+    const Real mu_t = rho * context.reference_reynolds * eddy_kinematic_viscosity;
+    const auto& du = context.primitive_gradients[0];
+    const auto& dv = context.primitive_gradients[1];
+    const auto& dw = context.primitive_gradients[2];
+    const Real divergence = du[0] + dv[1] + dw[2];
+    TurbulenceViscousContribution result;
+    result.eddy_viscosity = mu_t;
+    result.stress.xx = 2.0 * mu_t * (du[0] - divergence / 3.0);
+    result.stress.yy = 2.0 * mu_t * (dv[1] - divergence / 3.0);
+    result.stress.zz = 2.0 * mu_t * (dw[2] - divergence / 3.0);
+    result.stress.xy = mu_t * (du[1] + dv[0]);
+    result.stress.xz = mu_t * (du[2] + dw[0]);
+    result.stress.yz = mu_t * (dv[2] + dw[1]);
+    const Real heat = mu_t
+        / ((context.heat_capacity_ratio - 1.0) * context.reference_mach
+           * context.reference_mach * config.turbulent_prandtl);
+    for (int direction = 0; direction < context.dimension; ++direction) {
+        result.energy_heat_flux[static_cast<std::size_t>(direction)]
+            = heat * context.primitive_gradients[3][static_cast<std::size_t>(direction)];
+    }
+    result.validate(context.dimension);
+    return result;
+}
+
+class SstTurbulenceModel final : public ITurbulenceModel {
+public:
+    explicit SstTurbulenceModel(TurbulenceModelConfig config)
+        : config_(std::move(config))
+    {
+        config_.validate();
+        if (config_.kind != TurbulenceModelKind::KOmegaSst) {
+            throw std::invalid_argument("SST factory received a different model");
+        }
+    }
+
+    const TurbulenceModelConfig& config() const noexcept override { return config_; }
+    TurbulenceModelFamily family() const noexcept override
+    {
+        return TurbulenceModelFamily::RansTransport;
+    }
+    std::vector<TurbulenceFieldDescriptor> fields() const override
+    {
+        return {
+            {"k", TurbulenceFieldRole::Transported, TurbulenceFieldScale::VelocitySquared,
+             true, config_.model_floor},
+            {"omega", TurbulenceFieldRole::Transported, TurbulenceFieldScale::InverseTime,
+             true, config_.model_floor},
+            {"mu_t_over_mu", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless, false, 0.0},
+            {"sst_f1", TurbulenceFieldRole::Diagnostic, TurbulenceFieldScale::Dimensionless,
+             false, 0.0},
+            {"sst_f2", TurbulenceFieldRole::Diagnostic, TurbulenceFieldScale::Dimensionless,
+             false, 0.0},
+            {"turbulence_production", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation, false,
+             std::numeric_limits<Real>::lowest()},
+            {"turbulence_destruction", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation, false,
+             std::numeric_limits<Real>::lowest()},
+            {"cross_diffusion", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation, false,
+             std::numeric_limits<Real>::lowest()},
+            {"wall_distance", TurbulenceFieldRole::Auxiliary, TurbulenceFieldScale::Length,
+             true, 0.0},
+            {"wall_y_plus", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless, false, 0.0},
+        };
+    }
+    TurbulenceViscousContribution
+    viscous_contribution(const TurbulenceCellContext& context) const override
+    {
+        return two_equation_viscous_contribution(
+            context, config_, evaluate_k_omega_sst(context).eddy_kinematic_viscosity);
+    }
+    std::vector<Real> diffusion_coefficients(const TurbulenceCellContext& context) const override
+    {
+        const auto evaluation = evaluate_k_omega_sst(context);
+        return {evaluation.diffusion_coefficients[0], evaluation.diffusion_coefficients[1]};
+    }
+    TurbulenceSourceLinearization
+    source_linearization(const TurbulenceCellContext& context) const override
+    {
+        const auto evaluation = evaluate_k_omega_sst(context);
+        TurbulenceSourceLinearization result {
+            {evaluation.source[0], evaluation.source[1]},
+            {evaluation.source_jacobian[0], evaluation.source_jacobian[1],
+             evaluation.source_jacobian[2], evaluation.source_jacobian[3]},
+        };
+        result.validate(2);
+        return result;
+    }
+
+private:
+    TurbulenceModelConfig config_;
+};
+
+class StandardKEpsilonTurbulenceModel final : public ITurbulenceModel {
+public:
+    explicit StandardKEpsilonTurbulenceModel(TurbulenceModelConfig config)
+        : config_(std::move(config))
+    {
+        config_.validate();
+        if (config_.kind != TurbulenceModelKind::KEpsilon) {
+            throw std::invalid_argument("k-epsilon factory received a different model");
+        }
+    }
+
+    const TurbulenceModelConfig& config() const noexcept override { return config_; }
+    TurbulenceModelFamily family() const noexcept override
+    {
+        return TurbulenceModelFamily::RansTransport;
+    }
+    std::vector<TurbulenceFieldDescriptor> fields() const override
+    {
+        return {
+            {"k", TurbulenceFieldRole::Transported, TurbulenceFieldScale::VelocitySquared,
+             true, config_.model_floor},
+            {"epsilon", TurbulenceFieldRole::Transported, TurbulenceFieldScale::Dissipation,
+             true, config_.model_floor},
+            {"mu_t_over_mu", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless, false, 0.0},
+            {"turbulence_production", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation, false,
+             std::numeric_limits<Real>::lowest()},
+            {"turbulence_destruction", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation, false,
+             std::numeric_limits<Real>::lowest()},
+            {"wall_distance", TurbulenceFieldRole::Auxiliary, TurbulenceFieldScale::Length,
+             true, 0.0},
+            {"wall_y_plus", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless, false, 0.0},
+        };
+    }
+    TurbulenceViscousContribution
+    viscous_contribution(const TurbulenceCellContext& context) const override
+    {
+        return two_equation_viscous_contribution(
+            context, config_, evaluate_standard_k_epsilon(context).eddy_kinematic_viscosity);
+    }
+    std::vector<Real> diffusion_coefficients(const TurbulenceCellContext& context) const override
+    {
+        const auto evaluation = evaluate_standard_k_epsilon(context);
+        return {evaluation.diffusion_coefficients[0], evaluation.diffusion_coefficients[1]};
+    }
+    TurbulenceSourceLinearization
+    source_linearization(const TurbulenceCellContext& context) const override
+    {
+        const auto evaluation = evaluate_standard_k_epsilon(context);
+        TurbulenceSourceLinearization result {
+            {evaluation.source[0], evaluation.source[1]},
+            {evaluation.source_jacobian[0], evaluation.source_jacobian[1],
+             evaluation.source_jacobian[2], evaluation.source_jacobian[3]},
+        };
+        result.validate(2);
+        return result;
+    }
+
+private:
+    TurbulenceModelConfig config_;
+};
+
 bool finite_stress(const SymmetricStress& stress)
 {
     return std::isfinite(stress.xx) && std::isfinite(stress.yy) && std::isfinite(stress.zz)
@@ -279,10 +458,34 @@ void TurbulenceModelConfig::validate() const
         && wall_treatment != WallTreatment::WallFunction) {
         throw std::invalid_argument("k_epsilon requires wall_function treatment");
     }
+    if (kind == TurbulenceModelKind::KEpsilon && !experimental) {
+        throw std::invalid_argument("k_epsilon requires turbulence.experimental=true");
+    }
+    if (kind != TurbulenceModelKind::KEpsilon && experimental) {
+        throw std::invalid_argument(
+            "turbulence.experimental is reserved for k_epsilon");
+    }
     static_cast<void>(turbulence_source_treatment_name(source_treatment));
     if (!std::isfinite(sa_farfield_nu_tilde_ratio)
         || sa_farfield_nu_tilde_ratio < 3.0 || sa_farfield_nu_tilde_ratio > 5.0) {
         throw std::invalid_argument("SA-neg farfield nu-tilde ratio must lie in [3,5]");
+    }
+    if (!std::isfinite(freestream_turbulence_intensity)
+        || freestream_turbulence_intensity <= 0.0
+        || freestream_turbulence_intensity > 1.0) {
+        throw std::invalid_argument("freestream turbulence intensity must lie in (0,1]");
+    }
+    if (!std::isfinite(freestream_length_scale) || freestream_length_scale <= 0.0) {
+        throw std::invalid_argument("freestream turbulence length scale must be positive");
+    }
+    if (!std::isfinite(model_floor) || model_floor <= 0.0) {
+        throw std::invalid_argument("two-equation model floor must be positive");
+    }
+    if (!std::isfinite(wall_function_y_plus_min)
+        || !std::isfinite(wall_function_y_plus_max)
+        || wall_function_y_plus_min <= 0.0
+        || wall_function_y_plus_max <= wall_function_y_plus_min) {
+        throw std::invalid_argument("wall-function y+ interval is invalid");
     }
 }
 
@@ -302,6 +505,19 @@ std::string TurbulenceModelConfig::summary() const
     if (kind == TurbulenceModelKind::SaNegative) {
         result << ",farfield_nu_tilde_over_nu=" << sa_farfield_nu_tilde_ratio
                << ",source=" << turbulence_source_treatment_name(source_treatment);
+    } else if (kind == TurbulenceModelKind::KOmegaSst
+               || kind == TurbulenceModelKind::KEpsilon) {
+        if (kind == TurbulenceModelKind::KEpsilon) {
+            result << ",experimental=true";
+        }
+        result << ",freestream_intensity=" << freestream_turbulence_intensity
+               << ",freestream_length_scale=" << freestream_length_scale
+               << ",model_floor=" << model_floor
+               << ",source=" << turbulence_source_treatment_name(source_treatment);
+        if (wall_treatment == WallTreatment::WallFunction) {
+            result << ",wall_function_y_plus=[" << wall_function_y_plus_min << ','
+                   << wall_function_y_plus_max << ']';
+        }
     }
     result << ')';
     return result.str();
@@ -366,6 +582,14 @@ TurbulenceModelRegistry TurbulenceModelRegistry::create_builtin()
     result.register_model(TurbulenceModelKind::SaNegative,
                           [](const TurbulenceModelConfig& config) {
                               return std::make_unique<SaNegativeTurbulenceModel>(config);
+                          });
+    result.register_model(TurbulenceModelKind::KOmegaSst,
+                          [](const TurbulenceModelConfig& config) {
+                              return std::make_unique<SstTurbulenceModel>(config);
+                          });
+    result.register_model(TurbulenceModelKind::KEpsilon,
+                          [](const TurbulenceModelConfig& config) {
+                              return std::make_unique<StandardKEpsilonTurbulenceModel>(config);
                           });
     return result;
 }

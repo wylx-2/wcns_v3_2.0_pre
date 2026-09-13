@@ -86,12 +86,13 @@ int main(int argc, char** argv)
                     = std::max(maximum_difference, std::abs(expected[index] - actual[index]));
             }
         }
+        std::cout << "field comparison max_abs=" << maximum_difference
+                  << ", tolerance=" << tolerance << '\n';
         WCNS_REQUIRE(maximum_difference <= tolerance);
         check_cgns(cg_close(expected_file), "cg_close expected field");
         expected_file = 0;
         check_cgns(cg_close(actual_file), "cg_close actual field");
         actual_file = 0;
-        std::cout << "restart continuity max_abs=" << maximum_difference << '\n';
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         if (expected_file > 0) cg_close(expected_file);
