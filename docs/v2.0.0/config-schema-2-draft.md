@@ -1,7 +1,7 @@
 # WCNS schema 2 配置草案（阶段 V 冻结输入）
 
-状态：**阶段 X-A 已扩展 schema 2；项目负责人已批准把 AA 前置，但计划人工审查通过前尚未
-开始 AA 实现。** 当前可运行湍流选择为 `none|sa_neg`，时间推进仍为 `ssprk3`，预处理仍为
+状态：**阶段 X-A 已扩展 schema 2；项目负责人已批准把 AA 前置并授权连续推进，AA 尚未
+开始实现。** 当前可运行湍流选择为 `none|sa_neg`，时间推进仍为 `ssprk3`，预处理仍为
 `none`；LU-SGS/预处理键先由 AA 为层流/SA 实现，SST/k-epsilon/LES 及其隐式组合再由 Y/Z
 补齐。尚未实现的键必须明确拒绝而不是静默降级。每次扩展必须同步合法/非法配置测试、summary、
 manifest 和 restart signature。

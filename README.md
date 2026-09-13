@@ -21,8 +21,8 @@ Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.m
 v2.0.0 已进入分阶段开发：V、W 已通过自动与人工验收，当前 `stage/v2.0.0-x`
 已完成 SA-neg 的实现、公式/MMS、重启、MPI 与规范网格 smoke；TMR 平板与 NACA0012
 定量收敛卡口尚未关闭，因此 SA-neg 还不得标记为生产验证通过，也尚无 X 候选标签。
-项目负责人已批准将 AA 前置，执行顺序改为 `X-A → AA → X-B → Y → Z`；本轮计划人工审查
-通过前不开始 AA 生产代码。前置 AA 先验收层流/SA 的定常/非定常 LU-SGS 与
+项目负责人已批准将 AA 前置，执行顺序改为 `X-A → AA → X-B → Y → Z`，并授权
+`AA → X-B → Y` 连续推进；人工卡口位于 Y 候选之后。前置 AA 先验收层流/SA 的定常/非定常 LU-SGS 与
 Roe/Weiss--Smith 低 Mach，SST 和 LES 的专属隐式耦合仍分别在 Y/Z 关闭。后续计划还包括
 k--omega SST、标准 k--epsilon、原始 Smagorinsky、尺度相似、混合/动态 Smagorinsky、WALE，最终依次完成
 二维 Case06 NACA0012 及用户后续提供的三维翼型/机翼算例。详细阶段 V--AE、
