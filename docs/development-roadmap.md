@@ -382,22 +382,27 @@ P--U 每个阶段都必须满足 G0--G8。2026-09-11 授权 P 在自动验收通
 ## 16. v2.0.0 阶段 V--AE（计划候选）
 
 详细范围、算法依赖、量化卡口、人工检查和 Git 规则见
-[`v2.0.0-development-plan.md`](v2.0.0-development-plan.md)；RANS、壁距、SA-neg、SST、
-k--epsilon、Weiss--Smith 预处理及时间统计公式见根目录《算法补充》第 12 节。当前状态仅为
-开发前计划，不表示任何 v2 生产功能已经实现。
+[`v2.0.0-development-plan.md`](v2.0.0-development-plan.md)；RANS、LES、壁距、SA-neg、SST、
+k--epsilon、Smagorinsky/尺度相似/动态/WALE、Weiss--Smith、LU-SGS、双时间及统计公式见
+根目录《算法补充》第 12 节。当前状态仅为开发前计划，不表示任何 v2 生产功能已经实现。
 
 阶段顺序冻结为：
 
 1. **V：规格、输入和基线。** 冻结模型变体、配置草案、Case06 只读登记、目标三维 intake
    模板和 v1.1 回归/性能基线。
-2. **W：通用 RANS 基础设施。** 建立附加输运场、壁距、湍流黏性闭合、边界、MPI 和重启。
+2. **W：通用 RANS/LES 基础设施。** 建立附加输运场、模型/SGS 应力接口、壁距、边界、
+   MPI、隐式源 Jacobian 和重启。
 3. **X：SA-neg。** 完成公式、MMS、平板和独立 NACA0012/TMR 验证。
 4. **Y：SST、k--epsilon 与壁面处理。** 完成两方程框架并按证据冻结模型支持级别。
-5. **Z：壁面、时间与截面统计。** 完成可重启的 mean/RMS/covariance/Favre 统计和翼型载荷。
-6. **AA：低 Mach 与定常加速。** 完成 Roe/Weiss--Smith、局部伪时间、LU-SGS 级路径和远场。
-7. **AB：Case06 NACA0012。** 在用户冻结工况后完成二维目标计算、网格趋势和参考比对。
-8. **AC：三维机翼通用能力。** 验证方向、对称、截面载荷、MPI、内存和 I/O。
-9. **AD：用户目标三维翼型/机翼。** 输入到位后执行目标计算和不确定性说明。
+5. **Z：LES 与统计。** 完成三维 Favre 滤波、原始 Smagorinsky、尺度相似、混合/动态
+   Smagorinsky、WALE、能量预算，以及可重启 mean/RMS/covariance/Favre/翼型统计。
+6. **AA：LU-SGS 与全速域隐式推进。** 完成定常本地伪时间、非定常 BDF2 双时间、
+   Roe/Weiss--Smith、RANS/LES 耦合和远场。
+7. **AB：Case06 NACA0012。** 在用户冻结工况后完成二维 RANS/URANS、网格趋势和参考比对；
+   二维不运行 LES。
+8. **AC：三维机翼通用能力。** 验证 RANS/LES、方向、对称、截面载荷、MPI、内存和 I/O。
+9. **AD：用户目标三维翼型/机翼。** 输入到位后按冻结的 RANS/URANS/LES 目标执行计算和
+   不确定性说明。
 10. **AE：系统验收与发布。** 形成 `v2.0.0-rc.N`，在合并 `main` 前执行最终人工核验。
 
 V--AE 默认各自执行完整本机自动卡口并停在人工判断点。只有项目负责人对具体相邻阶段另行
@@ -409,7 +414,7 @@ V--AE 默认各自执行完整本机自动卡口并停在人工判断点。只�
 
 | 阶段 | 当前状态 | 允许的下一动作 |
 |---|---|---|
-| V | 计划候选待人工冻结 | 审查计划、算法规格、Case06 intake；批准后建立 release/阶段分支 |
+| V | 计划候选 v2 待人工冻结 | 审查 RANS/LES、LU-SGS/双时间、低 Mach 和 Case06 intake；批准后建立 release/阶段分支 |
 | W | 未开始 | 等待 V 人工批准 |
 | X | 未开始 | 等待 W 人工批准 |
 | Y | 未开始 | 等待 X 人工批准 |
