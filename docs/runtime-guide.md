@@ -1,7 +1,7 @@
 # WCNS 运行、配置、输出与重启指南
 
-本文对应 WCNS `1.1.0`、配置 `schema_version = 1` 和正式生产入口 `wcns_run`，定位为
-简明速查。
+本文以 WCNS `1.1.0` 已发布能力为主，并记录 v2.0.0 阶段 W 已加入的最小
+`schema_version = 2` 骨架；正式生产入口仍为 `wcns_run`，定位为简明速查。
 逐步用户手册见 [`user-manual.md`](user-manual.md)，源码扩展指南见
 [`developer-guide.md`](developer-guide.md)，完整配置模板见
 [`examples/full_case_template.wcns`](../examples/full_case_template.wcns)，算法数学约定见
@@ -54,7 +54,7 @@ mpiexec -n 4 build-mpi\wcns_run.exe --config examples\freestream.wcns
 
 | 键 | 可选值或含义 |
 |---|---|
-| `schema_version` | 当前只能为 `1` |
+| `schema_version` | `1`，或阶段 W 最小骨架 `2` |
 | `case.name` | 文件名前缀；不安全字符在输出名中替换为 `_` |
 | `mesh.path` | 结构多块 CGNS 网格 |
 | `algorithm.profile` | `phenglei_wcns` 或 `scmm6_wcns`；两套度量/算子独立使用 |
@@ -67,7 +67,20 @@ mpiexec -n 4 build-mpi\wcns_run.exe --config examples\freestream.wcns
 | `robustness.time_step_reduction` | 缩步因子，必须在 `(0,1)`，默认 `0.5` |
 | `robustness.minimum_time_step` | 允许的最小时间步，默认 `1e-12` |
 
-低 Mach 预处理尚未实现，配置中不存在可误开启的不完整预处理键。无粘界面通量只走所选
+schema 2 当前还必须显式给出：
+
+```text
+turbulence.model = none
+time.integrator = ssprk3
+preconditioner.type = none
+```
+
+其他已规划模型、`lu_sgs` 和 `weiss_smith` 会在启动前明确报“reserved but not implemented”；
+不能据此声称湍流、隐式或低 Mach 功能可运行。schema 1 不接受这些 v2 键，其摘要和旧检查点
+身份保持不变。完整迁移边界见
+[`v2.0.0/config-schema-2-draft.md`](v2.0.0/config-schema-2-draft.md)。
+
+低 Mach 预处理尚未实现。无粘界面通量只走所选
 Riemann 求解器；发生非法中间状态时按冻结的确定性回退链处理并计数。稳健化开启后按
 “原方案、同重构 primitive、linear5/primitive、zero_order/conservative+Rusanov”的有效去重
 梯子升级真实残差直接支持及一层转置支持保护面；候选始终在独立缓冲区验证，失败整步不推进时间。详细数学定义见

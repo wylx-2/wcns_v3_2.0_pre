@@ -1,7 +1,7 @@
 # WCNS 用户手册
 
-本文面向第一次接触本程序的算例使用者，对应 WCNS `1.1.0` 候选、配置
-`schema_version = 1` 和生产入口 `wcns_run`。按本文顺序操作，可以从源码构建程序、准备
+本文面向第一次接触本程序的算例使用者，以 WCNS `1.1.0` 已发布功能为主，并记录 v2.0.0
+阶段 W 的最小 `schema_version = 2` 骨架；生产入口仍为 `wcns_run`。按本文顺序操作，可以从源码构建程序、准备
 CGNS 网格、填写配置、完成串行或 MPI 计算、识别停止状态、读取输出并从检查点续算。
 
 本手册描述的是当前程序已经实现的行为。数学定义见[`算法补充.md`](../算法补充.md)，源码扩展见[`developer-guide.md`](developer-guide.md)，实现边界见[`known-limitations.md`](known-limitations.md)。可复制的完整配置见[`examples/full_case_template.wcns`](../examples/full_case_template.wcns)。
@@ -371,7 +371,7 @@ output.checkpoint.enabled
 
 | 键 | 要求与行为 |
 |---|---|
-| `schema_version` | 当前只能为整数 `1` |
+| `schema_version` | `1`，或阶段 W 最小骨架 `2` |
 | `case.name` | 非空；输出文件名中非字母数字、`-`、`_` 字符会替换为 `_` |
 | `mesh.path` | 非空；相对路径以配置文件所在目录为基准 |
 | `restart.path` | 可选；相对路径同样以配置文件目录为基准 |
@@ -379,6 +379,17 @@ output.checkpoint.enabled
 
 为了避免路径基准混淆，推荐把网格与配置放在一个算例目录中，对 `mesh.path` 写短相对路径，
 对 `output.directory` 写从固定启动目录可定位的绝对路径或明确的仓库根相对路径。
+
+schema 2 在阶段 W 只允许以下新增选择：
+
+```text
+turbulence.model = none
+time.integrator = ssprk3
+preconditioner.type = none
+```
+
+其他 RANS/LES 模型名、`lu_sgs` 和 `weiss_smith` 只是后续阶段保留值，当前会明确拒绝。不要把
+“parser 能识别名称”理解为算法已经实现。schema 1 继续使用原配置，不应添加上述键。
 
 ### 8.2 算法选择
 
@@ -1182,6 +1193,10 @@ wcns_compare_metric_profiles mesh.cgns
 
 ## 16. 当前功能边界
 
-当前只有单组分热完全理想气体、层流常比热、常黏度/Sutherland 输运、显式 SSPRK3、结构共形网格和内建源项。尚未实现低 Mach 预处理、湍流、化学反应、隐式推进、本地时间步、通用表达式源项、动态插件和涡量/Q 等体派生输出。默认输运为 `Pr=0.72` 和 `mu/mu_ref=1` 的常黏度。
+当前可运行物理仍只有单组分热完全理想气体、层流常比热、常黏度/Sutherland 输运、显式
+SSPRK3、结构共形网格和内建源项。阶段 W 已加入独立模型场、通用标量通量/halo、壁距、闭合与
+源 Jacobian 接口及最小 schema 2，但尚无非 `none` 模型注册。低 Mach 预处理、具体湍流闭合、
+化学反应、隐式推进、本地时间步、通用表达式源项、动态插件和涡量/Q 等体派生输出仍未实现。
+默认输运为 `Pr=0.72` 和 `mu/mu_ref=1` 的常黏度。
 
 这些限制不能通过写一个未知配置键绕过。需要扩展时按开发手册同时修改数据结构、严格 parser、验证、摘要/重启签名、生产装配、测试、模板和文档。

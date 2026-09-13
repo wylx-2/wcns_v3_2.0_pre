@@ -247,6 +247,48 @@ std::vector<Real> MpiRuntime::gather_reals(std::vector<Real> local_values, RankI
 #endif
 }
 
+std::vector<Real> MpiRuntime::all_gather_reals(std::vector<Real> local_values) const
+{
+    if (local_values.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw MpiError("local real all-gather count exceeds MPI int range");
+    }
+#if WCNS_HAS_MPI
+    const int local_count = static_cast<int>(local_values.size());
+    std::vector<int> counts(static_cast<std::size_t>(size_));
+    check_mpi(MPI_Allgather(&local_count,
+                            1,
+                            MPI_INT,
+                            counts.data(),
+                            1,
+                            MPI_INT,
+                            MPI_COMM_WORLD),
+              "MPI_Allgather real counts");
+    std::vector<int> displacements(static_cast<std::size_t>(size_));
+    std::size_t total = 0;
+    for (int rank = 0; rank < size_; ++rank) {
+        displacements[static_cast<std::size_t>(rank)] = static_cast<int>(total);
+        const auto count = static_cast<std::size_t>(counts[static_cast<std::size_t>(rank)]);
+        if (total > static_cast<std::size_t>(std::numeric_limits<int>::max()) - count) {
+            throw MpiError("global real all-gather count exceeds MPI int range");
+        }
+        total += count;
+    }
+    std::vector<Real> result(total);
+    check_mpi(MPI_Allgatherv(local_values.empty() ? nullptr : local_values.data(),
+                             local_count,
+                             MPI_DOUBLE,
+                             result.empty() ? nullptr : result.data(),
+                             counts.data(),
+                             displacements.data(),
+                             MPI_DOUBLE,
+                             MPI_COMM_WORLD),
+              "MPI_Allgatherv real values");
+    return result;
+#else
+    return local_values;
+#endif
+}
+
 std::vector<Real> MpiRuntime::scatter_reals(const std::vector<Real>& root_values,
                                             const std::vector<std::size_t>& counts,
                                             RankId root) const

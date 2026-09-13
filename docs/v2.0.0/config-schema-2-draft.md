@@ -1,7 +1,9 @@
 # WCNS schema 2 配置草案（阶段 V 冻结输入）
 
-状态：**设计草案，不是当前 schema 1 parser 已支持功能。** 最终键在阶段 W/X/Y/Z/AA 逐步
-实现，每次实现必须同步合法/非法配置测试、summary、manifest 和 restart signature。
+状态：**阶段 W 已启用最小 schema 2 骨架。** 当前唯一可运行组合是
+`turbulence.model=none`、`time.integrator=ssprk3`、`preconditioner.type=none`；表中其他模型、
+LES、LU-SGS 与预处理键仍按 X--AA 逐步实现，当前 parser 必须明确拒绝而不是静默降级。每次
+扩展必须同步合法/非法配置测试、summary、manifest 和 restart signature。
 
 ## 1. 兼容迁移
 
@@ -15,6 +17,18 @@ preconditioner.type = none
 
 旧 `run.mode`、`run.cfl`、`run.t_end` 和 steady 停止键继续解释。schema 2 拒绝未知键、重复键、
 非有限数、模型无关参数和不支持组合。
+
+阶段 W 的最小合法配置片段为：
+
+```text
+schema_version = 2
+turbulence.model = none
+time.integrator = ssprk3
+preconditioner.type = none
+```
+
+schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不改变 schema 1 的文本摘要和旧重启
+签名。`none` 还拒绝 `turbulence.prandtl` 与 `turbulence.wall_treatment`，防止无效参数污染身份。
 
 ## 2. 键空间
 

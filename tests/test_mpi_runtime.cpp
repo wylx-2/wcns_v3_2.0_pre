@@ -1,6 +1,7 @@
 #include "test_support.hpp"
 
 #include <wcns/parallel/mpi_runtime.hpp>
+#include <wcns/solver/wall_distance.hpp>
 
 #include <cstdlib>
 #include <exception>
@@ -38,6 +39,30 @@ int main(int argc, char** argv)
         } else {
             WCNS_REQUIRE(gathered.empty());
         }
+        const auto all_gathered
+            = mpi.all_gather_reals({static_cast<wcns::Real>(mpi.rank()), rank_value});
+        WCNS_REQUIRE(all_gathered.size() == static_cast<std::size_t>(2 * mpi.size()));
+        for (int rank = 0; rank < mpi.size(); ++rank) {
+            WCNS_REQUIRE_NEAR(all_gathered[static_cast<std::size_t>(2 * rank)],
+                              static_cast<wcns::Real>(rank),
+                              0.0);
+            WCNS_REQUIRE_NEAR(all_gathered[static_cast<std::size_t>(2 * rank + 1)],
+                              static_cast<wcns::Real>(rank + 1),
+                              0.0);
+        }
+        const auto global_walls = wcns::collect_global_wall_primitives(
+            mpi,
+            {wcns::WallPrimitive::segment(
+                {{0.0, static_cast<wcns::Real>(mpi.rank()), 0.0}},
+                {{1.0, static_cast<wcns::Real>(mpi.rank()), 0.0}})});
+        WCNS_REQUIRE(global_walls.size() == static_cast<std::size_t>(mpi.size()));
+        const wcns::WallDistanceIndex global_wall_index(global_walls);
+        WCNS_REQUIRE_NEAR(
+            global_wall_index.query(
+                {{0.5, static_cast<wcns::Real>(mpi.rank()) + 0.25, 0.0}})
+                .distance,
+            0.25,
+            1.0e-15);
         std::vector<wcns::Real> moved_values(static_cast<std::size_t>(mpi.rank() + 1));
         for (std::size_t index = 0; index < moved_values.size(); ++index) {
             moved_values[index]

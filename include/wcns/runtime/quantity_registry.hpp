@@ -6,6 +6,7 @@
 #include <wcns/solver/inviscid_wcns_solver.hpp>
 #include <wcns/solver/physical_boundary.hpp>
 #include <wcns/solver/transport_model.hpp>
+#include <wcns/solver/turbulence_fields.hpp>
 
 #include <functional>
 #include <memory>
@@ -25,6 +26,9 @@ enum class QuantityScale {
     Energy,
     SpecificEnergy,
     Viscosity,
+    KinematicViscosity,
+    InverseTime,
+    Dissipation,
     LengthPower,
 };
 
@@ -73,6 +77,7 @@ public:
     [[nodiscard]] static FieldQuantityRegistry create_builtin();
 
     void register_quantity(std::shared_ptr<const IFieldQuantity> quantity);
+    void register_turbulence_field(const TurbulenceFieldDescriptor& descriptor);
     [[nodiscard]] bool contains(const std::string& name) const noexcept;
     [[nodiscard]] const QuantityDescriptor& descriptor(const std::string& name) const;
     [[nodiscard]] QuantityField evaluate(const std::string& name,

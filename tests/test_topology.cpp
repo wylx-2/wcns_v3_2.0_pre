@@ -2,6 +2,8 @@
 
 #include <wcns/mesh/halo_exchange.hpp>
 #include <wcns/mesh/structured_mesh.hpp>
+#include <wcns/parallel/block_distribution.hpp>
+#include <wcns/parallel/distributed_topology.hpp>
 
 #include <stdexcept>
 #include <utility>
@@ -124,4 +126,22 @@ void test_topology()
     StructuredMesh incomplete(std::move(incomplete_blocks));
     WCNS_REQUIRE_THROWS(TopologyError, incomplete.validate_connectivities());
     WCNS_REQUIRE_THROWS(std::out_of_range, incomplete.block(7));
+
+    auto first_cut = receiver_connection();
+    first_cut.donor_block = 0;
+    first_cut.donor_rank = 0;
+    auto second_cut = donor_connection();
+    second_cut.receiver_block = 0;
+    second_cut.donor_block = 0;
+    second_cut.donor_rank = 0;
+    StructuredBlock o_grid(0, "o-grid", 0, 2, 2, {5, 4, 1}, 3);
+    o_grid.connectivities = {first_cut, second_cut};
+    StructuredMesh self_mesh(std::vector<StructuredBlock> {std::move(o_grid)});
+    self_mesh.validate_connectivities(false);
+    const auto self_distribution
+        = BlockDistribution::balanced({{0, self_mesh.block(0).cell_extent().size()}}, 1);
+    const auto self_topology
+        = DistributedTopology::build(self_mesh, self_distribution, false);
+    WCNS_REQUIRE(self_topology.exchanges().size() == 2);
+    WCNS_REQUIRE(self_topology.local_copies(0).size() == 2);
 }

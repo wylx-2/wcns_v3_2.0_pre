@@ -68,6 +68,11 @@ void test_flow_initializer();
 void test_output_manager();
 void test_boundary_face_physics();
 void test_quantity_registry();
+void test_turbulence_fields();
+void test_turbulence_model_interface();
+void test_turbulence_transport_interface();
+void test_turbulence_viscous_coupling();
+void test_wall_distance();
 
 // 顺序运行不依赖独立输入文件的全部单元验收入口。
 int main()
@@ -146,6 +151,11 @@ int main()
         test_output_manager();
         test_boundary_face_physics();
         test_quantity_registry();
+        test_turbulence_fields();
+        test_turbulence_model_interface();
+        test_turbulence_transport_interface();
+        test_turbulence_viscous_coupling();
+        test_wall_distance();
 
         std::cout << "WCNS unit tests passed\n";
         return EXIT_SUCCESS;

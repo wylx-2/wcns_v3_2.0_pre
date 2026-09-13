@@ -35,6 +35,7 @@ add_executable(wcns_unit_tests
     test_output_manager.cpp
     test_boundary_output.cpp
     test_quantity_registry.cpp
+    test_turbulence_infrastructure.cpp
 )
 
 target_link_libraries(
@@ -876,7 +877,7 @@ if(WCNS_ENABLE_CGNS)
     add_executable(wcns_halo_exchange_tests test_halo_exchange.cpp)
     target_link_libraries(
         wcns_halo_exchange_tests
-        PRIVATE wcns::io wcns::parallel
+        PRIVATE wcns::io wcns::parallel wcns::solver
     )
     add_test(
         NAME wcns.halo_exchange.serial
@@ -1397,6 +1398,13 @@ if(WCNS_ENABLE_CGNS)
                 ${CMAKE_CURRENT_BINARY_DIR}/generated_multi_2d.cgns
         )
         set_tests_properties(wcns.halo_exchange.2 PROPERTIES FIXTURES_REQUIRED cgns_files)
+        add_test(
+            NAME wcns.halo_exchange.4
+            COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 4
+                $<TARGET_FILE:wcns_halo_exchange_tests>
+                ${CMAKE_CURRENT_BINARY_DIR}/generated_multi_2d.cgns
+        )
+        set_tests_properties(wcns.halo_exchange.4 PROPERTIES FIXTURES_REQUIRED cgns_files)
 
         add_test(
             NAME wcns.euler_solver.2
@@ -1426,7 +1434,7 @@ target_link_libraries(
 add_test(NAME wcns.robustness.serial COMMAND wcns_robustness_tests)
 
 add_executable(wcns_mpi_runtime_tests test_mpi_runtime.cpp)
-target_link_libraries(wcns_mpi_runtime_tests PRIVATE wcns::parallel)
+target_link_libraries(wcns_mpi_runtime_tests PRIVATE wcns::parallel wcns::solver)
 add_test(NAME wcns.mpi_runtime.serial COMMAND wcns_mpi_runtime_tests)
 
 add_executable(wcns_stage_j_solver_tests test_inviscid_wcns_solver_mpi.cpp)
@@ -1450,6 +1458,10 @@ if(WCNS_ENABLE_MPI)
     add_test(
         NAME wcns.mpi_runtime.2
         COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 2 $<TARGET_FILE:wcns_mpi_runtime_tests>
+    )
+    add_test(
+        NAME wcns.mpi_runtime.4
+        COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 4 $<TARGET_FILE:wcns_mpi_runtime_tests>
     )
     add_test(
         NAME wcns.stage_j_solver.2

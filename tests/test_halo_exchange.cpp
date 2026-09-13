@@ -5,6 +5,7 @@
 #include <wcns/parallel/distributed_topology.hpp>
 #include <wcns/parallel/halo_exchanger.hpp>
 #include <wcns/parallel/mpi_runtime.hpp>
+#include <wcns/solver/turbulence_fields.hpp>
 
 #include <cstdlib>
 #include <exception>
@@ -93,6 +94,55 @@ int main(int argc, char** argv)
             }
         }
         WCNS_REQUIRE(mpi.all_true(correct));
+
+        const std::vector<wcns::TurbulenceFieldDescriptor> all_model_descriptors {
+            {"model_a"},
+            {"model_b"},
+            {"model_c"},
+        };
+        for (int component_count = 1; component_count <= 3; ++component_count) {
+            const std::vector<wcns::TurbulenceFieldDescriptor> model_descriptors(
+                all_model_descriptors.begin(),
+                all_model_descriptors.begin() + component_count);
+            wcns::BlockFieldRegistry model_fields(component_count);
+            for (auto& block : local.blocks()) {
+                block.turbulence.reset(
+                    block.cell_extent(), block.ghost_width(), model_descriptors);
+                auto& model_field = block.turbulence.storage();
+                model_field.fill(-1.0);
+                const auto extent = model_field.interior_extent();
+                for (int k = 0; k < extent.nk; ++k) {
+                    for (int j = 0; j < extent.nj; ++j) {
+                        for (int i = 0; i < extent.ni; ++i) {
+                            for (int component = 0; component < model_field.components();
+                                 ++component) {
+                                model_field(i, j, k, component)
+                                    = encoded_value(block.id(), {i, j, k}, component);
+                            }
+                        }
+                    }
+                }
+                model_fields.add(block.id(), model_field);
+            }
+            exchanger.exchange(model_fields);
+            bool model_correct = true;
+            for (const auto& exchange : topology.exchanges()) {
+                if (exchange.receiver_rank != mpi.rank()) continue;
+                const auto& receiver = model_fields.field(exchange.halo.receiver_block);
+                for (const auto& pair : exchange.halo.cell_pairs) {
+                    for (int component = 0; component < model_fields.components(); ++component) {
+                        model_correct = model_correct
+                            && receiver(pair.receiver_ghost.i,
+                                        pair.receiver_ghost.j,
+                                        pair.receiver_ghost.k,
+                                        component)
+                                == encoded_value(
+                                    exchange.halo.donor_block, pair.donor_interior, component);
+                    }
+                }
+            }
+            WCNS_REQUIRE(mpi.all_true(model_correct));
+        }
         if (mpi.rank() == 0) {
             std::cout << "halo exchange test passed with " << mpi.size() << " ranks\n";
         }

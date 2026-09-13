@@ -5,6 +5,7 @@
 #include <wcns/physics/thermodynamics.hpp>
 #include <wcns/solver/inviscid_wcns_solver.hpp>
 #include <wcns/solver/transport_model.hpp>
+#include <wcns/solver/turbulence_model.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -67,6 +68,32 @@ struct BoundaryPhysicalDataConfig {
 enum class RunMode {
     Steady,
     Unsteady,
+};
+
+enum class TimeIntegratorKind {
+    SspRk3,
+    LuSgs,
+};
+
+enum class PreconditionerKind {
+    None,
+    WeissSmith,
+};
+
+struct TimeAlgorithmConfig {
+    TimeIntegratorKind integrator = TimeIntegratorKind::SspRk3;
+
+    void validate() const;
+    [[nodiscard]] std::string summary() const;
+    [[nodiscard]] std::string restart_signature() const;
+};
+
+struct PreconditionerConfig {
+    PreconditionerKind kind = PreconditionerKind::None;
+
+    void validate() const;
+    [[nodiscard]] std::string summary() const;
+    [[nodiscard]] std::string restart_signature() const;
 };
 
 struct SteadyConvergenceConfig {
@@ -221,9 +248,10 @@ struct CaseRunConfig {
 };
 
 struct CaseConfig {
-    static constexpr int supported_schema_version = 1;
+    static constexpr int minimum_schema_version = 1;
+    static constexpr int supported_schema_version = 2;
 
-    int schema_version = supported_schema_version;
+    int schema_version = minimum_schema_version;
     std::string case_name;
     std::string mesh_path;
     AlgorithmProfileKind profile = AlgorithmProfileKind::PhengleiWcns;
@@ -232,6 +260,9 @@ struct CaseConfig {
     RiemannConfig riemann {};
     RobustnessConfig robustness {};
     TransportConfig transport {};
+    TurbulenceModelConfig turbulence {};
+    TimeAlgorithmConfig time_algorithm {};
+    PreconditionerConfig preconditioner {};
     GasModelInput gas;
     ReferenceInput reference;
     PartitionConfig partition;
@@ -265,6 +296,8 @@ private:
 [[nodiscard]] const char* partition_mode_name(PartitionMode mode);
 [[nodiscard]] const char* boundary_type_name(BoundaryType type);
 [[nodiscard]] const char* run_mode_name(RunMode mode);
+[[nodiscard]] const char* time_integrator_name(TimeIntegratorKind integrator);
+[[nodiscard]] const char* preconditioner_name(PreconditionerKind preconditioner);
 [[nodiscard]] const char* field_output_format_name(FieldOutputFormat format);
 [[nodiscard]] const char* series_output_format_name(SeriesOutputFormat format);
 

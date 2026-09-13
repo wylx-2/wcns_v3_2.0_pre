@@ -2,6 +2,7 @@
 
 #include <wcns/solver/euler.hpp>
 #include <wcns/solver/transport_model.hpp>
+#include <wcns/solver/turbulence_model.hpp>
 
 #include <array>
 
@@ -38,5 +39,14 @@ struct ViscousCartesianFlux {
                                                                   const ReferenceScales& reference,
                                                                   const NumericalFloors& floors,
                                                                   int dimension);
+
+[[nodiscard]] ViscousCartesianFlux compute_viscous_cartesian_flux(
+    const ViscousFaceTrace& trace,
+    const TransportModel& transport,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    const NumericalFloors& floors,
+    const TurbulenceViscousContribution& turbulence,
+    int dimension);
 
 } // namespace wcns
