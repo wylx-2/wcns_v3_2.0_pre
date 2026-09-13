@@ -50,13 +50,18 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | `les.wale.cw` | positive real | 是 | WALE，基线 0.325 |
 | `les.sgs_prandtl` | positive real | 是 | LES 必需 |
 | `time.integrator` | `ssprk3|lu_sgs` | 是 | v2 隐式选 lu_sgs |
-| `time.physical.scheme` | `bdf1|bdf2` | 是 | unsteady lu_sgs；生产基线 bdf2 |
-| `time.dual_time.enabled` | bool | 是 | unsteady lu_sgs 必须 true |
-| `time.dual_time.*` | iteration/tolerance/cfl | 是 | 内迭代停止与失败策略 |
-| `lu_sgs.jacobian` | `scalar_spectral|block_source` | 是 | AA0 冻结 |
-| `lu_sgs.sweeps` | positive integer | 是 | 一次内迭代的完整前后扫数 |
+| `time.physical.scheme` | `bdf2` | 是 | unsteady lu_sgs；无历史首步自动 BDF1 |
+| `time.physical.step` | positive real | 是 | unsteady lu_sgs 必填；最终层可截短命中 t_end |
+| `time.dual_time.max_iterations` | positive integer | 是 | 默认 100 |
+| `time.dual_time.absolute_tolerance` | positive real | 是 | 默认 `1e-10` |
+| `time.dual_time.relative_tolerance` | positive real | 是 | 默认 `1e-8` |
+| `time.dual_time.cfl` | positive real | 是 | 默认 5 |
+| `lu_sgs.jacobian` | `scalar_spectral` | 是 | 首版唯一支持值 |
+| `lu_sgs.sweeps` | integer 1 | 是 | 一次内迭代一个完整前后扫 |
+| `lu_sgs.relaxation` | real in `(0,1]` | 是 | 默认 1；非法候选另做全局回溯 |
 | `preconditioner.type` | `none|weiss_smith` | 是 | weiss_smith 只配 Roe+LU-SGS |
-| `preconditioner.*` | Mach/viscous cutoff | 是 | 低 Mach 必需 |
+| `preconditioner.mach_cutoff` | real in `(0,1]` | 是 | Weiss--Smith 默认 `1e-3` |
+| `preconditioner.viscous_cutoff` | real in `[0,10]` | 是 | Weiss--Smith 默认 1 |
 | `statistics.time.*` | start/end/every/weight | 否；累加器身份单列 | 只累计接受物理步 |
 
 ## 3. 合法草案
