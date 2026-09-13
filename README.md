@@ -19,16 +19,18 @@ Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.m
 [`算法补充.md`](算法补充.md) 第 11 节；各阶段实现状态以对应设计和验收报告为准。
 
 v2.0.0 已进入分阶段开发：V、W 已通过自动与人工验收，当前 `stage/v2.0.0-x`
-正在实现和验证首个湍流模型 SA-neg。公式、输运、边界、流场/历史输出和模型
-checkpoint 已接入候选实现，但 TMR 平板与 NACA0012 定量收敛卡口尚未关闭，
-因此 SA-neg 还不得标记为生产验证通过，也尚无 X 候选标签。后续计划仍包括
-k--omega SST、标准 k--epsilon、原始 Smagorinsky、尺度相似、混合/动态 Smagorinsky、
-WALE、定常/非定常 LU-SGS 和 Roe/Weiss--Smith 低 Mach 预处理，最终依次完成
+已完成 SA-neg 的实现、公式/MMS、重启、MPI 与规范网格 smoke；TMR 平板与 NACA0012
+定量收敛卡口尚未关闭，因此 SA-neg 还不得标记为生产验证通过，也尚无 X 候选标签。
+项目负责人已批准将 AA 前置，执行顺序改为 `X-A → AA → X-B → Y → Z`；本轮计划人工审查
+通过前不开始 AA 生产代码。前置 AA 先验收层流/SA 的定常/非定常 LU-SGS 与
+Roe/Weiss--Smith 低 Mach，SST 和 LES 的专属隐式耦合仍分别在 Y/Z 关闭。后续计划还包括
+k--omega SST、标准 k--epsilon、原始 Smagorinsky、尺度相似、混合/动态 Smagorinsky、WALE，最终依次完成
 二维 Case06 NACA0012 及用户后续提供的三维翼型/机翼算例。详细阶段 V--AE、
 自动卡口、人工放行和 Git 规则见
 [`docs/v2.0.0-development-plan.md`](docs/v2.0.0-development-plan.md)，计划算法见
 [`算法补充.md`](算法补充.md) 第 12 节，Case06 只读登记见
-[`docs/v2.0.0/case06-intake.md`](docs/v2.0.0/case06-intake.md)。
+[`docs/v2.0.0/case06-intake.md`](docs/v2.0.0/case06-intake.md)，AA 前置人工审查单见
+[`docs/v2.0.0/stage-aa-reorder-review.md`](docs/v2.0.0/stage-aa-reorder-review.md)。
 
 本开发仓库保留阶段设计、自动测试、人工算例及验收证据。v1.1.0 的确定性内部源码包由
 `tools/package_release.py` 从版本提交直接生成，并包含版本验收所需的 Case07；NACA0012 不在

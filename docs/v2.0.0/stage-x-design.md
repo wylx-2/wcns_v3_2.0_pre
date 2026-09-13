@@ -1,8 +1,12 @@
 # v2.0.0 阶段 X 设计：SA-neg
 
-状态：**2026-09-13 设计已冻结；实现与非长算自动卡口已通过，定量物理验收因
-定常加速阶段依赖未关闭。** 阶段 W 已经人工验收；本阶段只实现首个 RANS 模型
-`sa_neg`，不提前实现 SST、LES、LU-SGS 或低 Mach 预处理。
+状态：**2026-09-13 设计已冻结；实现与非长算自动卡口已通过。项目负责人已批准把 AA
+前置，X 定量物理验收将在 AA 人工批准后恢复。** 阶段 W 已经人工验收；X-A 只实现首个
+RANS 模型 `sa_neg`，没有在 X 代码提交中混入 SST、LES、LU-SGS 或低 Mach 预处理。
+
+阶段 X 只有一个候选，但分两个执行窗口：X-A 是当前已完成的实现/MMS/restart/MPI/smoke；
+前置 AA 在独立分支实现并验收层流/SA 的 LU-SGS 和低 Mach；AA 批准回合后，X-B 才运行完整
+TMR 平板/NACA 定量收敛。X-A 不是可发布的 SA-neg 完成状态。
 
 ## 1. 模型身份
 
@@ -35,7 +39,8 @@ turbulence.sa.source_treatment = explicit | local_implicit
 
 远场比必须在 `[3,5]`。SA-neg 要求黏性方程和至少一个 resolved no-slip wall；阶段 X 不支持
 wall function。`local_implicit` 只对 SA 局部源使用解析 Jacobian，外层仍是 SSPRK3；它不是
-阶段 AA 的 LU-SGS。SA-neg 暂不与整步重试/局部降阶事务组合，非法组合启动前拒绝。
+阶段 AA 的 LU-SGS。前置 AA 必须复用这里的解析源 Jacobian，并保持平均流/模型场共同接受事务。
+SA-neg 暂不与整步重试/局部降阶事务组合，非法组合启动前拒绝。
 
 ### 2.2 场、边界和输出
 
@@ -110,9 +115,11 @@ X 候选必须同时满足：
 
 ## 6. Git 与人工判断
 
-全部 X 工作留在 `stage/v2.0.0-x`。通过自动卡口后才允许创建不可移动的
-`v2.0.0-x-candidate.1`；随后停下，由人工查看源项/破坏项分布、负分支占比、平板对数层与
-摩擦、NACA `Cp/Cf` 曲线和网格外推。人工接受后才以 `--no-ff` 合入 `release/v2.0.0`，再开始 Y。
+X-A 工作留在 `stage/v2.0.0-x`，生产实现锚点为 `d32010a`。计划人工审查通过后，从该 X
+文档批准点创建 `stage/v2.0.0-aa`；AA 自动/人工通过后只回合到 X 分支，不单独进入 release。
+随后 X-B 从已批准的 LU-SGS 运行全部定量卡口，才允许创建不可移动的
+`v2.0.0-x-candidate.1`。人工查看源项/破坏项分布、负分支占比、平板对数层与摩擦、NACA
+`Cp/Cf` 曲线和网格外推；接受后以一次 `--no-ff` 合并把 X+AA 纳入 `release/v2.0.0`，再开始 Y。
 
 权威输入：NASA TMR SA equations、Finite Flat Plate Numerical Analysis、NACA0012 Validation、
 NACA0012 Numerical Analysis 及其各自 grid/results 页面。抓取脚本固定 URL 与 SHA-256；网页内容

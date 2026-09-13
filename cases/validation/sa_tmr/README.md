@@ -62,7 +62,8 @@ build-v2-x-mpi-mingw\wcns_run.exe --config build-v2-x-assets\flatplate-level6.wc
 模板中的 `run.max_steps=1` 只是读取、拓扑、边界和首步有限性 smoke，绝对不是物理验收。
 定量验收必须复制配置、使用新输出目录、运行到残差与载荷联合收敛，然后按
 `manifest.json` 阈值进行多网格比对。当前全局 SSPRK3 步长为 $10^{-9}$ 量级，在项目负责人
-批准阶段依赖调整前不开始伪收敛长算。
+批准的顺序调整下，必须等前置 AA 的层流/SA LU-SGS 自动卡口及人工判断通过并回合到 X 后，
+才开始 X-B 定量长算。计划人工审查通过前不创建 AA 分支；任何 smoke 仍不得当作物理验收。
 
 ## 当前自动结果
 
