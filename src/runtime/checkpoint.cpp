@@ -26,6 +26,7 @@ namespace {
 
 constexpr int laminar_checkpoint_version = 1;
 constexpr int turbulence_checkpoint_version = 2;
+constexpr int implicit_checkpoint_version = 3;
 const std::array<std::string, 5> checkpoint_quantities {{
     "rho",
     "rho_u",
@@ -42,12 +43,68 @@ const std::array<const char*, 5> checkpoint_fields {{
 }};
 constexpr const char* sa_checkpoint_quantity = "nu_tilde";
 constexpr const char* sa_checkpoint_field = "NuTilde";
+const std::array<std::string, 5> previous_mean_quantities {{
+    "checkpoint_previous_rho",
+    "checkpoint_previous_rho_u",
+    "checkpoint_previous_rho_v",
+    "checkpoint_previous_rho_w",
+    "checkpoint_previous_rho_E",
+}};
+const std::array<const char*, 5> previous_mean_fields {{
+    "PreviousDensity",
+    "PreviousMomentumX",
+    "PreviousMomentumY",
+    "PreviousMomentumZ",
+    "PreviousEnergyStagnationDensity",
+}};
+constexpr const char* previous_sa_quantity = "checkpoint_previous_rho_nu_tilde";
+constexpr const char* previous_sa_field = "PreviousNuTildeConservative";
 
 int checkpoint_version(const CaseConfig& config)
 {
+    if (config.time_algorithm.integrator == TimeIntegratorKind::LuSgs
+        && config.run.mode == RunMode::Unsteady) {
+        return implicit_checkpoint_version;
+    }
     return config.turbulence.kind == TurbulenceModelKind::None ? laminar_checkpoint_version
                                                                : turbulence_checkpoint_version;
 }
+
+class ImplicitHistoryQuantity final : public IFieldQuantity {
+public:
+    ImplicitHistoryQuantity(std::string name, int component, bool model)
+        : descriptor_ {std::move(name),
+                       TopologyLocation::Cell,
+                       {},
+                       "1",
+                       "1",
+                       QuantityScale::Dimensionless,
+                       0,
+                       -1}
+        , component_(component)
+        , model_(model)
+    {
+        descriptor_.validate();
+    }
+
+    const QuantityDescriptor& descriptor() const override { return descriptor_; }
+
+    Real evaluate_cell(const StructuredBlock& block,
+                       const MetricField&,
+                       Index3 index,
+                       const QuantityContext&) const override
+    {
+        const auto& history = block.flow.implicit_history;
+        if (!history.valid) throw std::runtime_error("implicit checkpoint history is unavailable");
+        const auto& field = model_ ? history.previous_model : history.previous_mean;
+        return field(index.i, index.j, index.k, component_);
+    }
+
+private:
+    QuantityDescriptor descriptor_;
+    int component_ = 0;
+    bool model_ = false;
+};
 
 std::string turbulence_descriptor_signature(const CaseConfig& config)
 {
@@ -337,6 +394,8 @@ std::size_t flat_index(Extent3 extent, int i, int j, int k)
 
 struct RootCheckpointData {
     CheckpointRestoreResult restored;
+    bool implicit_history_valid = false;
+    Real implicit_history_time_step = 0.0;
     std::vector<Real> rank_payload;
     std::vector<std::size_t> rank_counts;
 };
@@ -344,6 +403,8 @@ struct RootCheckpointData {
 struct ZoneCheckpointFields {
     std::array<std::vector<Real>, euler_components> mean;
     std::vector<Real> nu_tilde;
+    std::array<std::vector<Real>, euler_components> previous_mean;
+    std::vector<Real> previous_model;
 };
 
 void collective_checkpoint_action(const MpiRuntime& mpi, const std::function<void()>& action)
@@ -389,6 +450,18 @@ CheckpointService::CheckpointService(const MpiRuntime& mpi,
     for (const auto& descriptor : model->fields()) {
         registry_.register_turbulence_field(descriptor);
     }
+    if (checkpoint_version(config_) == implicit_checkpoint_version) {
+        for (int component = 0; component < euler_components; ++component) {
+            registry_.register_quantity(std::make_shared<ImplicitHistoryQuantity>(
+                previous_mean_quantities[static_cast<std::size_t>(component)],
+                component,
+                false));
+        }
+        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+            registry_.register_quantity(
+                std::make_shared<ImplicitHistoryQuantity>(previous_sa_quantity, 0, true));
+        }
+    }
     std::string status;
     if (mpi_.rank() == 0) {
         try {
@@ -417,6 +490,28 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
     if (state.steady.model_reference_l2.size() != expected_model_references
         || state.steady.model_reference_linf.size() != expected_model_references) {
         throw std::runtime_error("checkpoint model residual reference identity differs");
+    }
+    const bool implicit_checkpoint
+        = checkpoint_version(config_) == implicit_checkpoint_version;
+    bool local_any_history = false;
+    bool local_all_history = true;
+    Real local_history_step = 0.0;
+    for (const auto& block : local_blocks_.blocks()) {
+        local_any_history = local_any_history || block.flow.implicit_history.valid;
+        local_all_history = local_all_history && block.flow.implicit_history.valid;
+        if (block.flow.implicit_history.valid) {
+            local_history_step
+                = std::max(local_history_step, block.flow.implicit_history.physical_time_step);
+        }
+    }
+    const bool history_valid = !mpi_.all_true(!local_any_history);
+    if (history_valid && !mpi_.all_true(local_all_history)) {
+        throw std::runtime_error("implicit history is valid on only some checkpoint blocks");
+    }
+    const Real history_time_step = mpi_.max(local_history_step);
+    if (implicit_checkpoint && history_valid
+        && (!std::isfinite(history_time_step) || history_time_step <= 0.0)) {
+        throw std::runtime_error("implicit checkpoint history time step is invalid");
     }
     std::ostringstream name;
     name << safe_name(config_.case_name) << ".checkpoint.step" << std::setw(8) << std::setfill('0')
@@ -469,6 +564,13 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
         }());
         write_descriptor(file->id(), "WCNS_MeshSignature", mesh_signature_);
         write_descriptor(file->id(), "WCNS_RestartSignature", config_.restart_signature());
+        if (implicit_checkpoint) {
+            write_descriptor(file->id(), "WCNS_ImplicitHistoryValid", history_valid ? "1" : "0");
+            std::ostringstream history_step;
+            history_step << std::setprecision(17) << history_time_step;
+            write_descriptor(
+                file->id(), "WCNS_ImplicitHistoryTimeStep", history_step.str());
+        }
         write_descriptor(
             file->id(), "WCNS_SteadyInitialized", state.steady.reference_initialized ? "1" : "0");
         write_descriptor(
@@ -558,6 +660,53 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
                            "cg_field_write checkpoint");
             });
         }
+        if (implicit_checkpoint && history_valid) {
+            for (std::size_t component = 0; component < previous_mean_fields.size();
+                 ++component) {
+                auto values = gather_original_zone_quantity(mpi_,
+                                                            local_blocks_,
+                                                            metrics_,
+                                                            partition_,
+                                                            zone,
+                                                            registry_,
+                                                            previous_mean_quantities[component],
+                                                            quantity_context_);
+                collective_checkpoint_action(mpi_, [&] {
+                    int field = 0;
+                    check_cgns(cg_field_write(file->id(),
+                                              base,
+                                              output_zone,
+                                              solution,
+                                              RealDouble,
+                                              previous_mean_fields[component],
+                                              values.data(),
+                                              &field),
+                               "cg_field_write implicit mean history");
+                });
+            }
+            if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                auto values = gather_original_zone_quantity(mpi_,
+                                                            local_blocks_,
+                                                            metrics_,
+                                                            partition_,
+                                                            zone,
+                                                            registry_,
+                                                            previous_sa_quantity,
+                                                            quantity_context_);
+                collective_checkpoint_action(mpi_, [&] {
+                    int field = 0;
+                    check_cgns(cg_field_write(file->id(),
+                                              base,
+                                              output_zone,
+                                              solution,
+                                              RealDouble,
+                                              previous_sa_field,
+                                              values.data(),
+                                              &field),
+                               "cg_field_write implicit model history");
+                });
+            }
+        }
         if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
             auto values = gather_original_zone_quantity(mpi_,
                                                         local_blocks_,
@@ -636,6 +785,17 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
             root.restored.initial.time = parse_real(required(descriptors, "WCNS_Time"), "time");
             root.restored.previous_time_step
                 = parse_real(required(descriptors, "WCNS_TimeStep"), "time step");
+            if (checkpoint_version(config_) == implicit_checkpoint_version) {
+                root.implicit_history_valid
+                    = required(descriptors, "WCNS_ImplicitHistoryValid") == "1";
+                root.implicit_history_time_step = parse_real(
+                    required(descriptors, "WCNS_ImplicitHistoryTimeStep"),
+                    "implicit history time step");
+                if (root.implicit_history_valid
+                    && root.implicit_history_time_step <= 0.0) {
+                    throw std::runtime_error("checkpoint implicit history time step is invalid");
+                }
+            }
             root.restored.initial.steady.reference_initialized
                 = required(descriptors, "WCNS_SteadyInitialized") == "1";
             root.restored.initial.steady.consecutive_passes
@@ -708,6 +868,34 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                                              zone_fields.nu_tilde.data()),
                                "cg_field_read SA checkpoint");
                 }
+                if (root.implicit_history_valid) {
+                    for (std::size_t component = 0; component < euler_components; ++component) {
+                        zone_fields.previous_mean[component].resize(count);
+                        check_cgns(cg_field_read(file.id(),
+                                                 1,
+                                                 zone_index,
+                                                 1,
+                                                 previous_mean_fields[component],
+                                                 RealDouble,
+                                                 lower.data(),
+                                                 upper.data(),
+                                                 zone_fields.previous_mean[component].data()),
+                                   "cg_field_read implicit mean history");
+                    }
+                    if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                        zone_fields.previous_model.resize(count);
+                        check_cgns(cg_field_read(file.id(),
+                                                 1,
+                                                 zone_index,
+                                                 1,
+                                                 previous_sa_field,
+                                                 RealDouble,
+                                                 lower.data(),
+                                                 upper.data(),
+                                                 zone_fields.previous_model.data()),
+                                   "cg_field_read implicit model history");
+                    }
+                }
                 fields.emplace(expected.source_zone, std::move(zone_fields));
             }
 
@@ -751,6 +939,37 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                             }
                         }
                     }
+                    if (root.implicit_history_valid) {
+                        for (int component = 0; component < euler_components; ++component) {
+                            for (int k = 0; k < extent.nk; ++k) {
+                                for (int j = 0; j < extent.nj; ++j) {
+                                    for (int i = 0; i < extent.ni; ++i) {
+                                        const auto global = flat_index(source.cell_extent,
+                                                                       leaf.cells.begin.i + i,
+                                                                       leaf.cells.begin.j + j,
+                                                                       leaf.cells.begin.k + k);
+                                        root.rank_payload.push_back(
+                                            zone.previous_mean[static_cast<std::size_t>(component)]
+                                                              [global]);
+                                    }
+                                }
+                            }
+                        }
+                        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                            for (int k = 0; k < extent.nk; ++k) {
+                                for (int j = 0; j < extent.nj; ++j) {
+                                    for (int i = 0; i < extent.ni; ++i) {
+                                        const auto global = flat_index(source.cell_extent,
+                                                                       leaf.cells.begin.i + i,
+                                                                       leaf.cells.begin.j + j,
+                                                                       leaf.cells.begin.k + k);
+                                        root.rank_payload.push_back(
+                                            zone.previous_model[global]);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 root.rank_counts[static_cast<std::size_t>(rank)] = root.rank_payload.size() - begin;
             }
@@ -759,6 +978,8 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                    << root.restored.initial.step << '\n'
                    << std::setprecision(17) << root.restored.initial.time << '\n'
                    << root.restored.previous_time_step << '\n'
+                   << (root.implicit_history_valid ? 1 : 0) << '\n'
+                   << root.implicit_history_time_step << '\n'
                    << (root.restored.initial.steady.reference_initialized ? 1 : 0) << '\n'
                    << root.restored.initial.steady.consecutive_passes << '\n'
                    << real_list(root.restored.initial.steady.reference_l2) << '\n'
@@ -788,6 +1009,10 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
     result.initial.time = parse_real(line, "time");
     std::getline(header, line);
     result.previous_time_step = parse_real(line, "time step");
+    std::getline(header, line);
+    const bool implicit_history_valid = line == "1";
+    std::getline(header, line);
+    const Real implicit_history_time_step = parse_real(line, "implicit history time step");
     std::getline(header, line);
     result.initial.steady.reference_initialized = line == "1";
     std::getline(header, line);
@@ -857,6 +1082,34 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                 }
             }
             offset += count;
+        }
+        if (implicit_history_valid) {
+            const std::size_t model_count
+                = config_.turbulence.kind == TurbulenceModelKind::SaNegative ? 1u : 0u;
+            if (offset + (euler_components + model_count) * count > payload.size()) {
+                throw std::runtime_error("implicit checkpoint history payload is truncated");
+            }
+            auto& history = block.flow.implicit_history;
+            history.prepare(extent, static_cast<int>(model_count));
+            history.valid = true;
+            history.physical_time_step = implicit_history_time_step;
+            for (int k = 0; k < extent.nk; ++k) {
+                for (int j = 0; j < extent.nj; ++j) {
+                    for (int i = 0; i < extent.ni; ++i) {
+                        const auto local = flat_index(extent, i, j, k);
+                        for (int component = 0; component < euler_components; ++component) {
+                            history.previous_mean(i, j, k, component)
+                                = payload[offset
+                                          + static_cast<std::size_t>(component) * count + local];
+                        }
+                        if (model_count != 0) {
+                            history.previous_model(i, j, k, 0)
+                                = payload[offset + euler_components * count + local];
+                        }
+                    }
+                }
+            }
+            offset += (euler_components + model_count) * count;
         }
     }
     if (offset != payload.size()) {

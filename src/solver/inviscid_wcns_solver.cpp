@@ -1,7 +1,9 @@
 #include <wcns/solver/inviscid_wcns_solver.hpp>
 
+#include <wcns/solver/implicit_time_integrator.hpp>
 #include <wcns/solver/time_integrator.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -53,6 +55,140 @@ std::array<Real, 3> metric_area_vector(const MetricField& metric, Axis axis, Ind
         vectors->y(face.i, face.j, face.k),
         vectors->z(face.i, face.j, face.k),
     }};
+}
+
+const BlockStateBuffer& snapshot_block(const StateSnapshot& snapshot, BlockId block)
+{
+    const auto iterator = std::find_if(snapshot.begin(), snapshot.end(), [&](const auto& value) {
+        return value.block == block;
+    });
+    if (iterator == snapshot.end()) throw std::logic_error("implicit snapshot block is missing");
+    return *iterator;
+}
+
+struct ImplicitIncrementSet {
+    std::unordered_map<BlockId, Field<Real>> fields;
+    Real global_residual_l2 = 0.0;
+};
+
+ImplicitIncrementSet form_implicit_increments(
+    const MpiRuntime& mpi,
+    const LocalBlockSet& local_blocks,
+    const BlockMetricMap& metrics,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    const NumericalFloors& floors,
+    const RiemannSolverParameters& riemann_parameters,
+    Real pseudo_cfl,
+    const LuSgsIterationConfig& iteration,
+    Real physical_time_step = 0.0,
+    BdfOrder order = BdfOrder::First,
+    const StateSnapshot* current = nullptr,
+    const StateSnapshot* previous = nullptr)
+{
+    const bool physical = physical_time_step > 0.0;
+    if (physical != (current != nullptr) || physical != (previous != nullptr)) {
+        throw std::invalid_argument("implicit BDF history inputs are incomplete");
+    }
+    const Real physical_diagonal
+        = physical ? bdf_time_diagonal(order, physical_time_step) : 0.0;
+    ImplicitIncrementSet result;
+    Real local_square_sum = 0.0;
+    Real local_count = 0.0;
+    for (const auto& block : local_blocks.blocks()) {
+        const auto extent = block.cell_extent();
+        Field<Real> rhs(extent, euler_components, 0, 0.0);
+        const BlockStateBuffer* current_block = nullptr;
+        const BlockStateBuffer* previous_block = nullptr;
+        if (physical) {
+            current_block = &snapshot_block(*current, block.id());
+            previous_block = &snapshot_block(*previous, block.id());
+        }
+        std::size_t offset = 0;
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    for (int component = 0; component < euler_components; ++component) {
+                        Real value = block.flow.residual(i, j, k, component);
+                        if (physical) {
+                            value -= bdf_time_residual(
+                                order,
+                                block.flow.conservative(i, j, k, component),
+                                current_block->values[offset],
+                                previous_block->values[offset],
+                                physical_time_step);
+                        }
+                        rhs(i, j, k, component) = value;
+                        local_square_sum += value * value;
+                        local_count += 1.0;
+                        ++offset;
+                    }
+                }
+            }
+        }
+        const auto* preconditioner = riemann_parameters.weiss_smith
+            ? &riemann_parameters.preconditioner
+            : nullptr;
+        const auto system = build_scalar_spectral_system(block,
+                                                         metrics.at(block.id()),
+                                                         gas,
+                                                         reference,
+                                                         floors,
+                                                         pseudo_cfl,
+                                                         physical_diagonal,
+                                                         preconditioner);
+        result.fields.emplace(
+            block.id(),
+            solve_scalar_lu_sgs(rhs,
+                                system.diagonal,
+                                system.coupling,
+                                block.cell_dimension(),
+                                iteration));
+    }
+    const Real global_square_sum = mpi.sum(local_square_sum);
+    const Real global_count = mpi.sum(local_count);
+    if (!std::isfinite(global_square_sum) || global_count <= 0.0) {
+        throw PhysicsError("implicit residual norm is invalid");
+    }
+    result.global_residual_l2 = std::sqrt(global_square_sum / global_count);
+    return result;
+}
+
+Real commit_implicit_mean_flow(const MpiRuntime& mpi,
+                               const std::vector<StructuredBlock*>& blocks,
+                               const std::unordered_map<BlockId, Field<Real>>& increments,
+                               const GasModel& gas,
+                               const ReferenceScales& reference,
+                               const NumericalFloors& floors,
+                               Real time)
+{
+    const auto baseline = capture_conservative_state(blocks);
+    for (int backtrack = 0; backtrack <= 7; ++backtrack) {
+        const Real relaxation = std::ldexp(1.0, -backtrack);
+        auto candidate = baseline;
+        for (std::size_t block_index = 0; block_index < blocks.size(); ++block_index) {
+            const auto& increment = increments.at(blocks[block_index]->id());
+            auto& values = candidate[block_index].values;
+            std::size_t offset = 0;
+            const auto extent = blocks[block_index]->cell_extent();
+            for (int k = 0; k < extent.nk; ++k) {
+                for (int j = 0; j < extent.nj; ++j) {
+                    for (int i = 0; i < extent.ni; ++i) {
+                        for (int component = 0; component < euler_components; ++component) {
+                            values[offset++] += relaxation * increment(i, j, k, component);
+                        }
+                    }
+                }
+            }
+        }
+        const auto validation
+            = validate_candidate_state(candidate, blocks, gas, reference, floors, 1, time);
+        if (mpi.all_true(validation.valid())) {
+            commit_candidate_state(blocks, candidate);
+            return relaxation;
+        }
+    }
+    throw PhysicsError("LU-SGS increment remained inadmissible after backtracking");
 }
 
 } // namespace
@@ -111,7 +247,9 @@ InviscidWcnsSolver::InviscidWcnsSolver(const MpiRuntime& mpi,
     const auto riemann_registry = RiemannSolverRegistry::with_builtins(config_.riemann.parameters);
     config_.riemann.validate(riemann_registry);
     riemann_ = RiemannSolver(config_.riemann.scheme, riemann_registry, config_.riemann.parameters);
-    robust_riemann_ = RiemannSolver("rusanov", riemann_registry, config_.riemann.parameters);
+    auto robust_parameters = config_.riemann.parameters;
+    robust_parameters.weiss_smith = false;
+    robust_riemann_ = RiemannSolver("rusanov", riemann_registry, robust_parameters);
     robustness_ladder_ = RobustnessLadder::build(config_.reconstruction, config_.riemann);
     floors_.validate();
     if (!same_floors(config_.reconstruction.floors, floors_)) {
@@ -147,6 +285,38 @@ InviscidWcnsSolver::InviscidWcnsSolver(const MpiRuntime& mpi,
             throw std::logic_error("duplicate inviscid workspace block");
         }
         face_flux_registry_.add(block.id(), inserted.first->second);
+    }
+    const bool any_history = std::any_of(local_blocks_.blocks().begin(),
+                                         local_blocks_.blocks().end(),
+                                         [](const auto& block) {
+                                             return block.flow.implicit_history.valid;
+                                         });
+    const bool all_history = std::all_of(local_blocks_.blocks().begin(),
+                                         local_blocks_.blocks().end(),
+                                         [](const auto& block) {
+                                             return block.flow.implicit_history.valid;
+                                         });
+    if (any_history != all_history) {
+        throw std::invalid_argument("implicit history is valid on only some local blocks");
+    }
+    if (all_history) {
+        previous_physical_time_step_
+            = local_blocks_.blocks().front().flow.implicit_history.physical_time_step;
+        previous_physical_state_.reserve(local_blocks_.blocks().size());
+        for (const auto& block : local_blocks_.blocks()) {
+            const auto& field = block.flow.implicit_history.previous_mean;
+            if (block.flow.implicit_history.physical_time_step
+                != previous_physical_time_step_) {
+                throw std::invalid_argument("implicit history time steps differ by block");
+            }
+            if (field.interior_extent() != block.cell_extent()
+                || field.components() != euler_components || field.ghost_width() != 0) {
+                throw std::invalid_argument("implicit mean-flow history metadata differ");
+            }
+            previous_physical_state_.push_back(
+                {block.id(), block.cell_extent(), std::vector<Real>(field.data(), field.data() + field.size())});
+        }
+        has_previous_physical_state_ = true;
     }
 }
 
@@ -263,6 +433,104 @@ Real InviscidWcnsSolver::advance(Real time_step, Real initial_time)
         update_temperature_primitive_interior(block, gas_, reference_, floors_);
     }
     return accepted_time_step;
+}
+
+Real InviscidWcnsSolver::advance_lu_sgs(Real pseudo_cfl,
+                                        Real time,
+                                        const LuSgsIterationConfig& iteration)
+{
+    iteration.validate();
+    compute_residuals(time);
+    const auto increments = form_implicit_increments(mpi_,
+                                                     local_blocks_,
+                                                     metrics_,
+                                                     gas_,
+                                                     reference_,
+                                                     floors_,
+                                                     config_.riemann.parameters,
+                                                     pseudo_cfl,
+                                                     iteration);
+    static_cast<void>(commit_implicit_mean_flow(mpi_,
+                                                block_workspace_,
+                                                increments.fields,
+                                                gas_,
+                                                reference_,
+                                                floors_,
+                                                time));
+    for (auto& block : local_blocks_.blocks())
+        update_temperature_primitive_interior(block, gas_, reference_, floors_);
+    robustness_diagnostics_ = {};
+    robustness_diagnostics_.proposed_time_step = 1.0;
+    robustness_diagnostics_.accepted_time_step = 1.0;
+    return 1.0;
+}
+
+Real InviscidWcnsSolver::advance_dual_time(Real physical_time_step,
+                                           Real initial_time,
+                                           const DualTimeIterationConfig& config)
+{
+    config.validate();
+    if (!std::isfinite(physical_time_step) || physical_time_step <= 0.0) {
+        throw std::invalid_argument("dual-time physical step must be positive and finite");
+    }
+    const auto current = capture_conservative_state(block_workspace_);
+    const StateSnapshot previous
+        = has_previous_physical_state_ ? previous_physical_state_ : current;
+    const Real step_scale
+        = std::max({Real {1.0}, physical_time_step, previous_physical_time_step_});
+    const bool uniform_history = has_previous_physical_state_
+        && std::abs(previous_physical_time_step_ - physical_time_step)
+            <= 64.0 * std::numeric_limits<Real>::epsilon() * step_scale;
+    const BdfOrder order = uniform_history ? BdfOrder::Second : BdfOrder::First;
+    Real initial_norm = 0.0;
+    for (std::size_t iteration = 0; iteration <= config.max_iterations; ++iteration) {
+        compute_residuals(initial_time + physical_time_step);
+        const auto increments = form_implicit_increments(mpi_,
+                                                         local_blocks_,
+                                                         metrics_,
+                                                         gas_,
+                                                         reference_,
+                                                         floors_,
+                                                         config_.riemann.parameters,
+                                                         config.cfl,
+                                                         config.lu_sgs,
+                                                         physical_time_step,
+                                                         order,
+                                                         &current,
+                                                         &previous);
+        if (iteration == 0) initial_norm = increments.global_residual_l2;
+        const bool converged = increments.global_residual_l2 <= config.absolute_tolerance
+            || (initial_norm > 0.0
+                && increments.global_residual_l2 / initial_norm <= config.relative_tolerance);
+        if (converged) {
+            previous_physical_state_ = current;
+            has_previous_physical_state_ = true;
+            previous_physical_time_step_ = physical_time_step;
+            for (auto& block : local_blocks_.blocks()) {
+                auto& history = block.flow.implicit_history;
+                history.prepare(block.cell_extent(), 0);
+                history.valid = true;
+                history.physical_time_step = physical_time_step;
+                const auto& source = snapshot_block(current, block.id()).values;
+                std::copy(source.begin(), source.end(), history.previous_mean.data());
+            }
+            for (auto& block : local_blocks_.blocks())
+                update_temperature_primitive_interior(block, gas_, reference_, floors_);
+            return physical_time_step;
+        }
+        if (iteration == config.max_iterations) break;
+        static_cast<void>(commit_implicit_mean_flow(mpi_,
+                                                    block_workspace_,
+                                                    increments.fields,
+                                                    gas_,
+                                                    reference_,
+                                                    floors_,
+                                                    initial_time + physical_time_step));
+    }
+    restore_conservative_state(block_workspace_, current);
+    for (auto& block : local_blocks_.blocks())
+        update_temperature_primitive_interior(block, gas_, reference_, floors_);
+    throw PhysicsError("dual-time LU-SGS failed to converge; physical layer was restored");
 }
 
 Real InviscidWcnsSolver::global_time_step(Real cfl)

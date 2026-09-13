@@ -174,6 +174,8 @@ add_library(wcns_solver STATIC
     src/solver/source_operator.cpp
     src/solver/spatial_operator.cpp
     src/solver/time_integrator.cpp
+    src/solver/implicit_time_integrator.cpp
+    src/solver/low_mach_preconditioner.cpp
     src/solver/transport_model.cpp
     src/solver/turbulence_fields.cpp
     src/solver/turbulence_model.cpp

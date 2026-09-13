@@ -17,6 +17,7 @@ void test_euler();
 void test_thermodynamics();
 void test_wcns();
 void test_spatial_operator();
+void test_implicit_time_integrator();
 void test_source_terms();
 void test_algorithm_profile();
 void test_geometry_line_operators();
@@ -101,6 +102,7 @@ int main()
         test_thermodynamics();
         test_wcns();
         test_spatial_operator();
+        test_implicit_time_integrator();
         test_source_terms();
         test_algorithm_profile();
         test_geometry_line_operators();

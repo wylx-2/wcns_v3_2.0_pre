@@ -17,6 +17,7 @@ add_executable(wcns_unit_tests
     test_thermodynamics.cpp
     test_wcns.cpp
     test_spatial_operator.cpp
+    test_implicit_time_integrator.cpp
     test_source_terms.cpp
     test_physical_boundary.cpp
     test_double_mach_reflection.cpp
@@ -77,6 +78,52 @@ if(WCNS_ENABLE_CGNS)
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/freestream_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/freestream_case.wcns
+        @ONLY
+    )
+    set(WCNS_IMPLICIT_CASE implicit-freestream-steady)
+    set(WCNS_IMPLICIT_MODE steady)
+    set(WCNS_IMPLICIT_RUN_LINES "# steady pseudo-time")
+    set(WCNS_IMPLICIT_PRECONDITIONER none)
+    set(WCNS_IMPLICIT_PRECONDITIONER_LINES "# no preconditioner cutoffs")
+    set(WCNS_IMPLICIT_CHECKPOINT false)
+    set(WCNS_IMPLICIT_RESTART_LINE "# fresh implicit run")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_freestream_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_freestream_steady.wcns
+        @ONLY
+    )
+    set(WCNS_IMPLICIT_CASE implicit-freestream-dual-time)
+    set(WCNS_IMPLICIT_MODE unsteady)
+    set(WCNS_IMPLICIT_RUN_LINES "run.t_end = 0.002\ntime.physical.step = 0.001")
+    set(WCNS_IMPLICIT_PRECONDITIONER weiss_smith)
+    set(WCNS_IMPLICIT_PRECONDITIONER_LINES
+        "preconditioner.mach_cutoff = 0.001\npreconditioner.viscous_cutoff = 1")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_freestream_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_freestream_dual_time.wcns
+        @ONLY
+    )
+    set(WCNS_IMPLICIT_CASE implicit-checkpoint-source)
+    set(WCNS_IMPLICIT_RUN_LINES "run.t_end = 0.001\ntime.physical.step = 0.001")
+    set(WCNS_IMPLICIT_CHECKPOINT true)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_freestream_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_checkpoint_source.wcns
+        @ONLY
+    )
+    set(WCNS_IMPLICIT_CASE implicit-checkpoint-restart)
+    set(WCNS_IMPLICIT_RUN_LINES "run.t_end = 0.002\ntime.physical.step = 0.001")
+    set(WCNS_IMPLICIT_CHECKPOINT false)
+    set(WCNS_IMPLICIT_RESTART_LINE
+        "restart.path = ${CMAKE_CURRENT_BINARY_DIR}/implicit-checkpoint-source/implicit-checkpoint-source.checkpoint.latest.cgns")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_freestream_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_checkpoint_restart.wcns
+        @ONLY
+    )
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_sa_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_sa_steady.wcns
         @ONLY
     )
     configure_file(
@@ -307,6 +354,46 @@ if(WCNS_ENABLE_CGNS)
         NAME wcns.run.freestream.serial
         COMMAND wcns_run
             --config ${CMAKE_CURRENT_BINARY_DIR}/freestream_case.wcns
+    )
+    foreach(implicit_case IN ITEMS steady dual_time)
+        add_test(
+            NAME wcns.run.implicit_freestream.${implicit_case}.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_freestream_${implicit_case}.wcns
+        )
+        set_tests_properties(
+            wcns.run.implicit_freestream.${implicit_case}.serial
+            PROPERTIES FIXTURES_REQUIRED cgns_files
+        )
+    endforeach()
+    add_test(
+        NAME wcns.run.implicit_sa.steady.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_sa_steady.wcns
+    )
+    set_tests_properties(
+        wcns.run.implicit_sa.steady.serial
+        PROPERTIES FIXTURES_REQUIRED cgns_files
+    )
+    add_test(
+        NAME wcns.run.implicit_checkpoint.source.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_checkpoint_source.wcns
+    )
+    set_tests_properties(
+        wcns.run.implicit_checkpoint.source.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP implicit_checkpoint
+    )
+    add_test(
+        NAME wcns.run.implicit_checkpoint.restart.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_checkpoint_restart.wcns
+    )
+    set_tests_properties(
+        wcns.run.implicit_checkpoint.restart.serial
+        PROPERTIES FIXTURES_REQUIRED implicit_checkpoint
     )
     add_test(
         NAME wcns.run.transport.sutherland.serial

@@ -51,22 +51,49 @@ InviscidSimulationSolver::InviscidSimulationSolver(InviscidWcnsSolver& solver,
                                                    const LocalBlockSet& local_blocks,
                                                    const BlockMetricMap& metrics,
                                                    const StructuredPartitionPlan& partition,
-                                                   AlgorithmProfile profile)
+                                                   AlgorithmProfile profile,
+                                                   TimeAlgorithmConfig time_algorithm,
+                                                   RunMode run_mode)
     : solver_(solver)
     , mpi_(mpi)
     , local_blocks_(local_blocks)
     , metrics_(metrics)
     , partition_(partition)
     , profile_(std::move(profile))
-{ }
+    , time_algorithm_(std::move(time_algorithm))
+    , run_mode_(run_mode)
+{
+    time_algorithm_.validate();
+}
 
 Real InviscidSimulationSolver::global_time_step(Real cfl)
 {
+    if (time_algorithm_.integrator == TimeIntegratorKind::LuSgs) {
+        pending_pseudo_cfl_ = cfl;
+        return run_mode_ == RunMode::Unsteady ? time_algorithm_.physical_time_step : 1.0;
+    }
     return solver_.global_time_step(cfl);
 }
 
 Real InviscidSimulationSolver::advance(Real time_step, Real initial_time)
 {
+    if (time_algorithm_.integrator == TimeIntegratorKind::LuSgs) {
+        const LuSgsIterationConfig lu_sgs {
+            time_algorithm_.lu_sgs_sweeps,
+            time_algorithm_.lu_sgs_relaxation,
+        };
+        if (run_mode_ == RunMode::Steady) {
+            return solver_.advance_lu_sgs(pending_pseudo_cfl_, initial_time, lu_sgs);
+        }
+        const DualTimeIterationConfig dual {
+            time_algorithm_.dual_time_max_iterations,
+            time_algorithm_.dual_time_absolute_tolerance,
+            time_algorithm_.dual_time_relative_tolerance,
+            time_algorithm_.dual_time_cfl,
+            lu_sgs,
+        };
+        return solver_.advance_dual_time(time_step, initial_time, dual);
+    }
     return solver_.advance(time_step, initial_time);
 }
 
@@ -90,22 +117,49 @@ ViscousSimulationSolver::ViscousSimulationSolver(ViscousWcnsSolver& solver,
                                                  const LocalBlockSet& local_blocks,
                                                  const BlockMetricMap& metrics,
                                                  const StructuredPartitionPlan& partition,
-                                                 AlgorithmProfile profile)
+                                                 AlgorithmProfile profile,
+                                                 TimeAlgorithmConfig time_algorithm,
+                                                 RunMode run_mode)
     : solver_(solver)
     , mpi_(mpi)
     , local_blocks_(local_blocks)
     , metrics_(metrics)
     , partition_(partition)
     , profile_(std::move(profile))
-{ }
+    , time_algorithm_(std::move(time_algorithm))
+    , run_mode_(run_mode)
+{
+    time_algorithm_.validate();
+}
 
 Real ViscousSimulationSolver::global_time_step(Real cfl)
 {
+    if (time_algorithm_.integrator == TimeIntegratorKind::LuSgs) {
+        pending_pseudo_cfl_ = cfl;
+        return run_mode_ == RunMode::Unsteady ? time_algorithm_.physical_time_step : 1.0;
+    }
     return solver_.global_time_step(cfl);
 }
 
 Real ViscousSimulationSolver::advance(Real time_step, Real initial_time)
 {
+    if (time_algorithm_.integrator == TimeIntegratorKind::LuSgs) {
+        const LuSgsIterationConfig lu_sgs {
+            time_algorithm_.lu_sgs_sweeps,
+            time_algorithm_.lu_sgs_relaxation,
+        };
+        if (run_mode_ == RunMode::Steady) {
+            return solver_.advance_lu_sgs(pending_pseudo_cfl_, initial_time, lu_sgs);
+        }
+        const DualTimeIterationConfig dual {
+            time_algorithm_.dual_time_max_iterations,
+            time_algorithm_.dual_time_absolute_tolerance,
+            time_algorithm_.dual_time_relative_tolerance,
+            time_algorithm_.dual_time_cfl,
+            lu_sgs,
+        };
+        return solver_.advance_dual_time(time_step, initial_time, dual);
+    }
     return solver_.advance(time_step, initial_time);
 }
 

@@ -1,6 +1,7 @@
 #include <wcns/runtime/case_config.hpp>
 #include <wcns/runtime/quantity_registry.hpp>
 #include <wcns/physics/double_mach_reflection.hpp>
+#include <wcns/solver/low_mach_preconditioner.hpp>
 
 #include <algorithm>
 #include <array>
@@ -291,7 +292,18 @@ const std::set<std::string>& fixed_keys()
         "turbulence.sa.farfield_nu_tilde_ratio",
         "turbulence.sa.source_treatment",
         "time.integrator",
+        "time.physical.scheme",
+        "time.physical.step",
+        "time.dual_time.max_iterations",
+        "time.dual_time.absolute_tolerance",
+        "time.dual_time.relative_tolerance",
+        "time.dual_time.cfl",
+        "lu_sgs.sweeps",
+        "lu_sgs.jacobian",
+        "lu_sgs.relaxation",
         "preconditioner.type",
+        "preconditioner.mach_cutoff",
+        "preconditioner.viscous_cutoff",
         "gas.gamma",
         "gas.molar_mass",
         "gas.specific_gas_constant",
@@ -1214,33 +1226,63 @@ std::string OutputConfig::summary() const
 void TimeAlgorithmConfig::validate() const
 {
     static_cast<void>(time_integrator_name(integrator));
+    if (!std::isfinite(physical_time_step) || physical_time_step < 0.0
+        || dual_time_max_iterations == 0
+        || !std::isfinite(dual_time_absolute_tolerance)
+        || dual_time_absolute_tolerance <= 0.0
+        || !std::isfinite(dual_time_relative_tolerance)
+        || dual_time_relative_tolerance <= 0.0 || !std::isfinite(dual_time_cfl)
+        || dual_time_cfl <= 0.0 || lu_sgs_sweeps != 1
+        || !std::isfinite(lu_sgs_relaxation) || lu_sgs_relaxation <= 0.0
+        || lu_sgs_relaxation > 1.0) {
+        throw std::invalid_argument("invalid LU-SGS or dual-time configuration");
+    }
 }
 
 std::string TimeAlgorithmConfig::summary() const
 {
     validate();
-    return std::string("time(integrator=") + time_integrator_name(integrator) + ')';
+    std::ostringstream result;
+    result << "time(integrator=" << time_integrator_name(integrator);
+    if (integrator == TimeIntegratorKind::LuSgs) {
+        result << ",physical_scheme=bdf2,physical_step=" << std::setprecision(17)
+               << physical_time_step << ",dual_max=" << dual_time_max_iterations
+               << ",dual_abs=" << dual_time_absolute_tolerance
+               << ",dual_rel=" << dual_time_relative_tolerance
+               << ",dual_cfl=" << dual_time_cfl << ",lu_sgs_sweeps=" << lu_sgs_sweeps
+               << ",jacobian=scalar_spectral,relaxation=" << lu_sgs_relaxation;
+    }
+    result << ')';
+    return result.str();
 }
 
 std::string TimeAlgorithmConfig::restart_signature() const
 {
-    return "time_v2;integrator=" + std::string(time_integrator_name(integrator));
+    return "time_v3;" + summary();
 }
 
 void PreconditionerConfig::validate() const
 {
     static_cast<void>(preconditioner_name(kind));
+    WeissSmithParameters {mach_cutoff, viscous_cutoff}.validate();
 }
 
 std::string PreconditionerConfig::summary() const
 {
     validate();
-    return std::string("preconditioner(type=") + preconditioner_name(kind) + ')';
+    std::ostringstream result;
+    result << "preconditioner(type=" << preconditioner_name(kind);
+    if (kind == PreconditionerKind::WeissSmith) {
+        result << ",mach_cutoff=" << std::setprecision(17) << mach_cutoff
+               << ",viscous_cutoff=" << viscous_cutoff;
+    }
+    result << ')';
+    return result.str();
 }
 
 std::string PreconditionerConfig::restart_signature() const
 {
-    return "preconditioner_v1;type=" + std::string(preconditioner_name(kind));
+    return "preconditioner_v2;" + summary();
 }
 
 void CaseRunConfig::validate() const
@@ -1282,14 +1324,25 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     result.schema_version = static_cast<int>(version);
-    const std::array<const char*, 7> v2_keys {{
+    const std::array<const char*, 18> v2_keys {{
         "turbulence.model",
         "turbulence.prandtl",
         "turbulence.wall_treatment",
         "turbulence.sa.farfield_nu_tilde_ratio",
         "turbulence.sa.source_treatment",
         "time.integrator",
+        "time.physical.scheme",
+        "time.physical.step",
+        "time.dual_time.max_iterations",
+        "time.dual_time.absolute_tolerance",
+        "time.dual_time.relative_tolerance",
+        "time.dual_time.cfl",
+        "lu_sgs.sweeps",
+        "lu_sgs.jacobian",
+        "lu_sgs.relaxation",
         "preconditioner.type",
+        "preconditioner.mach_cutoff",
+        "preconditioner.viscous_cutoff",
     }};
     if (version == 1) {
         for (const auto* key : v2_keys) {
@@ -1337,6 +1390,61 @@ CaseConfig CaseConfig::from_text(const std::string& text)
             = parse_time_integrator(require(entries, "time.integrator"));
         result.preconditioner.kind
             = parse_preconditioner(require(entries, "preconditioner.type"));
+        const auto has = [&](const char* key) { return entries.find(key) != entries.end(); };
+        const bool has_implicit_key = has("time.physical.scheme") || has("time.physical.step")
+            || has("time.dual_time.max_iterations")
+            || has("time.dual_time.absolute_tolerance")
+            || has("time.dual_time.relative_tolerance") || has("time.dual_time.cfl")
+            || has("lu_sgs.sweeps") || has("lu_sgs.jacobian")
+            || has("lu_sgs.relaxation");
+        if (result.time_algorithm.integrator == TimeIntegratorKind::SspRk3
+            && has_implicit_key) {
+            throw CaseConfigurationError(
+                "time.integrator=ssprk3 does not accept LU-SGS or dual-time keys");
+        }
+        if (result.time_algorithm.integrator == TimeIntegratorKind::LuSgs) {
+            if (has("time.physical.scheme")
+                && require(entries, "time.physical.scheme") != "bdf2") {
+                throw CaseConfigurationError("time.physical.scheme must be bdf2");
+            }
+            if (has("lu_sgs.jacobian")
+                && require(entries, "lu_sgs.jacobian") != "scalar_spectral") {
+                throw CaseConfigurationError("lu_sgs.jacobian must be scalar_spectral");
+            }
+            result.time_algorithm.physical_time_step
+                = optional_real(entries, "time.physical.step", 0.0);
+            result.time_algorithm.dual_time_max_iterations
+                = optional_size(entries, "time.dual_time.max_iterations", 100);
+            result.time_algorithm.dual_time_absolute_tolerance = optional_real(
+                entries, "time.dual_time.absolute_tolerance", 1.0e-10);
+            result.time_algorithm.dual_time_relative_tolerance = optional_real(
+                entries, "time.dual_time.relative_tolerance", 1.0e-8);
+            result.time_algorithm.dual_time_cfl
+                = optional_real(entries, "time.dual_time.cfl", 5.0);
+            if (has("lu_sgs.sweeps")) {
+                const auto sweeps = parse_integer(require(entries, "lu_sgs.sweeps"),
+                                                  "lu_sgs.sweeps");
+                if (sweeps < std::numeric_limits<int>::min()
+                    || sweeps > std::numeric_limits<int>::max()) {
+                    throw CaseConfigurationError("lu_sgs.sweeps exceeds int range");
+                }
+                result.time_algorithm.lu_sgs_sweeps = static_cast<int>(sweeps);
+            }
+            result.time_algorithm.lu_sgs_relaxation
+                = optional_real(entries, "lu_sgs.relaxation", 1.0);
+        }
+        const bool has_cutoff
+            = has("preconditioner.mach_cutoff") || has("preconditioner.viscous_cutoff");
+        if (result.preconditioner.kind == PreconditionerKind::None && has_cutoff) {
+            throw CaseConfigurationError(
+                "preconditioner.type=none does not accept cutoff keys");
+        }
+        if (result.preconditioner.kind == PreconditionerKind::WeissSmith) {
+            result.preconditioner.mach_cutoff
+                = optional_real(entries, "preconditioner.mach_cutoff", 1.0e-3);
+            result.preconditioner.viscous_cutoff
+                = optional_real(entries, "preconditioner.viscous_cutoff", 1.0);
+        }
     }
     result.case_name = require(entries, "case.name");
     result.mesh_path = require(entries, "mesh.path");
@@ -1740,13 +1848,27 @@ void CaseConfig::validate() const
                     "stage X SA-neg does not yet support mean-flow step retry transactions");
             }
         }
-        if (time_algorithm.integrator != TimeIntegratorKind::SspRk3) {
-            throw CaseConfigurationError(
-                "time.integrator=lu_sgs is reserved for stage AA and cannot run yet");
+        if (time_algorithm.integrator == TimeIntegratorKind::LuSgs) {
+            if (robustness.enabled) {
+                throw CaseConfigurationError(
+                    "stage AA LU-SGS does not support explicit robustness retries");
+            }
+            if (run.mode == RunMode::Unsteady && time_algorithm.physical_time_step <= 0.0) {
+                throw CaseConfigurationError(
+                    "unsteady LU-SGS requires a positive time.physical.step");
+            }
+            if (run.mode == RunMode::Steady && time_algorithm.physical_time_step != 0.0) {
+                throw CaseConfigurationError(
+                    "steady LU-SGS does not accept time.physical.step");
+            }
         }
-        if (preconditioner.kind != PreconditionerKind::None) {
-            throw CaseConfigurationError(
-                "preconditioner.type=weiss_smith is reserved for stage AA and cannot run yet");
+        if (preconditioner.kind == PreconditionerKind::WeissSmith) {
+            if (time_algorithm.integrator != TimeIntegratorKind::LuSgs) {
+                throw CaseConfigurationError("Weiss-Smith requires time.integrator=lu_sgs");
+            }
+            if (riemann.scheme != "roe") {
+                throw CaseConfigurationError("Weiss-Smith requires algorithm.riemann=roe");
+            }
         }
     }
     static_cast<void>(make_profile());
@@ -1837,6 +1959,10 @@ InviscidWcnsConfig CaseConfig::make_inviscid_config() const
     InviscidWcnsConfig result;
     result.reconstruction = reconstruction;
     result.riemann = riemann;
+    result.riemann.parameters.weiss_smith
+        = preconditioner.kind == PreconditionerKind::WeissSmith;
+    result.riemann.parameters.preconditioner
+        = {preconditioner.mach_cutoff, preconditioner.viscous_cutoff};
     result.flux_difference = flux_difference;
     result.source_terms = source_terms;
     result.robustness = robustness;

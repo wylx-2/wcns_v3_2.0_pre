@@ -3,6 +3,7 @@
 #include <wcns/parallel/distributed_topology.hpp>
 #include <wcns/parallel/halo_exchanger.hpp>
 #include <wcns/solver/inviscid_flux.hpp>
+#include <wcns/solver/implicit_time_integrator.hpp>
 #include <wcns/solver/robustness.hpp>
 #include <wcns/solver/source_operator.hpp>
 #include <wcns/solver/time_integrator.hpp>
@@ -44,6 +45,12 @@ public:
 
     void compute_residuals(Real stage_time, int rk_stage = 0);
     [[nodiscard]] Real advance(Real time_step, Real initial_time);
+    [[nodiscard]] Real advance_lu_sgs(Real pseudo_cfl,
+                                      Real time,
+                                      const LuSgsIterationConfig& config = {});
+    [[nodiscard]] Real advance_dual_time(Real physical_time_step,
+                                         Real initial_time,
+                                         const DualTimeIterationConfig& config);
     [[nodiscard]] Real global_time_step(Real cfl);
 
     [[nodiscard]] Real global_residual_l2() const;
@@ -87,6 +94,9 @@ private:
     FaceFluxHaloPlan face_flux_plan_;
     FaceFluxHaloExchanger face_flux_exchanger_;
     SsprkWorkspace time_workspace_;
+    StateSnapshot previous_physical_state_;
+    bool has_previous_physical_state_ = false;
+    Real previous_physical_time_step_ = 0.0;
     std::uint64_t version_ = 0;
     ReconstructionDiagnostics reconstruction_diagnostics_ {};
     RiemannDiagnostics riemann_diagnostics_ {};

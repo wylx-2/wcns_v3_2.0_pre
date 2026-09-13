@@ -82,6 +82,13 @@ enum class PreconditionerKind {
 
 struct TimeAlgorithmConfig {
     TimeIntegratorKind integrator = TimeIntegratorKind::SspRk3;
+    Real physical_time_step = 0.0;
+    std::size_t dual_time_max_iterations = 100;
+    Real dual_time_absolute_tolerance = 1.0e-10;
+    Real dual_time_relative_tolerance = 1.0e-8;
+    Real dual_time_cfl = 5.0;
+    int lu_sgs_sweeps = 1;
+    Real lu_sgs_relaxation = 1.0;
 
     void validate() const;
     [[nodiscard]] std::string summary() const;
@@ -90,6 +97,8 @@ struct TimeAlgorithmConfig {
 
 struct PreconditionerConfig {
     PreconditionerKind kind = PreconditionerKind::None;
+    Real mach_cutoff = 1.0e-3;
+    Real viscous_cutoff = 1.0;
 
     void validate() const;
     [[nodiscard]] std::string summary() const;

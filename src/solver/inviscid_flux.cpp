@@ -616,7 +616,8 @@ void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
                                        Real stage_time,
                                        const FaceRobustnessField* robustness_levels,
                                        const RobustnessLadder* robustness_ladder,
-                                       const RiemannSolver* robust_riemann)
+                                       const RiemannSolver* robust_riemann,
+                                       Real viscous_preconditioner_scale)
 {
     ProfileFactory::validate_bundle(profile.components());
     if (metric.profile() != profile.kind() || metric.dimension() != block.cell_dimension()) {
@@ -626,6 +627,10 @@ void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
         throw std::invalid_argument("inviscid flux RK stage must lie in [0,3]");
     }
     reconstruction.validate();
+    if (!std::isfinite(viscous_preconditioner_scale)
+        || viscous_preconditioner_scale < 0.0) {
+        throw std::invalid_argument("viscous preconditioner scale is invalid");
+    }
     const bool robustness_enabled = robustness_levels != nullptr;
     if (robustness_enabled != (robustness_ladder != nullptr)
         || robustness_enabled != (robust_riemann != nullptr)) {
@@ -717,8 +722,38 @@ void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
                                                                      stage_time);
                         }
                     }
-                    const auto numerical
-                        = face_riemann->solve(states.left, states.right, normal, gas, floors);
+                    Real viscous_speed = 0.0;
+                    if (viscous_preconditioner_scale > 0.0) {
+                        for (int offset : {-1, 0}) {
+                            Index3 cell = face;
+                            cell[static_cast<std::size_t>(axis)] += offset;
+                            if (cell.i < 0 || cell.i >= cells.ni || cell.j < 0
+                                || cell.j >= cells.nj || cell.k < 0 || cell.k >= cells.nk) {
+                                continue;
+                            }
+                            Real area_sum = 0.0;
+                            for (int logical = 0; logical < block.cell_dimension(); ++logical) {
+                                const auto cell_axis = static_cast<Axis>(logical);
+                                const auto& cell_faces = metric_faces(metric, cell_axis);
+                                for (int side = 0; side <= 1; ++side) {
+                                    Index3 cell_face = cell;
+                                    cell_face[static_cast<std::size_t>(cell_axis)] += side;
+                                    area_sum += cell_faces.area(
+                                        cell_face.i, cell_face.j, cell_face.k);
+                                }
+                            }
+                            const Real length
+                                = 2.0 * metric.jacobian()(cell.i, cell.j, cell.k) / area_sum;
+                            if (!std::isfinite(length) || length <= 0.0) {
+                                throw PhysicsError(
+                                    "preconditioner characteristic length is invalid");
+                            }
+                            viscous_speed
+                                = std::max(viscous_speed, viscous_preconditioner_scale / length);
+                        }
+                    }
+                    const auto numerical = face_riemann->solve(
+                        states.left, states.right, normal, gas, floors, {viscous_speed});
                     if (riemann_diagnostics != nullptr) {
                         riemann_diagnostics->record(numerical, diagnostic_location);
                     }
@@ -752,7 +787,8 @@ InviscidFaceFluxField compute_inviscid_face_fluxes(const StructuredBlock& block,
                                                    Real stage_time,
                                                    const FaceRobustnessField* robustness_levels,
                                                    const RobustnessLadder* robustness_ladder,
-                                                   const RiemannSolver* robust_riemann)
+                                                   const RiemannSolver* robust_riemann,
+                                                   Real viscous_preconditioner_scale)
 {
     InviscidFaceFluxField result(
         block.cell_extent(), block.cell_dimension(), profile.kind(), version);
@@ -774,7 +810,8 @@ InviscidFaceFluxField compute_inviscid_face_fluxes(const StructuredBlock& block,
                                       stage_time,
                                       robustness_levels,
                                       robustness_ladder,
-                                      robust_riemann);
+                                      robust_riemann,
+                                      viscous_preconditioner_scale);
     return result;
 }
 

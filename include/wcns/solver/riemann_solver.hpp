@@ -2,6 +2,7 @@
 
 #include <wcns/physics/thermodynamics.hpp>
 #include <wcns/solver/euler.hpp>
+#include <wcns/solver/low_mach_preconditioner.hpp>
 #include <wcns/solver/numerical_diagnostics.hpp>
 
 #include <array>
@@ -31,8 +32,14 @@ enum class RiemannFallbackReason {
 struct RiemannSolverParameters {
     Real entropy_fix_coefficient = 0.1;
     Real denominator_tolerance = 1.0e-12;
+    bool weiss_smith = false;
+    WeissSmithParameters preconditioner {};
 
     void validate() const;
+};
+
+struct RiemannFaceContext {
+    Real viscous_speed = 0.0;
 };
 
 struct RiemannConfig {
@@ -126,13 +133,15 @@ public:
                                       const PressurePrimitiveState& right,
                                       Normal3 unit_normal,
                                       const GasModel& gas,
-                                      const NumericalFloors& floors) const;
+                                      const NumericalFloors& floors,
+                                      RiemannFaceContext context = {}) const;
 
     [[nodiscard]] ConservativeState flux(const PressurePrimitiveState& left,
                                          const PressurePrimitiveState& right,
                                          Normal3 unit_normal,
                                          const GasModel& gas,
-                                         const NumericalFloors& floors) const;
+                                         const NumericalFloors& floors,
+                                         RiemannFaceContext context = {}) const;
 
 private:
     std::unique_ptr<IRiemannSolver> implementation_;

@@ -574,7 +574,14 @@ int main(int argc, char** argv)
                                            floors,
                                            solver_config);
             wcns::ViscousSimulationSolver adapter(
-                solver, mpi, local_blocks, metrics, plan, profile);
+                solver,
+                mpi,
+                local_blocks,
+                metrics,
+                plan,
+                profile,
+                config.time_algorithm,
+                config.run.mode);
             wcns::SimulationDriver driver(
                 mpi, adapter, config.run, observer, [] { return stop_requested != 0; });
             final_state = driver.run(simulation_initial);
@@ -593,7 +600,14 @@ int main(int argc, char** argv)
                                             floors,
                                             solver_config);
             wcns::InviscidSimulationSolver adapter(
-                solver, mpi, local_blocks, metrics, plan, profile);
+                solver,
+                mpi,
+                local_blocks,
+                metrics,
+                plan,
+                profile,
+                config.time_algorithm,
+                config.run.mode);
             wcns::SimulationDriver driver(
                 mpi, adapter, config.run, observer, [] { return stop_requested != 0; });
             final_state = driver.run(simulation_initial);

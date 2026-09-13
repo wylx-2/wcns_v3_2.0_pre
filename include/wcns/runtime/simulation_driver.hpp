@@ -45,7 +45,9 @@ public:
                              const LocalBlockSet& local_blocks,
                              const BlockMetricMap& metrics,
                              const StructuredPartitionPlan& partition,
-                             AlgorithmProfile profile);
+                             AlgorithmProfile profile,
+                             TimeAlgorithmConfig time_algorithm = {},
+                             RunMode run_mode = RunMode::Steady);
 
     [[nodiscard]] Real global_time_step(Real cfl) override;
     [[nodiscard]] Real advance(Real time_step, Real initial_time) override;
@@ -60,6 +62,9 @@ private:
     const BlockMetricMap& metrics_;
     const StructuredPartitionPlan& partition_;
     AlgorithmProfile profile_;
+    TimeAlgorithmConfig time_algorithm_;
+    RunMode run_mode_ = RunMode::Steady;
+    Real pending_pseudo_cfl_ = 0.0;
 };
 
 class ViscousSimulationSolver final : public ISimulationSolver {
@@ -69,7 +74,9 @@ public:
                             const LocalBlockSet& local_blocks,
                             const BlockMetricMap& metrics,
                             const StructuredPartitionPlan& partition,
-                            AlgorithmProfile profile);
+                            AlgorithmProfile profile,
+                            TimeAlgorithmConfig time_algorithm = {},
+                            RunMode run_mode = RunMode::Steady);
 
     [[nodiscard]] Real global_time_step(Real cfl) override;
     [[nodiscard]] Real advance(Real time_step, Real initial_time) override;
@@ -84,6 +91,9 @@ private:
     const BlockMetricMap& metrics_;
     const StructuredPartitionPlan& partition_;
     AlgorithmProfile profile_;
+    TimeAlgorithmConfig time_algorithm_;
+    RunMode run_mode_ = RunMode::Steady;
+    Real pending_pseudo_cfl_ = 0.0;
 };
 
 struct SimulationState {

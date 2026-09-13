@@ -112,6 +112,140 @@ RiemannResult rusanov_result(const PressurePrimitiveState& left,
     return result;
 }
 
+Real state_speed(const PressurePrimitiveState& state)
+{
+    return std::sqrt(state[1] * state[1] + state[2] * state[2] + state[3] * state[3]);
+}
+
+Real state_preconditioned_spectral_radius(const PressurePrimitiveState& state,
+                                          Normal3 normal,
+                                          const IdealGas& gas,
+                                          Real viscous_speed,
+                                          const WeissSmithParameters& parameters)
+{
+    const Real sound = sound_speed(state, gas);
+    const Real reference
+        = weiss_smith_reference_speed(state_speed(state), sound, viscous_speed, parameters);
+    const Real beta = (reference / sound) * (reference / sound);
+    const auto eigenvalues
+        = weiss_smith_eigenvalues(normal_velocity(state, normal), sound, beta);
+    Real spectral_radius = 0.0;
+    for (const Real value : eigenvalues)
+        spectral_radius = std::max(spectral_radius, std::abs(value));
+    return spectral_radius;
+}
+
+RiemannResult preconditioned_rusanov_result(const PressurePrimitiveState& left,
+                                            const PressurePrimitiveState& right,
+                                            Normal3 normal,
+                                            const GasModel& gas,
+                                            const NumericalFloors& floors,
+                                            Real viscous_speed,
+                                            const RiemannSolverParameters& parameters,
+                                            RiemannFallbackReason reason)
+{
+    const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
+    const auto left_conservative = to_conservative(left, ideal);
+    const auto right_conservative = to_conservative(right, ideal);
+    const auto left_flux = euler_flux(left, normal, ideal);
+    const auto right_flux = euler_flux(right, normal, ideal);
+    const Real spectral_radius = std::max(
+        state_preconditioned_spectral_radius(
+            left, normal, ideal, viscous_speed, parameters.preconditioner),
+        state_preconditioned_spectral_radius(
+            right, normal, ideal, viscous_speed, parameters.preconditioner));
+    ConservativeState flux {};
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        flux[index] = 0.5 * (left_flux[index] + right_flux[index])
+            - 0.5 * spectral_radius * (right_conservative[index] - left_conservative[index]);
+    }
+    return {flux,
+            spectral_radius,
+            "roe",
+            "preconditioned_rusanov",
+            reason,
+            {{"roe", "preconditioned_rusanov", reason}}};
+}
+
+RiemannResult preconditioned_roe_result(const PressurePrimitiveState& left,
+                                        const PressurePrimitiveState& right,
+                                        Normal3 normal,
+                                        const GasModel& gas,
+                                        const NumericalFloors& floors,
+                                        Real viscous_speed,
+                                        const RiemannSolverParameters& parameters)
+{
+    const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
+    const auto fallback = [&](RiemannFallbackReason reason) {
+        return preconditioned_rusanov_result(
+            left, right, normal, gas, floors, viscous_speed, parameters, reason);
+    };
+    try {
+        const auto left_conservative = to_conservative(left, ideal);
+        const auto right_conservative = to_conservative(right, ideal);
+        const auto left_flux = euler_flux(left, normal, ideal);
+        const auto right_flux = euler_flux(right, normal, ideal);
+        const auto average = roe_average(left, right, normal, ideal);
+        const Real left_sound = sound_speed(left, ideal);
+        const Real right_sound = sound_speed(right, ideal);
+        const Real left_reference = weiss_smith_reference_speed(
+            state_speed(left), left_sound, viscous_speed, parameters.preconditioner);
+        const Real right_reference = weiss_smith_reference_speed(
+            state_speed(right), right_sound, viscous_speed, parameters.preconditioner);
+        const Real beta = std::max((left_reference / left_sound) * (left_reference / left_sound),
+                                   (right_reference / right_sound)
+                                       * (right_reference / right_sound));
+        const auto preconditioned
+            = weiss_smith_eigenvalues(average.normal_velocity, average.sound_speed, beta);
+        const std::array<Real, euler_components> eigenvalues {{
+            preconditioned[3],
+            preconditioned[0],
+            preconditioned[1],
+            preconditioned[2],
+            preconditioned[4],
+        }};
+        const auto basis = make_roe_characteristic_basis(left, right, normal, gas, floors, 3);
+        ConservativeState jump {};
+        for (int component = 0; component < euler_components; ++component) {
+            const auto index = static_cast<std::size_t>(component);
+            jump[index] = right_conservative[index] - left_conservative[index];
+        }
+        const auto strengths = project_characteristic(jump, basis);
+        const Real delta = parameters.entropy_fix_coefficient
+            * std::max({left_reference,
+                        right_reference,
+                        std::sqrt(beta) * average.sound_speed});
+        ConservativeState scaled_strengths {};
+        Real spectral_radius = 0.0;
+        for (int wave = 0; wave < euler_components; ++wave) {
+            Real magnitude = std::abs(eigenvalues[static_cast<std::size_t>(wave)]);
+            if (magnitude < delta) {
+                magnitude = 0.5 * (magnitude * magnitude / delta + delta);
+            }
+            spectral_radius = std::max(spectral_radius, magnitude);
+            scaled_strengths[static_cast<std::size_t>(wave)]
+                = magnitude * strengths[static_cast<std::size_t>(wave)];
+        }
+        const auto dissipation = restore_characteristic(scaled_strengths, basis);
+        ConservativeState flux {};
+        for (int component = 0; component < euler_components; ++component) {
+            const auto index = static_cast<std::size_t>(component);
+            flux[index]
+                = 0.5 * (left_flux[index] + right_flux[index]) - 0.5 * dissipation[index];
+        }
+        if (!finite_state(flux)) return fallback(RiemannFallbackReason::NonFiniteFlux);
+        return {flux,
+                spectral_radius,
+                "roe",
+                "roe",
+                RiemannFallbackReason::None,
+                {}};
+    } catch (const PhysicsError&) {
+        return fallback(RiemannFallbackReason::InvalidRoeAverage);
+    }
+}
+
 class RusanovStrategy final : public IRiemannSolver {
 public:
     [[nodiscard]] std::string_view name() const noexcept override { return "rusanov"; }
@@ -457,6 +591,7 @@ void RiemannSolverParameters::validate() const
         throw std::invalid_argument(
             "Riemann denominator tolerance must be finite and lie in (0,1)");
     }
+    preconditioner.validate();
 }
 
 void RiemannConfig::validate() const
@@ -465,6 +600,9 @@ void RiemannConfig::validate() const
         throw std::invalid_argument("Riemann scheme name is invalid");
     }
     parameters.validate();
+    if (parameters.weiss_smith && scheme != "roe") {
+        throw std::invalid_argument("Weiss-Smith preconditioning requires the Roe solver");
+    }
 }
 
 void RiemannConfig::validate(const RiemannSolverRegistry& registry) const
@@ -483,6 +621,12 @@ std::string RiemannConfig::summary() const
            << "riemann_solver=" << scheme
            << ";roe_entropy_fix=" << parameters.entropy_fix_coefficient
            << ";riemann_denominator_tolerance=" << parameters.denominator_tolerance;
+    if (parameters.weiss_smith) {
+        stream << ";preconditioner=weiss_smith"
+               << ";preconditioner_mach_cutoff=" << parameters.preconditioner.mach_cutoff
+               << ";preconditioner_viscous_cutoff="
+               << parameters.preconditioner.viscous_cutoff;
+    }
     return stream.str();
 }
 
@@ -553,10 +697,22 @@ RiemannResult RiemannSolver::solve(const PressurePrimitiveState& left,
                                    const PressurePrimitiveState& right,
                                    Normal3 unit_normal,
                                    const GasModel& gas,
-                                   const NumericalFloors& floors) const
+                                   const NumericalFloors& floors,
+                                   RiemannFaceContext context) const
 {
-    static_cast<void>(checked_unit_normal(unit_normal));
-    auto result = implementation_->solve(left, right, unit_normal, gas, floors);
+    const auto normal = checked_unit_normal(unit_normal);
+    if (!std::isfinite(context.viscous_speed) || context.viscous_speed < 0.0) {
+        throw std::invalid_argument("Riemann viscous reference speed is invalid");
+    }
+    auto result = parameters_.weiss_smith
+        ? preconditioned_roe_result(left,
+                                    right,
+                                    normal,
+                                    gas,
+                                    floors,
+                                    context.viscous_speed,
+                                    parameters_)
+        : implementation_->solve(left, right, normal, gas, floors);
     if (result.requested_solver.empty()) result.requested_solver = std::string(name());
     if (result.used_solver.empty()) result.used_solver = result.requested_solver;
     if (result.requested_solver != name()) {
@@ -598,9 +754,10 @@ ConservativeState RiemannSolver::flux(const PressurePrimitiveState& left,
                                       const PressurePrimitiveState& right,
                                       Normal3 unit_normal,
                                       const GasModel& gas,
-                                      const NumericalFloors& floors) const
+                                      const NumericalFloors& floors,
+                                      RiemannFaceContext context) const
 {
-    return solve(left, right, unit_normal, gas, floors).flux_per_unit_area;
+    return solve(left, right, unit_normal, gas, floors, context).flux_per_unit_area;
 }
 
 } // namespace wcns

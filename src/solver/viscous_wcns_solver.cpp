@@ -1,5 +1,6 @@
 #include <wcns/solver/viscous_wcns_solver.hpp>
 
+#include <wcns/solver/implicit_time_integrator.hpp>
 #include <wcns/solver/time_integrator.hpp>
 
 #include <algorithm>
@@ -173,8 +174,9 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     config_.inviscid.riemann.validate(riemann_registry);
     riemann_ = RiemannSolver(
         config_.inviscid.riemann.scheme, riemann_registry, config_.inviscid.riemann.parameters);
-    robust_riemann_
-        = RiemannSolver("rusanov", riemann_registry, config_.inviscid.riemann.parameters);
+    auto robust_parameters = config_.inviscid.riemann.parameters;
+    robust_parameters.weiss_smith = false;
+    robust_riemann_ = RiemannSolver("rusanov", riemann_registry, robust_parameters);
     robustness_ladder_
         = RobustnessLadder::build(config_.inviscid.reconstruction, config_.inviscid.riemann);
     floors_.validate();
@@ -267,6 +269,51 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
             turbulence_flux_registry_.add(block.id(), model_flux.first->second);
         }
     }
+    const bool any_history = std::any_of(local_blocks_.blocks().begin(),
+                                         local_blocks_.blocks().end(),
+                                         [](const auto& block) {
+                                             return block.flow.implicit_history.valid;
+                                         });
+    const bool all_history = std::all_of(local_blocks_.blocks().begin(),
+                                         local_blocks_.blocks().end(),
+                                         [](const auto& block) {
+                                             return block.flow.implicit_history.valid;
+                                         });
+    if (any_history != all_history) {
+        throw std::invalid_argument("implicit history is valid on only some viscous blocks");
+    }
+    if (all_history) {
+        previous_physical_time_step_
+            = local_blocks_.blocks().front().flow.implicit_history.physical_time_step;
+        previous_physical_state_.reserve(local_blocks_.blocks().size());
+        for (const auto& block : local_blocks_.blocks()) {
+            const auto& history = block.flow.implicit_history;
+            if (history.physical_time_step != previous_physical_time_step_
+                || history.previous_mean.interior_extent() != block.cell_extent()
+                || history.previous_mean.components() != euler_components
+                || history.previous_mean.ghost_width() != 0) {
+                throw std::invalid_argument("viscous implicit mean history metadata differ");
+            }
+            previous_physical_state_.push_back(
+                {block.id(),
+                 block.cell_extent(),
+                 std::vector<Real>(history.previous_mean.data(),
+                                   history.previous_mean.data() + history.previous_mean.size())});
+            if (turbulence_active()) {
+                if (history.previous_model.interior_extent() != block.cell_extent()
+                    || history.previous_model.components() != 1
+                    || history.previous_model.ghost_width() != 0) {
+                    throw std::invalid_argument("viscous implicit model history metadata differ");
+                }
+                previous_turbulence_physical_state_.emplace(
+                    block.id(),
+                    std::vector<Real>(history.previous_model.data(),
+                                      history.previous_model.data()
+                                          + history.previous_model.size()));
+            }
+        }
+        has_previous_physical_state_ = true;
+    }
 }
 
 bool ViscousWcnsSolver::turbulence_active() const noexcept
@@ -343,7 +390,8 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
             stage_time,
             robustness_levels == nullptr ? nullptr : &robustness_levels->at(block.id()),
             robustness_levels == nullptr ? nullptr : &robustness_ladder_,
-            robustness_levels == nullptr ? nullptr : &robust_riemann_);
+            robustness_levels == nullptr ? nullptr : &robust_riemann_,
+            1.0 / reference_.reynolds());
         compute_gradient_face_operands_into(
             operand_workspace_.at(block.id()), block, metrics_.at(block.id()), profile_, version_);
     }
@@ -495,6 +543,331 @@ void ViscousWcnsSolver::update_turbulence_stage(Real initial_weight,
     }
 }
 
+namespace {
+
+using ModelStateMap = std::unordered_map<BlockId, std::vector<Real>>;
+
+std::vector<TurbulenceFieldDescriptor>
+transported_descriptors(const ITurbulenceModel* model)
+{
+    std::vector<TurbulenceFieldDescriptor> result;
+    if (model == nullptr) return result;
+    for (const auto& descriptor : model->fields()) {
+        if (descriptor.role == TurbulenceFieldRole::Transported) result.push_back(descriptor);
+    }
+    return result;
+}
+
+const BlockStateBuffer& find_snapshot(const StateSnapshot& snapshot, BlockId block)
+{
+    const auto iterator = std::find_if(snapshot.begin(), snapshot.end(), [&](const auto& value) {
+        return value.block == block;
+    });
+    if (iterator == snapshot.end()) throw std::logic_error("viscous implicit snapshot is missing");
+    return *iterator;
+}
+
+ModelStateMap capture_model_state(const LocalBlockSet& local_blocks,
+                                  const std::vector<TurbulenceFieldDescriptor>& descriptors)
+{
+    ModelStateMap result;
+    for (const auto& block : local_blocks.blocks()) {
+        const auto extent = block.cell_extent();
+        std::vector<Real> values(
+            extent.size() * static_cast<std::size_t>(descriptors.size()));
+        std::size_t offset = 0;
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    const Real rho = block.flow.conservative(i, j, k, density);
+                    for (const auto& descriptor : descriptors) {
+                        values[offset++]
+                            = rho * block.turbulence.at({i, j, k}, descriptor.name);
+                    }
+                }
+            }
+        }
+        result.emplace(block.id(), std::move(values));
+    }
+    return result;
+}
+
+struct ViscousImplicitIncrementSet {
+    std::unordered_map<BlockId, Field<Real>> mean;
+    std::unordered_map<BlockId, Field<Real>> model;
+    Real global_residual_l2 = 0.0;
+};
+
+ViscousImplicitIncrementSet form_viscous_implicit_increments(
+    const MpiRuntime& mpi,
+    const LocalBlockSet& local_blocks,
+    const BlockMetricMap& metrics,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    const NumericalFloors& floors,
+    const TransportModel& transport,
+    const ViscousStabilityCoefficients& stability,
+    AlgorithmProfileKind profile,
+    const RiemannSolverParameters& riemann_parameters,
+    const std::vector<TurbulenceFieldDescriptor>& descriptors,
+    const std::unordered_map<BlockId, Field<Real>>& model_residuals,
+    const std::unordered_map<BlockId, Field<Real>>& source_jacobians,
+    Real pseudo_cfl,
+    const LuSgsIterationConfig& iteration,
+    Real physical_time_step = 0.0,
+    BdfOrder order = BdfOrder::First,
+    const StateSnapshot* current_mean = nullptr,
+    const StateSnapshot* previous_mean = nullptr,
+    const ModelStateMap* current_model = nullptr,
+    const ModelStateMap* previous_model = nullptr)
+{
+    const bool physical = physical_time_step > 0.0;
+    if (physical
+        != (current_mean != nullptr && previous_mean != nullptr && current_model != nullptr
+            && previous_model != nullptr)) {
+        throw std::invalid_argument("viscous implicit BDF history inputs are incomplete");
+    }
+    const Real physical_diagonal
+        = physical ? bdf_time_diagonal(order, physical_time_step) : 0.0;
+    ViscousImplicitIncrementSet result;
+    Real local_square_sum = 0.0;
+    Real local_count = 0.0;
+    for (const auto& block : local_blocks.blocks()) {
+        const auto extent = block.cell_extent();
+        const auto& metric = metrics.at(block.id());
+        Field<Real> additional(extent, 1, 0, 0.0);
+        const Real coefficient = stability.for_ssprk3(profile, block.cell_dimension());
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    const Index3 cell {i, j, k};
+                    Real area_square_sum = 0.0;
+                    for (int logical = 0; logical < block.cell_dimension(); ++logical) {
+                        const auto axis = static_cast<Axis>(logical);
+                        for (int side = 0; side <= 1; ++side) {
+                            auto face = cell;
+                            face[static_cast<std::size_t>(axis)] += side;
+                            area_square_sum += area_squared(area_vector(metric, axis, face));
+                        }
+                    }
+                    const Real rho = block.flow.temperature_primitive(
+                        i, j, k, temperature_density);
+                    const Real temperature = block.flow.temperature_primitive(
+                        i, j, k, temperature_value);
+                    const Real molecular = transport.viscosity(temperature)
+                        / (rho * reference.reynolds());
+                    const Real volume = metric.jacobian()(i, j, k);
+                    additional(i, j, k, 0)
+                        = coefficient * molecular * area_square_sum
+                        / (2.0 * volume * volume);
+                }
+            }
+        }
+        const auto* preconditioner = riemann_parameters.weiss_smith
+            ? &riemann_parameters.preconditioner
+            : nullptr;
+        const auto system = build_scalar_spectral_system(block,
+                                                         metric,
+                                                         gas,
+                                                         reference,
+                                                         floors,
+                                                         pseudo_cfl,
+                                                         physical_diagonal,
+                                                         preconditioner,
+                                                         1.0 / reference.reynolds(),
+                                                         &additional);
+        Field<Real> mean_rhs(extent, euler_components, 0, 0.0);
+        const BlockStateBuffer* mean_n = nullptr;
+        const BlockStateBuffer* mean_nm1 = nullptr;
+        if (physical) {
+            mean_n = &find_snapshot(*current_mean, block.id());
+            mean_nm1 = &find_snapshot(*previous_mean, block.id());
+        }
+        std::size_t mean_offset = 0;
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    for (int component = 0; component < euler_components; ++component) {
+                        Real value = block.flow.residual(i, j, k, component);
+                        if (physical) {
+                            value -= bdf_time_residual(
+                                order,
+                                block.flow.conservative(i, j, k, component),
+                                mean_n->values[mean_offset],
+                                mean_nm1->values[mean_offset],
+                                physical_time_step);
+                        }
+                        mean_rhs(i, j, k, component) = value;
+                        local_square_sum += value * value;
+                        local_count += 1.0;
+                        ++mean_offset;
+                    }
+                }
+            }
+        }
+        result.mean.emplace(block.id(),
+                            solve_scalar_lu_sgs(mean_rhs,
+                                                system.diagonal,
+                                                system.coupling,
+                                                block.cell_dimension(),
+                                                iteration));
+        if (!descriptors.empty()) {
+            const int variables = static_cast<int>(descriptors.size());
+            const auto& residual = model_residuals.at(block.id());
+            const auto& source_jacobian = source_jacobians.at(block.id());
+            Field<Real> model_rhs(extent, variables, 0, 0.0);
+            Field<Real> model_diagonal(extent, variables, 0, 0.0);
+            const auto* model_n = physical ? &current_model->at(block.id()) : nullptr;
+            const auto* model_nm1 = physical ? &previous_model->at(block.id()) : nullptr;
+            std::size_t model_offset = 0;
+            for (int k = 0; k < extent.nk; ++k) {
+                for (int j = 0; j < extent.nj; ++j) {
+                    for (int i = 0; i < extent.ni; ++i) {
+                        const Real rho = block.flow.conservative(i, j, k, density);
+                        for (int variable = 0; variable < variables; ++variable) {
+                            const Real conservative = rho
+                                * block.turbulence.at(
+                                    {i, j, k}, descriptors[static_cast<std::size_t>(variable)].name);
+                            Real value = residual(i, j, k, variable);
+                            if (physical) {
+                                value -= bdf_time_residual(order,
+                                                           conservative,
+                                                           (*model_n)[model_offset],
+                                                           (*model_nm1)[model_offset],
+                                                           physical_time_step);
+                            }
+                            model_rhs(i, j, k, variable) = value;
+                            model_diagonal(i, j, k, variable)
+                                = system.diagonal(i, j, k, 0)
+                                + std::max(0.0, -source_jacobian(i, j, k, variable));
+                            local_square_sum += value * value;
+                            local_count += 1.0;
+                            ++model_offset;
+                        }
+                    }
+                }
+            }
+            result.model.emplace(block.id(),
+                                 solve_scalar_lu_sgs(model_rhs,
+                                                     model_diagonal,
+                                                     system.coupling,
+                                                     block.cell_dimension(),
+                                                     iteration));
+        }
+    }
+    const Real global_sum = mpi.sum(local_square_sum);
+    const Real global_count = mpi.sum(local_count);
+    if (!std::isfinite(global_sum) || global_count <= 0.0) {
+        throw PhysicsError("viscous implicit residual norm is invalid");
+    }
+    result.global_residual_l2 = std::sqrt(global_sum / global_count);
+    return result;
+}
+
+Real commit_viscous_implicit_increment(
+    const MpiRuntime& mpi,
+    const std::vector<StructuredBlock*>& blocks,
+    const std::unordered_map<BlockId, Field<Real>>& mean_increments,
+    const std::unordered_map<BlockId, Field<Real>>& model_increments,
+    const std::vector<TurbulenceFieldDescriptor>& descriptors,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    const NumericalFloors& floors,
+    Real time)
+{
+    const auto mean_baseline = capture_conservative_state(blocks);
+    ModelStateMap model_baseline;
+    for (const auto* block : blocks) {
+        const auto extent = block->cell_extent();
+        std::vector<Real> values(
+            extent.size() * static_cast<std::size_t>(descriptors.size()));
+        std::size_t offset = 0;
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    const Real rho = block->flow.conservative(i, j, k, density);
+                    for (const auto& descriptor : descriptors) {
+                        values[offset++]
+                            = rho * block->turbulence.at({i, j, k}, descriptor.name);
+                    }
+                }
+            }
+        }
+        model_baseline.emplace(block->id(), std::move(values));
+    }
+    for (int backtrack = 0; backtrack <= 7; ++backtrack) {
+        const Real relaxation = std::ldexp(1.0, -backtrack);
+        auto mean_candidate = mean_baseline;
+        auto model_candidate = model_baseline;
+        bool local_model_valid = true;
+        for (std::size_t block_index = 0; block_index < blocks.size(); ++block_index) {
+            const auto* block = blocks[block_index];
+            const auto extent = block->cell_extent();
+            const auto& mean_increment = mean_increments.at(block->id());
+            const auto model_iterator = model_increments.find(block->id());
+            std::size_t mean_offset = 0;
+            std::size_t model_offset = 0;
+            for (int k = 0; k < extent.nk; ++k) {
+                for (int j = 0; j < extent.nj; ++j) {
+                    for (int i = 0; i < extent.ni; ++i) {
+                        const std::size_t density_offset = mean_offset;
+                        for (int component = 0; component < euler_components; ++component) {
+                            mean_candidate[block_index].values[mean_offset++]
+                                += relaxation * mean_increment(i, j, k, component);
+                        }
+                        if (model_iterator != model_increments.end()) {
+                            const Real rho
+                                = mean_candidate[block_index].values[density_offset];
+                            for (std::size_t variable = 0; variable < descriptors.size();
+                                 ++variable) {
+                                auto& conservative
+                                    = model_candidate.at(block->id())[model_offset];
+                                conservative += relaxation
+                                    * model_iterator->second(
+                                        i, j, k, static_cast<int>(variable));
+                                const Real specific = conservative / rho;
+                                if (!std::isfinite(specific)
+                                    || (descriptors[variable].strictly_positive
+                                        && specific <= descriptors[variable].lower_bound)
+                                    || (!descriptors[variable].strictly_positive
+                                        && specific < descriptors[variable].lower_bound)) {
+                                    local_model_valid = false;
+                                }
+                                ++model_offset;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        const auto validation = validate_candidate_state(
+            mean_candidate, blocks, gas, reference, floors, 1, time);
+        if (mpi.all_true(validation.valid() && local_model_valid)) {
+            commit_candidate_state(blocks, mean_candidate);
+            for (auto* block : blocks) {
+                const auto extent = block->cell_extent();
+                const auto& values = model_candidate.at(block->id());
+                std::size_t offset = 0;
+                for (int k = 0; k < extent.nk; ++k) {
+                    for (int j = 0; j < extent.nj; ++j) {
+                        for (int i = 0; i < extent.ni; ++i) {
+                            const Real rho = block->flow.conservative(i, j, k, density);
+                            for (const auto& descriptor : descriptors) {
+                                block->turbulence.at({i, j, k}, descriptor.name)
+                                    = values[offset++] / rho;
+                            }
+                        }
+                    }
+                }
+            }
+            return relaxation;
+        }
+    }
+    throw PhysicsError("viscous LU-SGS increment remained inadmissible after backtracking");
+}
+
+} // namespace
+
 Real ViscousWcnsSolver::advance(Real time_step, Real initial_time)
 {
     Real accepted_time_step = time_step;
@@ -544,6 +917,152 @@ Real ViscousWcnsSolver::advance(Real time_step, Real initial_time)
         update_temperature_primitive_interior(block, gas_, reference_, floors_);
     }
     return accepted_time_step;
+}
+
+Real ViscousWcnsSolver::advance_lu_sgs(Real pseudo_cfl,
+                                       Real time,
+                                       const LuSgsIterationConfig& iteration)
+{
+    iteration.validate();
+    compute_residuals(time);
+    const auto descriptors
+        = transported_descriptors(turbulence_active() ? turbulence_model_.get() : nullptr);
+    const auto increments = form_viscous_implicit_increments(mpi_,
+                                                             local_blocks_,
+                                                             metrics_,
+                                                             gas_,
+                                                             reference_,
+                                                             floors_,
+                                                             transport_,
+                                                             config_.stability,
+                                                             profile_.kind(),
+                                                             config_.inviscid.riemann.parameters,
+                                                             descriptors,
+                                                             turbulence_residual_workspace_,
+                                                             turbulence_source_jacobian_workspace_,
+                                                             pseudo_cfl,
+                                                             iteration);
+    static_cast<void>(commit_viscous_implicit_increment(mpi_,
+                                                        block_workspace_,
+                                                        increments.mean,
+                                                        increments.model,
+                                                        descriptors,
+                                                        gas_,
+                                                        reference_,
+                                                        floors_,
+                                                        time));
+    for (auto& block : local_blocks_.blocks())
+        update_temperature_primitive_interior(block, gas_, reference_, floors_);
+    robustness_diagnostics_ = {};
+    robustness_diagnostics_.proposed_time_step = 1.0;
+    robustness_diagnostics_.accepted_time_step = 1.0;
+    return 1.0;
+}
+
+Real ViscousWcnsSolver::advance_dual_time(Real physical_time_step,
+                                          Real initial_time,
+                                          const DualTimeIterationConfig& config)
+{
+    config.validate();
+    if (!positive_finite(physical_time_step)) {
+        throw std::invalid_argument("viscous dual-time physical step is invalid");
+    }
+    const auto descriptors
+        = transported_descriptors(turbulence_active() ? turbulence_model_.get() : nullptr);
+    const auto current_mean = capture_conservative_state(block_workspace_);
+    const auto current_model = capture_model_state(local_blocks_, descriptors);
+    const auto previous_mean
+        = has_previous_physical_state_ ? previous_physical_state_ : current_mean;
+    const auto previous_model = has_previous_physical_state_
+        ? previous_turbulence_physical_state_
+        : current_model;
+    const Real step_scale
+        = std::max({Real {1.0}, physical_time_step, previous_physical_time_step_});
+    const bool uniform_history = has_previous_physical_state_
+        && std::abs(previous_physical_time_step_ - physical_time_step)
+            <= 64.0 * std::numeric_limits<Real>::epsilon() * step_scale;
+    const BdfOrder order = uniform_history ? BdfOrder::Second : BdfOrder::First;
+    Real initial_norm = 0.0;
+    for (std::size_t iteration = 0; iteration <= config.max_iterations; ++iteration) {
+        compute_residuals(initial_time + physical_time_step);
+        const auto increments = form_viscous_implicit_increments(
+            mpi_,
+            local_blocks_,
+            metrics_,
+            gas_,
+            reference_,
+            floors_,
+            transport_,
+            config_.stability,
+            profile_.kind(),
+            config_.inviscid.riemann.parameters,
+            descriptors,
+            turbulence_residual_workspace_,
+            turbulence_source_jacobian_workspace_,
+            config.cfl,
+            config.lu_sgs,
+            physical_time_step,
+            order,
+            &current_mean,
+            &previous_mean,
+            &current_model,
+            &previous_model);
+        if (iteration == 0) initial_norm = increments.global_residual_l2;
+        const bool converged = increments.global_residual_l2 <= config.absolute_tolerance
+            || (initial_norm > 0.0
+                && increments.global_residual_l2 / initial_norm <= config.relative_tolerance);
+        if (converged) {
+            previous_physical_state_ = current_mean;
+            previous_turbulence_physical_state_ = current_model;
+            has_previous_physical_state_ = true;
+            previous_physical_time_step_ = physical_time_step;
+            for (auto& block : local_blocks_.blocks()) {
+                auto& history = block.flow.implicit_history;
+                history.prepare(block.cell_extent(), static_cast<int>(descriptors.size()));
+                history.valid = true;
+                history.physical_time_step = physical_time_step;
+                const auto& mean = find_snapshot(current_mean, block.id()).values;
+                std::copy(mean.begin(), mean.end(), history.previous_mean.data());
+                if (!descriptors.empty()) {
+                    const auto& model = current_model.at(block.id());
+                    std::copy(model.begin(), model.end(), history.previous_model.data());
+                }
+            }
+            for (auto& block : local_blocks_.blocks())
+                update_temperature_primitive_interior(block, gas_, reference_, floors_);
+            return physical_time_step;
+        }
+        if (iteration == config.max_iterations) break;
+        static_cast<void>(commit_viscous_implicit_increment(mpi_,
+                                                            block_workspace_,
+                                                            increments.mean,
+                                                            increments.model,
+                                                            descriptors,
+                                                            gas_,
+                                                            reference_,
+                                                            floors_,
+                                                            initial_time
+                                                                + physical_time_step));
+    }
+    restore_conservative_state(block_workspace_, current_mean);
+    for (auto& block : local_blocks_.blocks()) {
+        const auto extent = block.cell_extent();
+        const auto& values = current_model.at(block.id());
+        std::size_t offset = 0;
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    const Real rho = block.flow.conservative(i, j, k, density);
+                    for (const auto& descriptor : descriptors) {
+                        block.turbulence.at({i, j, k}, descriptor.name)
+                            = values[offset++] / rho;
+                    }
+                }
+            }
+        }
+        update_temperature_primitive_interior(block, gas_, reference_, floors_);
+    }
+    throw PhysicsError("viscous dual-time LU-SGS failed; physical layer was restored");
 }
 
 std::size_t ViscousWcnsSolver::global_reconstruction_fallback_count() const

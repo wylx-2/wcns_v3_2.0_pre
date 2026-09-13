@@ -45,6 +45,12 @@ public:
 
     void compute_residuals(Real stage_time, int rk_stage = 0);
     [[nodiscard]] Real advance(Real time_step, Real initial_time);
+    [[nodiscard]] Real advance_lu_sgs(Real pseudo_cfl,
+                                      Real time,
+                                      const LuSgsIterationConfig& config = {});
+    [[nodiscard]] Real advance_dual_time(Real physical_time_step,
+                                         Real initial_time,
+                                         const DualTimeIterationConfig& config);
     [[nodiscard]] Real global_time_step(Real cfl);
     [[nodiscard]] Real global_residual_l2() const;
     [[nodiscard]] const ReconstructionDiagnostics& reconstruction_diagnostics() const noexcept
@@ -122,6 +128,10 @@ private:
     std::unordered_map<BlockId, std::vector<Real>> turbulence_initial_state_;
     std::unordered_map<BlockId, std::vector<Real>> turbulence_stage_state_;
     SsprkWorkspace time_workspace_;
+    StateSnapshot previous_physical_state_;
+    std::unordered_map<BlockId, std::vector<Real>> previous_turbulence_physical_state_;
+    bool has_previous_physical_state_ = false;
+    Real previous_physical_time_step_ = 0.0;
     std::uint64_t version_ = 0;
     ReconstructionDiagnostics reconstruction_diagnostics_ {};
     RiemannDiagnostics riemann_diagnostics_ {};

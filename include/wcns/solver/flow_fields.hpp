@@ -10,6 +10,21 @@ namespace wcns {
 
 inline constexpr int euler_components = 5;
 
+struct ImplicitTimeHistory {
+    bool valid = false;
+    Real physical_time_step = 0.0;
+    Field<Real> previous_mean;
+    Field<Real> previous_model;
+
+    void prepare(Extent3 extent, int model_components)
+    {
+        previous_mean = Field<Real>(extent, euler_components, 0, 0.0);
+        previous_model = model_components > 0
+            ? Field<Real>(extent, model_components, 0, 0.0)
+            : Field<Real> {};
+    }
+};
+
 struct FlowFields {
     FlowFields(Extent3 cell_extent, int ghost_width)
         : conservative(cell_extent, euler_components, ghost_width)
@@ -28,6 +43,7 @@ struct FlowFields {
     Field<Real> primitive;
     Field<Real> temperature_primitive;
     Field<Real> residual;
+    ImplicitTimeHistory implicit_history;
     std::uint64_t physical_ghost_version = 0;
 };
 

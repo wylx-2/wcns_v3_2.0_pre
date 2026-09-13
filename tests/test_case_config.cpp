@@ -101,6 +101,34 @@ std::string valid_sa_config()
     return result;
 }
 
+std::string valid_lu_sgs_config(bool unsteady = false)
+{
+    auto result = valid_v2_config();
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const auto position = result.find(from);
+        if (position == std::string::npos) throw std::logic_error("LU-SGS test fixture is incomplete");
+        result.replace(position, from.size(), to);
+    };
+    replace("time.integrator = ssprk3", "time.integrator = lu_sgs");
+    replace("robustness.enabled = true", "robustness.enabled = false");
+    if (unsteady) {
+        replace("run.mode = steady", "run.mode = unsteady\nrun.t_end = 0.25");
+    }
+    const auto integrator = result.find("time.integrator = lu_sgs");
+    const auto line_end = result.find('\n', integrator);
+    result.insert(line_end + 1,
+                  "time.physical.scheme = bdf2\n"
+                  + std::string(unsteady ? "time.physical.step = 0.01\n" : "")
+                  + "time.dual_time.max_iterations = 40\n"
+                    "time.dual_time.absolute_tolerance = 1e-11\n"
+                    "time.dual_time.relative_tolerance = 1e-7\n"
+                    "time.dual_time.cfl = 4\n"
+                    "lu_sgs.sweeps = 1\n"
+                    "lu_sgs.jacobian = scalar_spectral\n"
+                    "lu_sgs.relaxation = 0.9\n");
+    return result;
+}
+
 } // namespace
 
 void test_case_config()
@@ -165,13 +193,42 @@ void test_case_config()
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(none_parameter));
 
-        auto implicit = valid_v2_config();
-        const auto integrator = implicit.find("time.integrator = ssprk3");
-        implicit.replace(integrator,
-                         std::string("time.integrator = ssprk3").size(),
-                         "time.integrator = lu_sgs");
+        const auto implicit = wcns::CaseConfig::from_text(valid_lu_sgs_config());
+        WCNS_REQUIRE(implicit.time_algorithm.integrator == wcns::TimeIntegratorKind::LuSgs);
+        WCNS_REQUIRE(implicit.time_algorithm.dual_time_max_iterations == 40);
+        WCNS_REQUIRE_NEAR(implicit.time_algorithm.dual_time_cfl, 4.0, 0.0);
+        WCNS_REQUIRE_NEAR(implicit.time_algorithm.lu_sgs_relaxation, 0.9, 0.0);
+        WCNS_REQUIRE(implicit.summary().find("jacobian=scalar_spectral")
+                     != std::string::npos);
+
+        const auto dual = wcns::CaseConfig::from_text(valid_lu_sgs_config(true));
+        WCNS_REQUIRE(dual.run.mode == wcns::RunMode::Unsteady);
+        WCNS_REQUIRE_NEAR(dual.time_algorithm.physical_time_step, 0.01, 0.0);
+
+        auto explicit_with_lu_key = valid_v2_config();
+        explicit_with_lu_key += "lu_sgs.sweeps = 1\n";
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
-                            wcns::CaseConfig::from_text(implicit));
+                            wcns::CaseConfig::from_text(explicit_with_lu_key));
+
+        auto missing_physical_step = valid_lu_sgs_config(true);
+        const auto step = missing_physical_step.find("time.physical.step = 0.01\n");
+        missing_physical_step.erase(step, std::string("time.physical.step = 0.01\n").size());
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(missing_physical_step));
+
+        auto preconditioned = valid_lu_sgs_config();
+        const auto preconditioner_key = preconditioned.find("preconditioner.type = none");
+        preconditioned.replace(preconditioner_key,
+                               std::string("preconditioner.type = none").size(),
+                               "preconditioner.type = weiss_smith\n"
+                               "preconditioner.mach_cutoff = 0.002\n"
+                               "preconditioner.viscous_cutoff = 1.5");
+        const auto riemann = preconditioned.find("algorithm.riemann = hllc");
+        preconditioned.replace(
+            riemann, std::string("algorithm.riemann = hllc").size(), "algorithm.riemann = roe");
+        const auto low_mach = wcns::CaseConfig::from_text(preconditioned);
+        WCNS_REQUIRE(low_mach.preconditioner.kind == wcns::PreconditionerKind::WeissSmith);
+        WCNS_REQUIRE_NEAR(low_mach.preconditioner.mach_cutoff, 0.002, 0.0);
     }
     {
         const auto config = wcns::CaseConfig::from_text(valid_config());
