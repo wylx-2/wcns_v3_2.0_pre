@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "identity": "wcns-v2-stage-x-sa-neg-tmr-2026-09-13",
+  "model": {
+    "name": "sa_neg",
+    "variant": "NASA-TMR-SA-neg-modified-vorticity-1c",
+    "farfield_nu_tilde_ratio": 3.0,
+    "turbulent_prandtl": 0.9,
+    "trip_source": false,
+    "ft2_positive_branch": true,
+    "compressibility_correction": false
+  },
+  "assets": [
+    {
+      "path": "references/flatplate_cf_x0p8697742.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Finiteflatplatenumerics_val/all_cf_8697742.dat",
+      "sha256": "bf4def25780f1557f89c2b0f1c554622ab9d673d0fdbb8b06dbd8e4bed3d58a8"
+    },
+    {
+      "path": "references/flatplate_drag.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Finiteflatplatenumerics_val/all_dragfull.dat",
+      "sha256": "a33c28d4b1a012eee6a71ca1b19ec2b08108e1fa43885610333466fb89804a93"
+    },
+    {
+      "path": "references/naca0012_validation_clcd.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012clcd_cfl3d_sa.dat",
+      "sha256": "b07afec6ce3ae4bf2f2d1a1d53785fde0a5ca68481a0d4186aa92754d811944e"
+    },
+    {
+      "path": "references/naca0012_validation_cp.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cp_cfl3d_sa.dat",
+      "sha256": "2f1231eba6a7da0e988a6954ac34f2f420ff59a5e24fca331110f980cd881dd2"
+    },
+    {
+      "path": "references/naca0012_validation_cf.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cf_cfl3d_sa.dat",
+      "sha256": "e7372151e535d3f89c2eb8b8260a1e69e6b6681bb33aacdd677967ad5403ba5e"
+    },
+    {
+      "path": "archives/naca0012_validation_grids.zip",
+      "url": "https://www.nasa.gov/wp-content/uploads/2026/02/naca0012-grids.zip",
+      "sha256": "b4418dd04ab6aee04dc700f9f7769b6eca1af0dd31ccefb958b7d89da53ff1c4"
+    },
+    {
+      "path": "archives/finite_flat_plate_generator.f90",
+      "url": "https://tmbwg.github.io/turbmodels/Finiteflatplatenumerics_grids/plate_tmr.f90",
+      "sha256": "851f75a1891f2a6a61e5c82ea021025f715195897cb4d4d52f9de9de11496946"
+    }
+  ],
+  "mms": {
+    "resolutions": [32, 64, 128],
+    "minimum_order_l1": 1.9,
+    "minimum_order_l2": 1.9,
+    "minimum_order_linf": 1.9,
+    "mpi_max_abs": 5e-13
+  },
+  "finite_flat_plate": {
+    "mach": 0.2,
+    "reynolds": 5000000.0,
+    "prandtl": 0.72,
+    "turbulent_prandtl": 0.9,
+    "reference_temperature_rankine": 540.0,
+    "sutherland_rankine": 198.6,
+    "smoke_level": 8,
+    "acceptance_levels": [6, 5, 4],
+    "cf_sample_x": 0.8697742,
+    "level4_cf_envelope": [0.002748, 0.002758],
+    "level4_drag_relative_tolerance": 0.04,
+    "profile_l2_relative_tolerance": 0.08,
+    "first_cell_y_plus_max": 1.0
+  },
+  "naca0012_validation": {
+    "mach": 0.15,
+    "reynolds": 6000000.0,
+    "angles_deg": [0.0, 10.0, 15.0],
+    "reference_temperature_rankine": 540.0,
+    "sutherland_rankine": 198.6,
+    "prandtl": 0.72,
+    "adiabatic_wall": true,
+    "farfield_chords_approx": 500.0,
+    "smoke_grid": [113, 33],
+    "acceptance_grids": [[225, 65], [449, 129], [897, 257]],
+    "finest_integral_relative_tolerance": {"cl": 0.01, "cd": 0.03},
+    "finest_curve_l2_relative_tolerance": {"cp": 0.05, "cf": 0.08}
+  },
+  "naca0012_numerical_family_ii": {
+    "mach": 0.15,
+    "reynolds": 6000000.0,
+    "angle_deg": 10.0,
+    "point_vortex_branch": "without",
+    "minimum_non_smoke_grids": 3,
+    "asymptotic_intervals": {
+      "cl": [1.0909, 1.0911],
+      "cd": [0.012270, 0.012275],
+      "cm": [0.00676, 0.00680]
+    }
+  },
+  "excluded": [
+    "cases/manual/case06_2d_naca0012"
+  ]
+}

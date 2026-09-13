@@ -18,11 +18,14 @@ Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.m
 物理容许性、局部通量降阶、壁面载荷/热流、输运和性能公式见
 [`算法补充.md`](算法补充.md) 第 11 节；各阶段实现状态以对应设计和验收报告为准。
 
-v2.0.0 当前处于开发前计划审查，尚未开始生产功能实现。计划包括 SA-neg、k--omega SST、
-标准 k--epsilon，以及三维 LES 的原始 Smagorinsky、尺度相似、混合/动态 Smagorinsky 和 WALE；
-同时固定以 LU-SGS 实现定常伪时间和非定常 BDF2 双时间隐式推进，并把 Roe/Weiss--Smith
-低 Mach 预处理一致接入两种模式。最终依次完成二维 Case06 NACA0012 RANS/URANS 及用户后续
-提供的三维翼型/机翼算例。详细阶段 V--AE、自动卡口、人工放行和 Git 规则见
+v2.0.0 已进入分阶段开发：V、W 已通过自动与人工验收，当前 `stage/v2.0.0-x`
+正在实现和验证首个湍流模型 SA-neg。公式、输运、边界、流场/历史输出和模型
+checkpoint 已接入候选实现，但 TMR 平板与 NACA0012 定量收敛卡口尚未关闭，
+因此 SA-neg 还不得标记为生产验证通过，也尚无 X 候选标签。后续计划仍包括
+k--omega SST、标准 k--epsilon、原始 Smagorinsky、尺度相似、混合/动态 Smagorinsky、
+WALE、定常/非定常 LU-SGS 和 Roe/Weiss--Smith 低 Mach 预处理，最终依次完成
+二维 Case06 NACA0012 及用户后续提供的三维翼型/机翼算例。详细阶段 V--AE、
+自动卡口、人工放行和 Git 规则见
 [`docs/v2.0.0-development-plan.md`](docs/v2.0.0-development-plan.md)，计划算法见
 [`算法补充.md`](算法补充.md) 第 12 节，Case06 只读登记见
 [`docs/v2.0.0/case06-intake.md`](docs/v2.0.0/case06-intake.md)。
@@ -31,7 +34,7 @@ v2.0.0 当前处于开发前计划审查，尚未开始生产功能实现。计�
 `tools/package_release.py` 从版本提交直接生成，并包含版本验收所需的 Case07；NACA0012 不在
 本版本范围内。历史上的独立 `wcns_v3_release` 精简仓库不再作为版本来源真值。
 
-当前程序具备 CGNS 结构多块网格读取、两套独立高阶几何 profile、单 zone 受约束二次剖分、同 rank/MPI 非阻塞 halo 交换、六种界面重构（含保持六点调用契约的 `zero_order`）、Rusanov/HLLC/Roe、WCNS-Euler 空间离散、层流 Navier--Stokes 黏性通量、显式源项和 SSPRK3 推进。v1.1 新增默认关闭的 SSPRK 候选态物理容许性检查、troubled-cell 离散支持传播、逐面受控降阶和整步缩步重试；关闭时保持 v1.0 数值路径。严格配置现完整支持常黏度/Sutherland/Prandtl，边界面 `p_w/T_w/mu_w/Cp/Cf/q_wall/traction` 和积分力、力矩、`Cd/Cl/Cm`。正式入口还支持可配置 MDCD 色散/耗散系数、定常/非定常停止、MPI 全局残差、精确时间事件、CGNS/Tecplot 流场、TXT/Tecplot 历史与统计、多截面 x-z/y-z 监测、manifest，以及可改变 rank 数和叶块划分的 CGNS 检查点重启；二维经典双马赫反射已有专用初场和时变边界。逐步使用说明见 [`docs/user-manual.md`](docs/user-manual.md)，源码二次开发见 [`docs/developer-guide.md`](docs/developer-guide.md)，可复制的完整配置见 [`examples/full_case_template.wcns`](examples/full_case_template.wcns)；简明运行速查仍见 [`docs/runtime-guide.md`](docs/runtime-guide.md)，发布算例的生成、独立重读和矩阵入口见 [`docs/release-validation.md`](docs/release-validation.md)。
+当前程序具备 CGNS 结构多块网格读取、两套独立高阶几何 profile、单 zone 受约束二次剖分、同 rank/MPI 非阻塞 halo 交换、六种界面重构（含保持六点调用契约的 `zero_order`）、Rusanov/HLLC/Roe、WCNS-Euler 空间离散、层流 Navier--Stokes 黏性通量、显式源项和 SSPRK3 推进。v1.1 新增默认关闭的 SSPRK 候选态物理容许性检查、troubled-cell 离散支持传播、逐面受控降阶和整步缩步重试；关闭时保持 v1.0 数值路径。严格配置现完整支持常黏度/Sutherland/Prandtl，边界面 `p_w/T_w/mu_w/Cp/Cf/q_wall/traction` 和积分力、力矩、`Cd/Cl/Cm`。阶段 X 分支另已接入待完成物理验收的 SA-neg 输运和湍流黏性闭合，并支持 `nu_tilde`、`mu_t_over_mu`、源项诊断与壁距离输出。正式入口还支持可配置 MDCD 色散/耗散系数、定常/非定常停止、MPI 全局残差、精确时间事件、CGNS/Tecplot 流场、TXT/Tecplot 历史与统计、多截面 x-z/y-z 监测、manifest，以及可改变 rank 数和叶块划分的 CGNS 检查点重启；二维经典双马赫反射已有专用初场和时变边界。逐步使用说明见 [`docs/user-manual.md`](docs/user-manual.md)，源码二次开发见 [`docs/developer-guide.md`](docs/developer-guide.md)，可复制的完整配置见 [`examples/full_case_template.wcns`](examples/full_case_template.wcns)；简明运行速查仍见 [`docs/runtime-guide.md`](docs/runtime-guide.md)，发布算例的生成、独立重读和矩阵入口见 [`docs/release-validation.md`](docs/release-validation.md)。
 
 新增的 `turbulent_channel` 初场、y-z 截面监测和专用槽道壁摩擦/`Re_tau` 统计已用于
 [`case05`](cases/manual/case05_3d_turbulent_channel/README.md) 的 4-rank、5 步 Linux 迁移前可行性卡口；

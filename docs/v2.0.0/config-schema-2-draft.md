@@ -1,9 +1,9 @@
 # WCNS schema 2 配置草案（阶段 V 冻结输入）
 
-状态：**阶段 W 已启用最小 schema 2 骨架。** 当前唯一可运行组合是
-`turbulence.model=none`、`time.integrator=ssprk3`、`preconditioner.type=none`；表中其他模型、
-LES、LU-SGS 与预处理键仍按 X--AA 逐步实现，当前 parser 必须明确拒绝而不是静默降级。每次
-扩展必须同步合法/非法配置测试、summary、manifest 和 restart signature。
+状态：**阶段 X 正在扩展 schema 2。** 当前可运行湍流选择为 `none|sa_neg`，时间推进仍为
+`ssprk3`，预处理仍为 `none`；表中其他模型、LES、LU-SGS 与预处理键继续按 Y--AA 逐步实现，
+当前 parser 必须明确拒绝而不是静默降级。每次扩展必须同步合法/非法配置测试、summary、
+manifest 和 restart signature。
 
 ## 1. 兼容迁移
 
@@ -18,7 +18,7 @@ preconditioner.type = none
 旧 `run.mode`、`run.cfl`、`run.t_end` 和 steady 停止键继续解释。schema 2 拒绝未知键、重复键、
 非有限数、模型无关参数和不支持组合。
 
-阶段 W 的最小合法配置片段为：
+层流最小合法配置片段为：
 
 ```text
 schema_version = 2
@@ -38,6 +38,8 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | `turbulence.prandtl` | positive real | 是 | RANS 模型启用时 |
 | `turbulence.wall_treatment` | `resolved|wall_function` | 是 | k-epsilon 必须 wall_function |
 | `turbulence.farfield.*` | 模型专属正量 | 是 | 只允许当前模型所需键 |
+| `turbulence.sa.farfield_nu_tilde_ratio` | real in `[3,5]` | 是 | 仅 `sa_neg`；基准 3 |
+| `turbulence.sa.source_treatment` | `explicit|local_implicit` | 是 | 仅 `sa_neg`；只处理局部源 Jacobian |
 | `les.filter.type` | `box3_tensor` | 是 | LES 必需 |
 | `les.filter.width_ratio` | positive real | 是 | 基线 1 |
 | `les.test_filter.ratio` | real > 1 | 是 | 动态/相似模型必需，基线 2 |
@@ -57,6 +59,23 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | `statistics.time.*` | start/end/every/weight | 否；累加器身份单列 | 只累计接受物理步 |
 
 ## 3. 合法草案
+
+阶段 X 的 SA-neg 显式基准：
+
+```text
+schema_version = 2
+turbulence.model = sa_neg
+turbulence.prandtl = 0.9
+turbulence.wall_treatment = resolved
+turbulence.sa.farfield_nu_tilde_ratio = 3
+turbulence.sa.source_treatment = explicit
+time.integrator = ssprk3
+preconditioner.type = none
+```
+
+`local_implicit` 只把解析源 Jacobian 加入每个 SSPRK stage 的局部标量更新，不等同于 LU-SGS，
+也不改变 `time.integrator=ssprk3`。SA-neg 当前要求黏性求解和至少一个 no-slip resolved wall；
+阶段 X 不启用 wall function、trip 或压缩修正。
 
 定常低 Mach SST：
 

@@ -26,7 +26,7 @@ V 只冻结需求、公式选择、配置草案、用户输入身份、测试矩
 | 配置名 | 冻结变体 | v2.0.0 目标支持级别 |
 |---|---|---|
 | `none` | v1.1.0 层流路径 | 生产，兼容基线 |
-| `sa_neg` | NASA TMR fully turbulent SA-noft2-neg；trip/压缩修正关闭 | 生产 |
+| `sa_neg` | NASA TMR SA-neg；保留标准 $f_{t2}$，关闭 $f_{t1}\Delta U^2$ trip 源和压缩修正 | 生产 |
 | `k_omega_sst` | SST-2003m；明确 $F_1/F_2$、cross diffusion 和 production limiter | 生产 |
 | `k_epsilon` | 标准高 Reynolds 数模型，只与显式 wall function 组合 | 实验目标；阶段 Y 决定是否升级 |
 

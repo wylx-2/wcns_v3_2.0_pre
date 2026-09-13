@@ -1,7 +1,8 @@
 # WCNS 用户手册
 
 本文面向第一次接触本程序的算例使用者，以 WCNS `1.1.0` 已发布功能为主，并记录 v2.0.0
-阶段 W 的最小 `schema_version = 2` 骨架；生产入口仍为 `wcns_run`。按本文顺序操作，可以从源码构建程序、准备
+阶段 X 分支已实现、但尚未完成物理验收的 `schema_version = 2` 与 SA-neg；生产入口仍为
+`wcns_run`。按本文顺序操作，可以从源码构建程序、准备
 CGNS 网格、填写配置、完成串行或 MPI 计算、识别停止状态、读取输出并从检查点续算。
 
 本手册描述的是当前程序已经实现的行为。数学定义见[`算法补充.md`](../算法补充.md)，源码扩展见[`developer-guide.md`](developer-guide.md)，实现边界见[`known-limitations.md`](known-limitations.md)。可复制的完整配置见[`examples/full_case_template.wcns`](../examples/full_case_template.wcns)。
@@ -371,7 +372,7 @@ output.checkpoint.enabled
 
 | 键 | 要求与行为 |
 |---|---|
-| `schema_version` | `1`，或阶段 W 最小骨架 `2` |
+| `schema_version` | `1`，或 v2 开发分支的 `2` |
 | `case.name` | 非空；输出文件名中非字母数字、`-`、`_` 字符会替换为 `_` |
 | `mesh.path` | 非空；相对路径以配置文件所在目录为基准 |
 | `restart.path` | 可选；相对路径同样以配置文件目录为基准 |
@@ -380,7 +381,7 @@ output.checkpoint.enabled
 为了避免路径基准混淆，推荐把网格与配置放在一个算例目录中，对 `mesh.path` 写短相对路径，
 对 `output.directory` 写从固定启动目录可定位的绝对路径或明确的仓库根相对路径。
 
-schema 2 在阶段 W 只允许以下新增选择：
+schema 2 的层流兼容配置为：
 
 ```text
 turbulence.model = none
@@ -388,8 +389,23 @@ time.integrator = ssprk3
 preconditioner.type = none
 ```
 
-其他 RANS/LES 模型名、`lu_sgs` 和 `weiss_smith` 只是后续阶段保留值，当前会明确拒绝。不要把
-“parser 能识别名称”理解为算法已经实现。schema 1 继续使用原配置，不应添加上述键。
+阶段 X 分支可将模型段改为：
+
+```text
+turbulence.model = sa_neg
+turbulence.prandtl = 0.9
+turbulence.wall_treatment = resolved
+turbulence.sa.farfield_nu_tilde_ratio = 3
+turbulence.sa.source_treatment = local_implicit
+```
+
+SA-neg 必须与 `run.viscous = true`和至少一个 no-slip wall 同时使用；可把源项处理改为
+`explicit`。当前 `local_implicit` 只是模型源项的局部对角更新，不是 LU-SGS。模型活动后，
+定常停止判定会同时要求五个平均流残差和 `nu_tilde` 残差通过，checkpoint 会保存
+`NuTilde` 及其参考残差。可输出 `nu_tilde,mu_t_over_mu,sa_production,sa_destruction,`
+`wall_distance,sa_negative_branch`。该模型尚处于 X 验收中，不能将 smoke 结果当作定量验证。
+SST/LES 模型名、`lu_sgs` 和 `weiss_smith` 仍是后续阶段保留值，当前会明确拒绝。
+schema 1 继续使用原配置，不应添加上述键。
 
 ### 8.2 算法选择
 
@@ -1193,10 +1209,11 @@ wcns_compare_metric_profiles mesh.cgns
 
 ## 16. 当前功能边界
 
-当前可运行物理仍只有单组分热完全理想气体、层流常比热、常黏度/Sutherland 输运、显式
-SSPRK3、结构共形网格和内建源项。阶段 W 已加入独立模型场、通用标量通量/halo、壁距、闭合与
-源 Jacobian 接口及最小 schema 2，但尚无非 `none` 模型注册。低 Mach 预处理、具体湍流闭合、
-化学反应、隐式推进、本地时间步、通用表达式源项、动态插件和涡量/Q 等体派生输出仍未实现。
+当前可运行物理包括单组分热完全理想气体、层流常比热、常黏度/Sutherland 输运、显式
+SSPRK3、结构共形网格和内建源项。阶段 X 分支另已有可运行的 SA-neg 闭合与模型场，
+但它尚未通过 TMR 平板和 NACA0012 的定量收敛验收，因此仍是阶段候选功能。低 Mach
+预处理、SST/k--epsilon/LES、化学反应、隐式推进、本地时间步、通用表达式源项、
+动态插件和涡量/Q 等体派生输出仍未实现。
 默认输运为 `Pr=0.72` 和 `mu/mu_ref=1` 的常黏度。
 
 这些限制不能通过写一个未知配置键绕过。需要扩展时按开发手册同时修改数据结构、严格 parser、验证、摘要/重启签名、生产装配、测试、模板和文档。

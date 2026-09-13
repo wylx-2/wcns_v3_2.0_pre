@@ -1,7 +1,8 @@
 # WCNS 运行、配置、输出与重启指南
 
-本文以 WCNS `1.1.0` 已发布能力为主，并记录 v2.0.0 阶段 W 已加入的最小
-`schema_version = 2` 骨架；正式生产入口仍为 `wcns_run`，定位为简明速查。
+本文以 WCNS `1.1.0` 已发布能力为主，并记录 v2.0.0 阶段 X 分支已实现、
+但尚未通过完整物理验收的 `schema_version = 2` 能力；正式入口仍为
+`wcns_run`，定位为简明速查。
 逐步用户手册见 [`user-manual.md`](user-manual.md)，源码扩展指南见
 [`developer-guide.md`](developer-guide.md)，完整配置模板见
 [`examples/full_case_template.wcns`](../examples/full_case_template.wcns)，算法数学约定见
@@ -54,7 +55,7 @@ mpiexec -n 4 build-mpi\wcns_run.exe --config examples\freestream.wcns
 
 | 键 | 可选值或含义 |
 |---|---|
-| `schema_version` | `1`，或阶段 W 最小骨架 `2` |
+| `schema_version` | `1`，或 v2 开发分支的 `2` |
 | `case.name` | 文件名前缀；不安全字符在输出名中替换为 `_` |
 | `mesh.path` | 结构多块 CGNS 网格 |
 | `algorithm.profile` | `phenglei_wcns` 或 `scmm6_wcns`；两套度量/算子独立使用 |
@@ -67,7 +68,7 @@ mpiexec -n 4 build-mpi\wcns_run.exe --config examples\freestream.wcns
 | `robustness.time_step_reduction` | 缩步因子，必须在 `(0,1)`，默认 `0.5` |
 | `robustness.minimum_time_step` | 允许的最小时间步，默认 `1e-12` |
 
-schema 2 当前还必须显式给出：
+schema 2 必须显式给出时间积分和预处理器。保持层流路径时使用：
 
 ```text
 turbulence.model = none
@@ -75,9 +76,23 @@ time.integrator = ssprk3
 preconditioner.type = none
 ```
 
-其他已规划模型、`lu_sgs` 和 `weiss_smith` 会在启动前明确报“reserved but not implemented”；
-不能据此声称湍流、隐式或低 Mach 功能可运行。schema 1 不接受这些 v2 键，其摘要和旧检查点
-身份保持不变。完整迁移边界见
+阶段 X 分支可选 SA-neg：
+
+```text
+turbulence.model = sa_neg
+turbulence.prandtl = 0.9
+turbulence.wall_treatment = resolved
+turbulence.sa.farfield_nu_tilde_ratio = 3
+turbulence.sa.source_treatment = explicit | local_implicit
+time.integrator = ssprk3
+preconditioner.type = none
+```
+
+`sa_neg` 要求 `run.viscous=true`、至少一个 resolved no-slip wall，远场比限定在
+`[3,5]`；当前不允许与整步稳健化事务同时开启。`local_implicit` 仅对 SA 局部源项作
+对角更新，它不是局部伪时间步或 LU-SGS。SST、k--epsilon、LES、`lu_sgs` 和
+`weiss_smith` 仍会在启动前明确拒绝。schema 1 不接受这些 v2 键，其摘要和旧检查点
+身份保持不变。SA-neg 当前是阶段 X 验证中功能，不应用于对外生产结论。完整迁移边界见
 [`v2.0.0/config-schema-2-draft.md`](v2.0.0/config-schema-2-draft.md)。
 
 低 Mach 预处理尚未实现。无粘界面通量只走所选
@@ -252,6 +267,10 @@ FlowSolution；Tecplot ASCII 按原 zone 写 cell-center ordered zone。支持�
 | `rho_u,rho_v,rho_w,rho_E` | 守恒量 |
 | `sound_speed,mach,total_enthalpy,entropy_proxy` | 热力学派生量 |
 | `viscosity` | 当前层流输运模型黏度 |
+| `nu_tilde` | SA-neg 工作变量；仅模型活动时可用 |
+| `mu_t_over_mu` | SA 涡黏度/分子黏度 |
+| `sa_production,sa_destruction` | SA 产生项和破坏项诊断 |
+| `wall_distance,sa_negative_branch` | 壁距离和 SA-neg 负分支标识 |
 | `jacobian` | `partial(x,y,z)/partial(xi,eta,zeta)`；二维为面积尺度、三维为体积尺度 |
 
 `output.dimensional = true` 时按参考量恢复量纲；否则输出内部无量纲值。需要 ghost 坐标/度量
@@ -275,7 +294,8 @@ FlowSolution；Tecplot ASCII 按原 zone 写 cell-center ordered zone。支持�
 ### 5.3 残差历史、统计和 manifest
 
 `output.history.format = txt | tecplot`。历史列固定，包含 step/time/dt/CFL/wall time、总残差、
-五分量 `L2/Linf`、冻结参考值、归一化值、连续通过次数、重构/Riemann 回退、稳健化各级
+五个平均流分量及活动模型场的 `L2/Linf`、冻结参考值、归一化值、连续通过次数、
+重构/Riemann 回退、稳健化各级
 owner 面数、troubled-cell/局部重算/整步 retry、proposed/accepted dt、候选最小 `rho/p/T/e`、
 是否进行残差检查和停止原因。固定 schema 不接受 `output.history.quantities`；TXT 直接写停止原因字符串，
 Tecplot 写数值 `stop_reason_code` 并在 `AUXDATA STOP_REASON_CODES` 中给出映射。
@@ -289,8 +309,10 @@ Tecplot 写数值 `stop_reason_code` 并在 `AUXDATA STOP_REASON_CODES` 中给�
 
 ## 6. 检查点和不同 rank 重启
 
-检查点只能是项目内部 CGNS 布局，始终无损保存原 zone 上五个无量纲守恒场，以及格式版本、
-step/time/dt、网格签名、数值重启签名、定常参考残差和连续计数。除带 step/time 的文件外，
+检查点只能是项目内部 CGNS 布局，始终无损保存原 zone 上五个无量纲守恒场；
+SA-neg 活动时使用 checkpoint schema 2 并额外保存 `NuTilde`、模型描述符、模型残差参考和
+连续计数，`none` 仍保持 schema 1。所有检查点另含格式版本、step/time/dt、网格签名和
+数值重启签名。除带 step/time 的文件外，
 还更新 `<case>.checkpoint.latest.cgns`。`latest` 是本次运行拥有的滚动别名，因此即使
 `output.allow_existing=false`，后续检查点事件也会安全替换它；运行前既有输出目录以及带
 step/time 的不可变文件仍按覆盖策略严格拒绝。
