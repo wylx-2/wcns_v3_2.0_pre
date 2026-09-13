@@ -37,8 +37,8 @@
 
 `cgnscheck -v` 完成且无错误，报告 6 个警告：zone 无 family、三个坐标缺少 dataclass、Z 坐标
 范围为零，以及第一条反向 PointRange 的起点大于终点。反向范围与负 transform 可能是合法的
-方向表达，但阶段 V 必须以 WCNS 实际读取、互逆映射和共享面守恒测试确认，不能因为检查器只
-给出 warning 就直接放行。
+方向表达；V/W 已以 WCNS 实际读取和互逆映射复探，AB 仍须完成共享面守恒验证，不能因为
+检查器只给出 warning 就直接放行。
 
 阶段 W 已加入并自动测试两项基础兼容：常 Z 平面的
 `CellDimension=2, PhysicalDimension=3` 按现有 XY 二维度量处理，以及 reciprocal 同 zone
@@ -48,6 +48,9 @@
 ```text
 a partially connected block face does not admit tensor-product conservation weights
 ```
+
+复探使用 [`case06-w-smoke.wcns`](case06-w-smoke.wcns)，同时覆盖阶段 W 最小 schema 2 的
+`none + ssprk3 + none` 生产解析路径；该配置只是只读启动探针，不含物理工况。
 
 原因是 O 型网格的下 `j` 块面同时含翼型物理壁段和两段尾迹切口自连接；当前全块张量积守恒
 权重假定一个块面具有统一边界/连接类型。正确支持需要按面子区间构造非张量边界/连接权重并
