@@ -280,6 +280,29 @@ if(WCNS_ENABLE_CGNS)
         ${CMAKE_CURRENT_BINARY_DIR}/restart_continuity_mpi.wcns
         @ONLY
     )
+    set(WCNS_SA_CONTINUITY_OUTPUT sa-restart-continuity-source)
+    set(WCNS_SA_CONTINUITY_CHECKPOINT true)
+    set(WCNS_SA_CONTINUITY_RESTART "# fresh start")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/sa_restart_continuity_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/sa_restart_continuity_source.wcns
+        @ONLY
+    )
+    set(WCNS_SA_CONTINUITY_OUTPUT sa-restart-continuity-serial)
+    set(WCNS_SA_CONTINUITY_CHECKPOINT false)
+    set(WCNS_SA_CONTINUITY_RESTART
+        "restart.path = ${CMAKE_CURRENT_BINARY_DIR}/sa-restart-continuity-source/sa-restart-continuity.checkpoint.step00000001.time1p000000000eM04.cgns")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/sa_restart_continuity_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/sa_restart_continuity_serial.wcns
+        @ONLY
+    )
+    set(WCNS_SA_CONTINUITY_OUTPUT sa-restart-continuity-mpi)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/sa_restart_continuity_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/sa_restart_continuity_mpi.wcns
+        @ONLY
+    )
     add_test(
         NAME wcns.run.freestream.serial
         COMMAND wcns_run
@@ -851,6 +874,54 @@ if(WCNS_ENABLE_CGNS)
         wcns.restart_continuity.serial
         PROPERTIES FIXTURES_REQUIRED restart_continuity_serial_files
     )
+    add_test(
+        NAME wcns.run.sa_restart_continuity_source
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/sa_restart_continuity_source.wcns
+    )
+    set_tests_properties(
+        wcns.run.sa_restart_continuity_source
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP sa_restart_continuity_source_files
+            RESOURCE_LOCK wcns_sa_restart_continuity
+    )
+    add_test(
+        NAME wcns.sa_history_schema.unsteady.serial
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/check_sa_history.py
+            ${CMAKE_CURRENT_BINARY_DIR}/sa-restart-continuity-source/sa-restart-continuity.history.r1.txt
+    )
+    set_tests_properties(
+        wcns.sa_history_schema.unsteady.serial
+        PROPERTIES FIXTURES_REQUIRED sa_restart_continuity_source_files
+    )
+    add_test(
+        NAME wcns.run.sa_restart_continuity.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/sa_restart_continuity_serial.wcns
+    )
+    set_tests_properties(
+        wcns.run.sa_restart_continuity.serial
+        PROPERTIES
+            FIXTURES_REQUIRED sa_restart_continuity_source_files
+            FIXTURES_SETUP sa_restart_continuity_serial_files
+            RESOURCE_LOCK wcns_sa_restart_continuity
+    )
+    set(WCNS_SA_CONTINUITY_FINAL
+        sa-restart-continuity.field.step00000002.time2p000000000eM04.cgns)
+    add_test(
+        NAME wcns.sa_restart_continuity.serial
+        COMMAND wcns_cgns_field_compare
+            ${CMAKE_CURRENT_BINARY_DIR}/sa-restart-continuity-source/${WCNS_SA_CONTINUITY_FINAL}
+            ${CMAKE_CURRENT_BINARY_DIR}/sa-restart-continuity-serial/${WCNS_SA_CONTINUITY_FINAL}
+            1e-13
+            nu_tilde
+    )
+    set_tests_properties(
+        wcns.sa_restart_continuity.serial
+        PROPERTIES FIXTURES_REQUIRED sa_restart_continuity_serial_files
+    )
 
     add_executable(wcns_cgns_reader_tests
         test_cgns_reader.cpp
@@ -1378,6 +1449,31 @@ if(WCNS_ENABLE_CGNS)
         set_tests_properties(
             wcns.restart_continuity.2
             PROPERTIES FIXTURES_REQUIRED restart_continuity_mpi_files
+        )
+        add_test(
+            NAME wcns.run.sa_restart_continuity.2
+            COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 2
+                $<TARGET_FILE:wcns_run>
+                --config ${CMAKE_CURRENT_BINARY_DIR}/sa_restart_continuity_mpi.wcns
+        )
+        set_tests_properties(
+            wcns.run.sa_restart_continuity.2
+            PROPERTIES
+                FIXTURES_REQUIRED sa_restart_continuity_source_files
+                FIXTURES_SETUP sa_restart_continuity_mpi_files
+                RESOURCE_LOCK wcns_sa_restart_continuity
+        )
+        add_test(
+            NAME wcns.sa_restart_continuity.2
+            COMMAND wcns_cgns_field_compare
+                ${CMAKE_CURRENT_BINARY_DIR}/sa-restart-continuity-source/${WCNS_SA_CONTINUITY_FINAL}
+                ${CMAKE_CURRENT_BINARY_DIR}/sa-restart-continuity-mpi/${WCNS_SA_CONTINUITY_FINAL}
+                1e-12
+                nu_tilde
+        )
+        set_tests_properties(
+            wcns.sa_restart_continuity.2
+            PROPERTIES FIXTURES_REQUIRED sa_restart_continuity_mpi_files
         )
         foreach(rank_count IN ITEMS 4 8)
             add_test(

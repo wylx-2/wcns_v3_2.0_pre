@@ -585,6 +585,8 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
     const bool needs_viscous = requests_viscous_quantity(config_.output.boundary);
     const bool needs_thermal
         = config_.run.viscous || requests_thermal_quantity(config_.output.boundary);
+    const auto turbulence_model
+        = TurbulenceModelRegistry::create_builtin().create(config_.turbulence);
     std::vector<Real> local_payload;
     std::size_t ordinal = 0;
     for (const auto& block : local_blocks_.blocks()) {
@@ -699,13 +701,25 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
                             temperature = trace.state[temperature_value];
                             temperature_gradient
                                 = trace.gradients[static_cast<int>(ViscousPrimitive::Temperature)];
-                            const auto cartesian
-                                = compute_viscous_cartesian_flux(trace,
-                                                                 quantities_.transport,
-                                                                 quantities_.gas,
-                                                                 quantities_.reference,
-                                                                 quantities_.floors,
-                                                                 block.cell_dimension());
+                            const auto turbulence = evaluate_turbulence_viscous_face(
+                                block,
+                                trace,
+                                profile_,
+                                quantities_.transport,
+                                quantities_.gas,
+                                quantities_.reference,
+                                patch.face.axis,
+                                face,
+                                &patch,
+                                turbulence_model.get());
+                            const auto cartesian = compute_viscous_cartesian_flux(
+                                trace,
+                                quantities_.transport,
+                                quantities_.gas,
+                                quantities_.reference,
+                                quantities_.floors,
+                                turbulence,
+                                block.cell_dimension());
                             viscosity = cartesian.viscosity;
                             thermal_coefficient = cartesian.thermal_coefficient;
                             stress_normal = {{

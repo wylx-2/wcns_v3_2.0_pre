@@ -12,10 +12,6 @@ namespace wcns {
 namespace {
 
 constexpr std::uint64_t maximum_exact_message_version = 9007199254740992ULL;
-#if WCNS_HAS_MPI
-constexpr int viscous_flux_tag_base = 24576;
-#endif
-
 int side_sign(Side side)
 {
     return side == Side::Lower ? -1 : 1;
@@ -96,6 +92,44 @@ Real centered_derivative(
     return (-9.0 * value(-2) + 125.0 * value(-1) - 2250.0 * value(0) + 2250.0 * value(1)
             - 125.0 * value(2) + 9.0 * value(3))
         / 1920.0;
+}
+
+Real interpolate_turbulence_face(const StructuredBlock& block,
+                                 const AlgorithmProfile& profile,
+                                 Axis axis,
+                                 Index3 face,
+                                 int component)
+{
+    const auto& field = block.turbulence.storage();
+    Real result = 0.0;
+    if (profile.kind() == AlgorithmProfileKind::PhengleiWcns) {
+        constexpr std::array<int, 4> offsets {{-2, -1, 0, 1}};
+        constexpr std::array<Real, 4> coefficients {
+            {-1.0 / 16.0, 9.0 / 16.0, 9.0 / 16.0, -1.0 / 16.0}};
+        for (std::size_t entry = 0; entry < offsets.size(); ++entry) {
+            auto cell = face;
+            cell[static_cast<std::size_t>(axis)] += offsets[entry];
+            result += coefficients[entry] * field(cell.i, cell.j, cell.k, component);
+        }
+    } else {
+        constexpr std::array<int, 6> offsets {{-3, -2, -1, 0, 1, 2}};
+        constexpr std::array<Real, 6> coefficients {
+            {3.0 / 256.0,
+             -25.0 / 256.0,
+             150.0 / 256.0,
+             150.0 / 256.0,
+             -25.0 / 256.0,
+             3.0 / 256.0}};
+        for (std::size_t entry = 0; entry < offsets.size(); ++entry) {
+            auto cell = face;
+            cell[static_cast<std::size_t>(axis)] += offsets[entry];
+            result += coefficients[entry] * field(cell.i, cell.j, cell.k, component);
+        }
+    }
+    if (!std::isfinite(result)) {
+        throw PhysicsError("turbulence face value is non-finite");
+    }
+    return result;
 }
 
 ConservativeState load_flux(const ViscousFaceFluxField& field, Axis axis, Index3 index)
@@ -301,7 +335,7 @@ void ViscousFaceFluxHaloExchanger::exchange(const ViscousFaceFluxFieldRegistry& 
                             mpi_count(pending.values.size()),
                             MPI_DOUBLE,
                             pending.descriptor->donor_rank,
-                            pending.descriptor->message_tag(viscous_flux_tag_base),
+                            pending.descriptor->message_tag(tag_base_),
                             mpi_.communicator(),
                             &requests_[request++]),
                   "MPI_Irecv viscous face flux");
@@ -311,7 +345,7 @@ void ViscousFaceFluxHaloExchanger::exchange(const ViscousFaceFluxFieldRegistry& 
                             mpi_count(pending.values.size()),
                             MPI_DOUBLE,
                             pending.descriptor->receiver_rank,
-                            pending.descriptor->message_tag(viscous_flux_tag_base),
+                            pending.descriptor->message_tag(tag_base_),
                             mpi_.communicator(),
                             &requests_[request++]),
                   "MPI_Isend viscous face flux");
@@ -344,6 +378,55 @@ void ViscousFaceFluxHaloExchanger::exchange(const ViscousFaceFluxFieldRegistry& 
     }
 }
 
+TurbulenceViscousContribution evaluate_turbulence_viscous_face(
+    const StructuredBlock& block,
+    const ViscousFaceTrace& trace,
+    const AlgorithmProfile& profile,
+    const TransportModel& transport,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    Axis axis,
+    Index3 face,
+    const BoundaryPatch* physical_boundary,
+    const ITurbulenceModel* turbulence_model)
+{
+    TurbulenceViscousContribution result;
+    if (turbulence_model == nullptr
+        || turbulence_model->family() == TurbulenceModelFamily::None) {
+        return result;
+    }
+    if (!block.turbulence.contains("nu_tilde")) {
+        throw PhysicsConfigurationError("active turbulence model is missing nu_tilde storage");
+    }
+    TurbulenceCellContext context;
+    context.mean_state = trace.state;
+    for (int variable = 0; variable < viscous_primitive_components; ++variable) {
+        for (int direction = 0; direction < 3; ++direction) {
+            context.primitive_gradients[static_cast<std::size_t>(variable)]
+                                       [static_cast<std::size_t>(direction)]
+                = trace.gradients[static_cast<std::size_t>(variable)]
+                                 [static_cast<std::size_t>(direction)];
+        }
+    }
+    Real nu_tilde = interpolate_turbulence_face(
+        block, profile, axis, face, block.turbulence.component("nu_tilde"));
+    if (physical_boundary != nullptr
+        && (physical_boundary->type == BoundaryType::NoSlipAdiabaticWall
+            || physical_boundary->type == BoundaryType::NoSlipIsothermalWall)) {
+        nu_tilde = 0.0;
+    }
+    context.model_values = {nu_tilde};
+    context.molecular_kinematic_viscosity
+        = transport.viscosity(trace.state[temperature_value])
+        / (trace.state[temperature_density] * reference.reynolds());
+    context.reference_reynolds = reference.reynolds();
+    context.reference_mach = reference.mach();
+    context.heat_capacity_ratio = gas.gamma();
+    context.dimension = block.cell_dimension();
+    result = turbulence_model->viscous_contribution(context);
+    return result;
+}
+
 void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                       const StructuredBlock& block,
                                       const MetricField& metric,
@@ -354,7 +437,8 @@ void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                       const GasModel& gas,
                                       const ReferenceScales& reference,
                                       const NumericalFloors& floors,
-                                      std::uint64_t version)
+                                      std::uint64_t version,
+                                      const ITurbulenceModel* turbulence_model)
 {
     if (metric.profile() != profile.kind() || gradients.profile() != profile.kind()
         || metric.dimension() != block.cell_dimension()
@@ -378,7 +462,8 @@ void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                     const Index3 face {i, j, k};
                     auto trace
                         = interpolate_viscous_face_trace(block, gradients, profile, axis, face);
-                    if (const auto* patch = physical_patch(block, axis, face)) {
+                    const auto* patch = physical_patch(block, axis, face);
+                    if (patch != nullptr) {
                         const auto data = boundary_data.find(patch->name);
                         if (data == boundary_data.end()) {
                             throw PhysicsConfigurationError(
@@ -400,8 +485,23 @@ void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                             reference,
                             floors);
                     }
-                    const auto cartesian = compute_viscous_cartesian_flux(
-                        trace, transport, gas, reference, floors, block.cell_dimension());
+                    const auto turbulence = evaluate_turbulence_viscous_face(block,
+                                                                             trace,
+                                                                             profile,
+                                                                             transport,
+                                                                             gas,
+                                                                             reference,
+                                                                             axis,
+                                                                             face,
+                                                                             patch,
+                                                                             turbulence_model);
+                    const auto cartesian = compute_viscous_cartesian_flux(trace,
+                                                                          transport,
+                                                                          gas,
+                                                                          reference,
+                                                                          floors,
+                                                                          turbulence,
+                                                                          block.cell_dimension());
                     const Real sx = faces.x(i, j, k);
                     const Real sy = faces.y(i, j, k);
                     const Real sz = faces.z(i, j, k);
@@ -432,7 +532,8 @@ ViscousFaceFluxField compute_viscous_face_fluxes(const StructuredBlock& block,
                                                  const GasModel& gas,
                                                  const ReferenceScales& reference,
                                                  const NumericalFloors& floors,
-                                                 std::uint64_t version)
+                                                 std::uint64_t version,
+                                                 const ITurbulenceModel* turbulence_model)
 {
     ViscousFaceFluxField result(
         block.cell_extent(), block.cell_dimension(), profile.kind(), version);
@@ -446,7 +547,8 @@ ViscousFaceFluxField compute_viscous_face_fluxes(const StructuredBlock& block,
                                      gas,
                                      reference,
                                      floors,
-                                     version);
+                                     version,
+                                     turbulence_model);
     return result;
 }
 

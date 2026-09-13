@@ -33,12 +33,12 @@ std::vector<double> read_field(int file, const char* name, const std::array<cgsi
 
 } // namespace
 
-// 独立重读并比较连续计算与检查点续算的五个守恒场。
+// 独立重读并比较连续计算与检查点续算的守恒场及可选模型场。
 int main(int argc, char** argv)
 {
-    if (argc != 4) {
+    if (argc < 4) {
         std::cerr << "usage: wcns_cgns_field_compare <expected.cgns> "
-                     "<actual.cgns> <absolute-tolerance>\n";
+                     "<actual.cgns> <absolute-tolerance> [additional-field ...]\n";
         return EXIT_FAILURE;
     }
     int expected_file = 0;
@@ -64,17 +64,20 @@ int main(int argc, char** argv)
         WCNS_REQUIRE(std::string(expected_zone) == actual_zone);
         WCNS_REQUIRE(expected_size[2] == actual_size[2]);
         WCNS_REQUIRE(expected_size[3] == actual_size[3]);
-        constexpr std::array<const char*, 5> fields {{
+        std::vector<std::string> fields {
             "Density",
             "MomentumX",
             "MomentumY",
             "MomentumZ",
             "EnergyStagnationDensity",
-        }};
+        };
+        for (int argument = 4; argument < argc; ++argument) {
+            fields.emplace_back(argv[argument]);
+        }
         double maximum_difference = 0.0;
-        for (const char* field : fields) {
-            const auto expected = read_field(expected_file, field, expected_size);
-            const auto actual = read_field(actual_file, field, actual_size);
+        for (const auto& field : fields) {
+            const auto expected = read_field(expected_file, field.c_str(), expected_size);
+            const auto actual = read_field(actual_file, field.c_str(), actual_size);
             WCNS_REQUIRE(expected.size() == actual.size());
             for (std::size_t index = 0; index < expected.size(); ++index) {
                 WCNS_REQUIRE(std::isfinite(expected[index]));

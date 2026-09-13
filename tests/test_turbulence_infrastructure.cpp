@@ -121,6 +121,75 @@ wcns::Real ssprk3_decay_error(wcns::Real time_step)
     return std::abs(value - std::exp(-decay * final_time));
 }
 
+struct ErrorNorms {
+    wcns::Real l1 = 0.0;
+    wcns::Real l2 = 0.0;
+    wcns::Real linf = 0.0;
+};
+
+ErrorNorms sa_manufactured_error(int cell_count)
+{
+    using namespace wcns;
+    const SaNegativeConstants constants;
+    const Real two_pi = 2.0 * std::acos(-1.0);
+    const Real spacing = two_pi / static_cast<Real>(cell_count);
+    constexpr Real velocity = 0.4;
+    constexpr Real molecular_nu = 1.5e-5;
+    constexpr Real base = 5.0e-5;
+    constexpr Real amplitude = 1.0e-5;
+    std::vector<Real> value(static_cast<std::size_t>(cell_count));
+    for (int cell = 0; cell < cell_count; ++cell) {
+        const Real x = (static_cast<Real>(cell) + 0.5) * spacing;
+        value[static_cast<std::size_t>(cell)] = base + amplitude * std::sin(x);
+    }
+
+    std::vector<Real> flux(static_cast<std::size_t>(cell_count));
+    for (int face = 0; face < cell_count; ++face) {
+        const int left = face;
+        const int right = (face + 1) % cell_count;
+        const Real left_value = value[static_cast<std::size_t>(left)];
+        const Real right_value = value[static_cast<std::size_t>(right)];
+        const Real face_value = 0.5 * (left_value + right_value);
+        const Real diffusion = (molecular_nu + face_value) / constants.sigma;
+        flux[static_cast<std::size_t>(face)] = velocity * face_value
+            - diffusion * (right_value - left_value) / spacing;
+    }
+
+    ErrorNorms result;
+    for (int cell = 0; cell < cell_count; ++cell) {
+        const int lower_face = (cell + cell_count - 1) % cell_count;
+        const Real x = (static_cast<Real>(cell) + 0.5) * spacing;
+        const Real exact_value = base + amplitude * std::sin(x);
+        const Real first = amplitude * std::cos(x);
+        const Real second = -amplitude * std::sin(x);
+
+        TurbulenceCellContext context;
+        context.mean_state = {{1.0, velocity, 0.0, 0.0, 1.0}};
+        context.primitive_gradients[0] = {{0.0, -2.0, 0.0}};
+        context.model_values = {exact_value};
+        context.model_gradients = {{{first, 0.0, 0.0}}};
+        context.molecular_kinematic_viscosity = molecular_nu;
+        context.wall_distance = 0.7;
+        context.dimension = 2;
+        const Real model_source = evaluate_sa_negative(context, constants).source;
+        const Real exact_flux_derivative = velocity * first
+            - (first * first + (molecular_nu + exact_value) * second) / constants.sigma;
+        const Real manufactured_source = exact_flux_derivative - model_source;
+        const Real residual
+            = -(flux[static_cast<std::size_t>(cell)]
+                - flux[static_cast<std::size_t>(lower_face)])
+                    / spacing
+            + model_source + manufactured_source;
+        const Real error = std::abs(residual);
+        result.l1 += error;
+        result.l2 += error * error;
+        result.linf = std::max(result.linf, error);
+    }
+    result.l1 /= static_cast<Real>(cell_count);
+    result.l2 = std::sqrt(result.l2 / static_cast<Real>(cell_count));
+    return result;
+}
+
 std::vector<wcns::WallPrimitive> circle_segments(int segment_count)
 {
     using namespace wcns;
@@ -249,6 +318,7 @@ void test_turbulence_model_interface()
     WCNS_REQUIRE(model->family() == TurbulenceModelFamily::None);
     WCNS_REQUIRE(model->fields().empty());
     WCNS_REQUIRE(model->viscous_contribution({}).eddy_viscosity == 0.0);
+    WCNS_REQUIRE(model->diffusion_coefficients({}).empty());
     WCNS_REQUIRE(model->source_linearization({}).source.empty());
     WCNS_REQUIRE(turbulence_model_family(TurbulenceModelKind::SaNegative)
                  == TurbulenceModelFamily::RansTransport);
@@ -257,7 +327,7 @@ void test_turbulence_model_interface()
     WCNS_REQUIRE_THROWS(std::invalid_argument, turbulence_model_kind("unknown"));
 
     TurbulenceModelConfig unavailable;
-    unavailable.kind = TurbulenceModelKind::SaNegative;
+    unavailable.kind = TurbulenceModelKind::KOmegaSst;
     WCNS_REQUIRE_THROWS(std::invalid_argument, registry.create(unavailable));
     TurbulenceModelConfig invalid_kepsilon;
     invalid_kepsilon.kind = TurbulenceModelKind::KEpsilon;
@@ -269,6 +339,108 @@ void test_turbulence_model_interface()
                  == std::vector<Real>({7.0, -4.0, -5.0, 4.0}));
     source.jacobian.pop_back();
     WCNS_REQUIRE_THROWS(std::invalid_argument, source.validate(2));
+}
+
+// 对照 NASA TMR SA-neg 的正/负分支参考点，并检查自动微分源 Jacobian。
+void test_sa_negative_model()
+{
+    using namespace wcns;
+    SaNegativeConstants constants;
+    WCNS_REQUIRE_NEAR(constants.cw1(), 3.2390678167757287, 2.0e-15);
+
+    TurbulenceCellContext context;
+    context.mean_state = {{1.2, 0.3, -0.1, 0.0, 1.0}};
+    context.primitive_gradients[0] = {{0.0, 2.0, 0.0}};
+    context.primitive_gradients[1] = {{-1.0, 0.0, 0.0}};
+    context.model_values = {4.5e-5};
+    context.model_gradients = {{{1.0e-3, -2.0e-3, 0.0}}};
+    context.molecular_kinematic_viscosity = 1.5e-5;
+    context.wall_distance = 0.03;
+    context.reference_reynolds = 6.0e6;
+    context.reference_mach = 0.15;
+    context.heat_capacity_ratio = 1.4;
+    context.dimension = 2;
+
+    const auto positive = evaluate_sa_negative(context);
+    WCNS_REQUIRE(!positive.negative_branch);
+    WCNS_REQUIRE_NEAR(positive.chi, 3.0, 1.0e-15);
+    WCNS_REQUIRE_NEAR(positive.fv1, 0.07014608571851676, 2.0e-15);
+    WCNS_REQUIRE_NEAR(positive.fv2, -1.4784411615093869, 3.0e-15);
+    WCNS_REQUIRE_NEAR(positive.ft2, 0.013330795845890767, 2.0e-15);
+    WCNS_REQUIRE_NEAR(positive.modified_vorticity, 2.560249505797327, 3.0e-15);
+    WCNS_REQUIRE_NEAR(positive.r, 0.11617695780693105, 2.0e-15);
+    WCNS_REQUIRE_NEAR(positive.fw, 0.08153502509866944, 2.0e-15);
+    WCNS_REQUIRE_NEAR(positive.diffusion_coefficient, 9.0e-5, 1.0e-19);
+    WCNS_REQUIRE_NEAR(positive.eddy_kinematic_viscosity,
+                      3.1565738573332544e-6,
+                      1.0e-20);
+    WCNS_REQUIRE_NEAR(positive.production_source, 1.5403012689802298e-5, 2.0e-19);
+    WCNS_REQUIRE_NEAR(positive.destruction_source, -5.700418880258732e-7, 2.0e-20);
+    WCNS_REQUIRE_NEAR(positive.cross_diffusion_source, 4.665e-6, 1.0e-20);
+    WCNS_REQUIRE_NEAR(positive.source, 1.9497970801776424e-5, 2.0e-19);
+
+    const auto derivative_check = [&](Real value) {
+        context.model_values[0] = value;
+        const auto center = evaluate_sa_negative(context);
+        const Real step = 1.0e-7 * std::max(std::abs(value), context.molecular_kinematic_viscosity);
+        context.model_values[0] = value + step;
+        const Real upper = evaluate_sa_negative(context).source;
+        context.model_values[0] = value - step;
+        const Real lower = evaluate_sa_negative(context).source;
+        context.model_values[0] = value;
+        WCNS_REQUIRE_NEAR(center.source_derivative,
+                          (upper - lower) / (2.0 * step),
+                          2.0e-7 * std::max(1.0, std::abs(center.source_derivative)));
+    };
+    derivative_check(4.5e-5);
+
+    context.model_values[0] = -2.25e-5;
+    const auto negative = evaluate_sa_negative(context);
+    WCNS_REQUIRE(negative.negative_branch);
+    WCNS_REQUIRE_NEAR(negative.fn, 0.6516129032258065, 2.0e-15);
+    WCNS_REQUIRE_NEAR(negative.diffusion_coefficient, 5.080645161290326e-7, 2.0e-21);
+    WCNS_REQUIRE(negative.eddy_kinematic_viscosity == 0.0);
+    WCNS_REQUIRE_NEAR(negative.production_source, 1.82925e-6, 2.0e-20);
+    WCNS_REQUIRE_NEAR(negative.destruction_source, 1.8219756469363482e-6, 2.0e-20);
+    WCNS_REQUIRE_NEAR(negative.source, 8.316225646936349e-6, 2.0e-20);
+    derivative_check(-2.25e-5);
+
+    context.model_values[0] = -7.1 * context.molecular_kinematic_viscosity;
+    const auto formerly_singular_negative = evaluate_sa_negative(context);
+    WCNS_REQUIRE(formerly_singular_negative.negative_branch);
+    WCNS_REQUIRE(formerly_singular_negative.eddy_kinematic_viscosity == 0.0);
+    WCNS_REQUIRE(std::isfinite(formerly_singular_negative.source));
+    context.model_values[0] = -2.25e-5;
+
+    TurbulenceModelConfig config;
+    config.kind = TurbulenceModelKind::SaNegative;
+    const auto model = TurbulenceModelRegistry::create_builtin().create(config);
+    WCNS_REQUIRE(model->fields().size() == 6);
+    WCNS_REQUIRE(model->diffusion_coefficients(context).size() == 1);
+    WCNS_REQUIRE(model->viscous_contribution(context).eddy_viscosity == 0.0);
+    const auto source = model->source_linearization(context);
+    WCNS_REQUIRE_NEAR(source.source[0], 1.2 * negative.source, 2.0e-20);
+    WCNS_REQUIRE_NEAR(source.jacobian[0], negative.source_derivative, 2.0e-12);
+    WCNS_REQUIRE_NEAR(sa_negative_farfield_value(config, 6.0e6), 5.0e-7, 1.0e-21);
+
+    WCNS_REQUIRE_NEAR(local_implicit_turbulence_increment(-10.0, -100.0, 0.1),
+                      -1.0 / 11.0,
+                      2.0e-16);
+    WCNS_REQUIRE_THROWS(PhysicsError,
+                        local_implicit_turbulence_increment(1.0, 20.0, 0.1));
+
+    const auto coarse = sa_manufactured_error(32);
+    const auto medium = sa_manufactured_error(64);
+    const auto fine = sa_manufactured_error(128);
+    const auto order = [](Real first, Real second) {
+        return std::log(first / second) / std::log(2.0);
+    };
+    WCNS_REQUIRE(order(coarse.l1, medium.l1) > 1.9);
+    WCNS_REQUIRE(order(medium.l1, fine.l1) > 1.9);
+    WCNS_REQUIRE(order(coarse.l2, medium.l2) > 1.9);
+    WCNS_REQUIRE(order(medium.l2, fine.l2) > 1.9);
+    WCNS_REQUIRE(order(coarse.linf, medium.linf) > 1.9);
+    WCNS_REQUIRE(order(medium.linf, fine.linf) > 1.9);
 }
 
 void test_turbulence_transport_interface()

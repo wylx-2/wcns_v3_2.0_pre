@@ -107,18 +107,25 @@ void ViscousWcnsConfig::validate() const
 {
     inviscid.validate();
     transport.validate();
+    turbulence.validate();
     stability.validate();
 }
 
 std::string ViscousWcnsConfig::summary() const
 {
     validate();
-    return inviscid.summary() + ';' + transport.summary() + "; " + stability.summary();
+    auto result = inviscid.summary() + ';' + transport.summary() + "; " + stability.summary();
+    if (turbulence.kind != TurbulenceModelKind::None) {
+        result += "; " + turbulence.summary();
+    }
+    return result;
 }
 
 std::string ViscousWcnsConfig::restart_signature() const
 {
-    return "viscous_wcns_v1;" + summary();
+    return std::string(turbulence.kind == TurbulenceModelKind::None ? "viscous_wcns_v1;"
+                                                                    : "viscous_wcns_v2;")
+        + summary();
 }
 
 ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
@@ -138,6 +145,7 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     , global_mesh_(global_mesh)
     , topology_(topology)
     , state_exchanger_(mpi, topology, distribution_rank_count, euler_components)
+    , turbulence_exchanger_(mpi, topology, distribution_rank_count)
     , metrics_(metrics)
     , boundary_data_(boundary_data)
     , profile_(std::move(profile))
@@ -155,8 +163,11 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     , gradient_exchanger_(mpi_, gradient_plan_)
     , viscous_flux_plan_(ViscousFaceFluxHaloPlan::build(global_mesh_, profile_, 1))
     , viscous_flux_exchanger_(mpi_, viscous_flux_plan_)
+    , turbulence_flux_plan_(ViscousFaceFluxHaloPlan::build(global_mesh_, profile_, 1))
+    , turbulence_flux_exchanger_(mpi_, turbulence_flux_plan_, 28672)
 {
     config_.validate();
+    turbulence_model_ = TurbulenceModelRegistry::create_builtin().create(config_.turbulence);
     const auto riemann_registry
         = RiemannSolverRegistry::with_builtins(config_.inviscid.riemann.parameters);
     config_.inviscid.riemann.validate(riemann_registry);
@@ -192,7 +203,11 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     inviscid_flux_workspace_.reserve(local_count);
     operand_workspace_.reserve(local_count);
     gradient_workspace_.reserve(local_count);
+    turbulence_gradient_workspace_.reserve(local_count);
     viscous_flux_workspace_.reserve(local_count);
+    turbulence_flux_workspace_.reserve(local_count);
+    turbulence_residual_workspace_.reserve(local_count);
+    turbulence_source_jacobian_workspace_.reserve(local_count);
     for (auto& block : local_blocks_.blocks()) {
         block_workspace_.push_back(&block);
         const auto inviscid = inviscid_flux_workspace_.emplace(
@@ -218,7 +233,45 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
         operand_registry_.add(block.id(), operand.first->second);
         gradient_registry_.add(block.id(), gradient.first->second);
         viscous_flux_registry_.add(block.id(), viscous.first->second);
+        if (turbulence_active()) {
+            TurbulenceFieldSet expected(
+                block.cell_extent(), block.ghost_width(), turbulence_model_->fields());
+            if (block.turbulence.empty()
+                || block.turbulence.descriptor_signature() != expected.descriptor_signature()) {
+                throw std::invalid_argument(
+                    "active SA-neg fields must be initialized before solver construction");
+            }
+            const auto model_gradient = turbulence_gradient_workspace_.emplace(
+                std::piecewise_construct,
+                std::forward_as_tuple(block.id()),
+                std::forward_as_tuple(
+                    block.cell_extent(), block.cell_dimension(), profile_.kind(), 1));
+            const auto model_flux = turbulence_flux_workspace_.emplace(
+                std::piecewise_construct,
+                std::forward_as_tuple(block.id()),
+                std::forward_as_tuple(
+                    block.cell_extent(), block.cell_dimension(), profile_.kind(), 1));
+            const auto model_residual = turbulence_residual_workspace_.emplace(
+                std::piecewise_construct,
+                std::forward_as_tuple(block.id()),
+                std::forward_as_tuple(block.cell_extent(), 1, 0, 0.0));
+            const auto source_jacobian = turbulence_source_jacobian_workspace_.emplace(
+                std::piecewise_construct,
+                std::forward_as_tuple(block.id()),
+                std::forward_as_tuple(block.cell_extent(), 1, 0, 0.0));
+            if (!model_gradient.second || !model_flux.second || !model_residual.second
+                || !source_jacobian.second) {
+                throw std::logic_error("duplicate SA-neg workspace block");
+            }
+            turbulence_gradient_registry_.add(block.id(), model_gradient.first->second);
+            turbulence_flux_registry_.add(block.id(), model_flux.first->second);
+        }
     }
+}
+
+bool ViscousWcnsSolver::turbulence_active() const noexcept
+{
+    return config_.turbulence.kind == TurbulenceModelKind::SaNegative;
 }
 
 void ViscousWcnsSolver::compute_residuals(Real stage_time, int rk_stage)
@@ -253,6 +306,13 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
             update_temperature_primitive_cell(
                 receiver, pair.receiver_ghost, gas_, reference_, floors_);
         }
+    }
+
+    if (turbulence_active()) {
+        synchronize_sa_negative_fields(turbulence_exchanger_,
+                                       local_blocks_,
+                                       sa_negative_farfield_value(config_.turbulence,
+                                                                  reference_.reynolds()));
     }
 
     reconstruction_diagnostics_ = {};
@@ -302,6 +362,17 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
     gradient_plan_.set_version(version_);
     gradient_exchanger_.exchange(gradient_registry_);
 
+    if (turbulence_active()) {
+        for (auto& block : local_blocks_.blocks()) {
+            compute_sa_negative_gradient(turbulence_gradient_workspace_.at(block.id()),
+                                         block,
+                                         metrics_.at(block.id()),
+                                         profile_,
+                                         version_);
+        }
+        gradient_exchanger_.exchange(turbulence_gradient_registry_);
+    }
+
     for (auto& block : local_blocks_.blocks()) {
         compute_viscous_face_fluxes_into(viscous_flux_workspace_.at(block.id()),
                                          block,
@@ -313,10 +384,32 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                                          gas_,
                                          reference_,
                                          floors_,
-                                         version_);
+                                         version_,
+                                         turbulence_active() ? turbulence_model_.get() : nullptr);
+        if (turbulence_active()) {
+            compute_sa_negative_flux_and_source(
+                turbulence_flux_workspace_.at(block.id()),
+                turbulence_residual_workspace_.at(block.id()),
+                turbulence_source_jacobian_workspace_.at(block.id()),
+                block,
+                metrics_.at(block.id()),
+                inviscid_flux_workspace_.at(block.id()),
+                gradient_workspace_.at(block.id()),
+                turbulence_gradient_workspace_.at(block.id()),
+                profile_,
+                *turbulence_model_,
+                transport_,
+                gas_,
+                reference_,
+                version_);
+        }
     }
     viscous_flux_plan_.set_version(version_);
     viscous_flux_exchanger_.exchange(viscous_flux_registry_);
+    if (turbulence_active()) {
+        turbulence_flux_plan_.set_version(version_);
+        turbulence_flux_exchanger_.exchange(turbulence_flux_registry_);
+    }
 
     for (auto& block : local_blocks_.blocks()) {
         compute_wcns_inviscid_residual(block,
@@ -330,6 +423,75 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                                   profile_,
                                   reference_.reynolds());
         add_source_terms(block, metrics_.at(block.id()), source_registry_, stage_time);
+        if (turbulence_active()) {
+            assemble_sa_negative_residual(turbulence_residual_workspace_.at(block.id()),
+                                          block,
+                                          metrics_.at(block.id()),
+                                          turbulence_flux_workspace_.at(block.id()),
+                                          profile_);
+        }
+    }
+}
+
+void ViscousWcnsSolver::capture_turbulence_stage_state()
+{
+    turbulence_initial_state_.clear();
+    turbulence_stage_state_.clear();
+    for (const auto& block : local_blocks_.blocks()) {
+        const auto cells = block.cell_extent();
+        std::vector<Real> values(cells.size());
+        std::size_t offset = 0;
+        for (int k = 0; k < cells.nk; ++k) {
+            for (int j = 0; j < cells.nj; ++j) {
+                for (int i = 0; i < cells.ni; ++i) {
+                    values[offset++] = block.flow.conservative(i, j, k, density)
+                        * block.turbulence.at({i, j, k}, "nu_tilde");
+                }
+            }
+        }
+        turbulence_initial_state_.emplace(block.id(), values);
+        turbulence_stage_state_.emplace(block.id(), std::move(values));
+    }
+}
+
+void ViscousWcnsSolver::update_turbulence_stage(Real initial_weight,
+                                                Real stage_weight,
+                                                Real residual_weight)
+{
+    if (!std::isfinite(initial_weight) || !std::isfinite(stage_weight)
+        || !positive_finite(residual_weight)) {
+        throw std::invalid_argument("SA-neg SSPRK stage weights are invalid");
+    }
+    for (auto& block : local_blocks_.blocks()) {
+        const auto cells = block.cell_extent();
+        const auto& initial = turbulence_initial_state_.at(block.id());
+        auto& current = turbulence_stage_state_.at(block.id());
+        const auto& residual = turbulence_residual_workspace_.at(block.id());
+        const auto& jacobian = turbulence_source_jacobian_workspace_.at(block.id());
+        std::size_t offset = 0;
+        for (int k = 0; k < cells.nk; ++k) {
+            for (int j = 0; j < cells.nj; ++j) {
+                for (int i = 0; i < cells.ni; ++i) {
+                    Real increment = residual_weight * residual(i, j, k, 0);
+                    if (config_.turbulence.source_treatment
+                        == TurbulenceSourceTreatment::LocalImplicit) {
+                        increment = local_implicit_turbulence_increment(
+                            residual(i, j, k, 0), jacobian(i, j, k, 0), residual_weight);
+                    }
+                    const Real candidate = initial_weight * initial[offset]
+                        + stage_weight * current[offset] + increment;
+                    const Real rho = block.flow.conservative(i, j, k, density);
+                    const Real specific = candidate / rho;
+                    if (!std::isfinite(candidate) || !positive_finite(rho)
+                        || !std::isfinite(specific)) {
+                        throw PhysicsError("SA-neg SSPRK update is non-finite");
+                    }
+                    current[offset] = candidate;
+                    block.turbulence.at({i, j, k}, "nu_tilde") = specific;
+                    ++offset;
+                }
+            }
+        }
     }
 }
 
@@ -341,12 +503,24 @@ Real ViscousWcnsSolver::advance(Real time_step, Real initial_time)
         robustness_diagnostics_.proposed_time_step = time_step;
         robustness_diagnostics_.accepted_time_step = time_step;
         int rk_stage = 0;
+        if (turbulence_active()) capture_turbulence_stage_state();
         advance_ssprk3(
             block_workspace_,
             time_workspace_,
             time_step,
             initial_time,
-            [this, &rk_stage](Real stage_time) { compute_residuals(stage_time, ++rk_stage); });
+            [this, &rk_stage, time_step](Real stage_time) {
+                ++rk_stage;
+                if (turbulence_active() && rk_stage == 2) {
+                    update_turbulence_stage(1.0, 0.0, time_step);
+                } else if (turbulence_active() && rk_stage == 3) {
+                    update_turbulence_stage(0.75, 0.25, 0.25 * time_step);
+                }
+                compute_residuals(stage_time, rk_stage);
+            });
+        if (turbulence_active()) {
+            update_turbulence_stage(1.0 / 3.0, 2.0 / 3.0, 2.0 * time_step / 3.0);
+        }
     } else {
         accepted_time_step = advance_ssprk3_with_robustness(
             mpi_,
@@ -461,9 +635,38 @@ Real ViscousWcnsSolver::global_time_step(Real cfl)
                     const Real rho = state[temperature_density];
                     const Real nu_effective
                         = std::max(mu / rho, mu / (rho * config_.transport.prandtl));
+                    Real mean_diffusivity = nu_effective / reference_.reynolds();
+                    Real model_diffusivity = 0.0;
+                    Real source_rate = 0.0;
+                    if (turbulence_active()) {
+                        TurbulenceCellContext context;
+                        context.mean_state = state;
+                        context.model_values
+                            = {block.turbulence.at(cell, "nu_tilde")};
+                        context.model_gradients = {{{0.0, 0.0, 0.0}}};
+                        context.molecular_kinematic_viscosity
+                            = mu / (rho * reference_.reynolds());
+                        context.wall_distance
+                            = block.turbulence.at(cell, "wall_distance");
+                        context.reference_reynolds = reference_.reynolds();
+                        context.reference_mach = reference_.mach();
+                        context.heat_capacity_ratio = gas_.gamma();
+                        context.dimension = block.cell_dimension();
+                        const auto evaluation = evaluate_sa_negative(context);
+                        mean_diffusivity = std::max(
+                            mean_diffusivity,
+                            mu / (rho * reference_.reynolds())
+                                + evaluation.eddy_kinematic_viscosity);
+                        model_diffusivity = evaluation.diffusion_coefficient;
+                        if (config_.turbulence.source_treatment
+                            == TurbulenceSourceTreatment::Explicit) {
+                            source_rate = std::max(0.0, -evaluation.source_derivative);
+                        }
+                    }
                     const Real denominator = inviscid_sum / (2.0 * jacobian)
-                        + viscous_stability * nu_effective * area_square_sum
-                            / (2.0 * reference_.reynolds() * jacobian * jacobian);
+                        + viscous_stability * std::max(mean_diffusivity, model_diffusivity)
+                            * area_square_sum / (2.0 * jacobian * jacobian)
+                        + source_rate;
                     if (!positive_finite(denominator)) {
                         throw PhysicsError("viscous WCNS time-step denominator is invalid");
                     }

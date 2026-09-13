@@ -131,24 +131,6 @@ build_uncached_line(const AlgorithmProfile& profile, int cell_count, bool period
     return result;
 }
 
-const ConnectivityPatch& reciprocal_connection(const StructuredMesh& mesh,
-                                               const ConnectivityPatch& connection)
-{
-    const auto& donor = mesh.block(connection.donor_block);
-    const auto iterator = std::find_if(donor.connectivities.begin(),
-                                       donor.connectivities.end(),
-                                       [&](const ConnectivityPatch& candidate) {
-                                           return candidate.receiver_block == connection.donor_block
-                                               && candidate.donor_block == connection.receiver_block
-                                               && candidate.receiver_face == connection.donor_face;
-                                       });
-    if (iterator == donor.connectivities.end()) {
-        throw ConservationWeightError(
-            "global conservation assembly cannot find a reciprocal connection");
-    }
-    return *iterator;
-}
-
 Real tangential_weight(const std::array<LineConservationWeights, 3>& lines,
                        FaceLocation face,
                        Index3 index,
@@ -196,6 +178,10 @@ side_connections(const StructuredBlock& block, Axis axis, Side side)
         }
     }
     if (result.empty()) return result;
+    // A side that mixes physical boundary segments and connectivity segments
+    // cannot share one tensor-product normal-line continuation. Treat its
+    // normal direction as locally bounded; paired connection fluxes still
+    // cancel through the independently checked tangential weights below.
     const int normal = side == Side::Lower ? 0 : cells[static_cast<std::size_t>(axis)];
     for (int k = 0; k < cells.nk; ++k) {
         for (int j = 0; j < cells.nj; ++j) {
@@ -210,8 +196,7 @@ side_connections(const StructuredBlock& block, Axis axis, Side side)
                     }
                 }
                 if (!connected) {
-                    throw ConservationWeightError("a partially connected block face does not admit "
-                                                  "tensor-product conservation weights");
+                    return {};
                 }
             }
         }
@@ -360,10 +345,6 @@ GlobalConservationWeights GlobalConservationWeights::build(const StructuredMesh&
 
     for (const auto& block : mesh.blocks()) {
         for (const auto& connection : block.connectivities) {
-            if (connection.receiver_block >= connection.donor_block) {
-                continue;
-            }
-            const auto& reciprocal = reciprocal_connection(mesh, connection);
             const auto& receiver_lines = line_weights.at(connection.receiver_block);
             const auto& donor_lines = line_weights.at(connection.donor_block);
             const auto counts = connection.shared_face_range.counts();
@@ -384,7 +365,14 @@ GlobalConservationWeights GlobalConservationWeights::build(const StructuredMesh&
                         }
                         const auto receiver_face
                             = connection.shared_face_range.at(receiver_ordinal);
-                        const auto donor_face = reciprocal.shared_face_range.at(donor_ordinal);
+                        auto donor_face
+                            = connection.donor_adjacent_cell_range.at(donor_ordinal);
+                        const auto donor_axis
+                            = static_cast<std::size_t>(connection.donor_face.axis);
+                        donor_face[donor_axis]
+                            = connection.donor_face.side == Side::Lower
+                            ? 0
+                            : mesh.block(connection.donor_block).cell_extent()[donor_axis];
                         const Real receiver_weight = tangential_weight(receiver_lines,
                                                                        connection.receiver_face,
                                                                        receiver_face,

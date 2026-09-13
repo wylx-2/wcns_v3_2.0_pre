@@ -9,6 +9,8 @@
 #include <array>
 #include <cstddef>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace wcns {
 
@@ -28,6 +30,8 @@ enum class StopReason {
 struct ResidualNorms {
     std::array<Real, euler_components> l2 {{}};
     std::array<Real, euler_components> linf {{}};
+    std::vector<Real> model_l2;
+    std::vector<Real> model_linf;
     bool finite = true;
 
     [[nodiscard]] Real total_l2() const;
@@ -39,10 +43,22 @@ struct ResidualNorms {
                                                           const StructuredPartitionPlan& partition,
                                                           const AlgorithmProfile& profile);
 
+void append_global_model_residual_norms(
+    const MpiRuntime& mpi,
+    const LocalBlockSet& local_blocks,
+    const BlockMetricMap& metrics,
+    const StructuredPartitionPlan& partition,
+    const AlgorithmProfile& profile,
+    const std::unordered_map<BlockId, Field<Real>>& model_residuals,
+    int component_count,
+    ResidualNorms& result);
+
 struct SteadyConvergenceState {
     bool reference_initialized = false;
     std::array<Real, euler_components> reference_l2 {{}};
     std::array<Real, euler_components> reference_linf {{}};
+    std::vector<Real> model_reference_l2;
+    std::vector<Real> model_reference_linf;
     std::size_t consecutive_passes = 0;
 };
 

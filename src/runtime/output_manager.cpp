@@ -264,6 +264,9 @@ void RuntimeOutputManager::prepare_directory()
                 for (const char* component : residual_names) {
                     history_stream_ << ",\"" << component << '_' << suffix << "\"";
                 }
+                if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                    history_stream_ << ",\"nu_tilde_" << suffix << "\"";
+                }
             }
             history_stream_ << ",\"consecutive\",\"reconstruction_fallbacks\","
                                "\"riemann_fallbacks\",\"robustness_level0_faces\","
@@ -289,6 +292,9 @@ void RuntimeOutputManager::prepare_directory()
                                        "normalized_linf"}) {
                 for (const char* component : residual_names) {
                     history_stream_ << ' ' << component << '_' << suffix;
+                }
+                if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                    history_stream_ << " nu_tilde_" << suffix;
                 }
             }
             history_stream_ << " consecutive reconstruction_fallbacks riemann_fallbacks "
@@ -377,14 +383,31 @@ void RuntimeOutputManager::write_history(const SimulationState& state, bool resi
     if (!history_stream_) {
         throw std::runtime_error("residual history stream is not writable");
     }
+    const std::size_t expected_model_components
+        = config_.turbulence.kind == TurbulenceModelKind::SaNegative ? 1u : 0u;
+    if (state.residuals.model_l2.size() != expected_model_components
+        || state.residuals.model_linf.size() != expected_model_components
+        || (state.steady.reference_initialized
+            && (state.steady.model_reference_l2.size() != expected_model_components
+                || state.steady.model_reference_linf.size() != expected_model_components))) {
+        throw std::runtime_error("history model residual identity differs from configuration");
+    }
     history_stream_ << std::setprecision(17) << state.step << ' ' << state.time << ' '
                     << state.time_step << ' ' << config_.run.cfl << ' ' << state.wall_time << ' '
                     << state.residuals.total_l2();
     for (const Real value : state.residuals.l2)
         history_stream_ << ' ' << value;
+    for (const Real value : state.residuals.model_l2)
+        history_stream_ << ' ' << value;
     const Real nan = std::numeric_limits<Real>::quiet_NaN();
     for (const Real value : state.steady.reference_l2) {
         history_stream_ << ' ' << (state.steady.reference_initialized ? value : nan);
+    }
+    for (std::size_t component = 0; component < expected_model_components; ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.steady.model_reference_l2[component]
+                                : nan);
     }
     for (std::size_t component = 0; component < euler_components; ++component) {
         history_stream_ << ' '
@@ -392,16 +415,38 @@ void RuntimeOutputManager::write_history(const SimulationState& state, bool resi
                                     / state.steady.reference_l2[component]
                                                                : nan);
     }
+    for (std::size_t component = 0; component < state.residuals.model_l2.size(); ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.residuals.model_l2[component]
+                                    / state.steady.model_reference_l2[component]
+                                : nan);
+    }
     for (const Real value : state.residuals.linf)
+        history_stream_ << ' ' << value;
+    for (const Real value : state.residuals.model_linf)
         history_stream_ << ' ' << value;
     for (const Real value : state.steady.reference_linf) {
         history_stream_ << ' ' << (state.steady.reference_initialized ? value : nan);
+    }
+    for (std::size_t component = 0; component < expected_model_components; ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.steady.model_reference_linf[component]
+                                : nan);
     }
     for (std::size_t component = 0; component < euler_components; ++component) {
         history_stream_ << ' '
                         << (state.steady.reference_initialized ? state.residuals.linf[component]
                                     / state.steady.reference_linf[component]
                                                                : nan);
+    }
+    for (std::size_t component = 0; component < state.residuals.model_linf.size(); ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.residuals.model_linf[component]
+                                    / state.steady.model_reference_linf[component]
+                                : nan);
     }
     history_stream_ << ' ' << state.steady.consecutive_passes << ' '
                     << state.diagnostics.reconstruction_fallbacks << ' '
@@ -587,6 +632,9 @@ void RuntimeOutputManager::write_manifest(const SimulationState& state)
 void RuntimeOutputManager::on_final(const SimulationState& state)
 {
     if (finalized_) return;
+    // Initialization can fail before on_initial() is reached.  The failure
+    // manifest is still mandatory evidence, so prepare its directory here too.
+    prepare_directory();
     if (config_.output.history.enabled && history_schedule_.consume(state, false, true)) {
         write_history(state, true);
     }

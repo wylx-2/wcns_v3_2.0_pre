@@ -116,7 +116,19 @@ void ViscousSimulationSolver::refresh_residuals(Real time)
 
 ResidualNorms ViscousSimulationSolver::residual_norms() const
 {
-    return compute_global_residual_norms(mpi_, local_blocks_, metrics_, partition_, profile_);
+    auto result
+        = compute_global_residual_norms(mpi_, local_blocks_, metrics_, partition_, profile_);
+    if (!solver_.turbulence_residuals().empty()) {
+        append_global_model_residual_norms(mpi_,
+                                           local_blocks_,
+                                           metrics_,
+                                           partition_,
+                                           profile_,
+                                           solver_.turbulence_residuals(),
+                                           1,
+                                           result);
+    }
+    return result;
 }
 
 SolverDiagnostics ViscousSimulationSolver::diagnostics() const

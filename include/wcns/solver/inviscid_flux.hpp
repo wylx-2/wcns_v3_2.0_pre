@@ -64,6 +64,7 @@ struct FaceFluxExchangeDescriptor {
     RankId receiver_rank = invalid_rank_id;
     RankId donor_rank = invalid_rank_id;
     BlockId shared_face_owner = invalid_block_id;
+    int direction = 0;
     Axis receiver_axis = Axis::I;
     Axis donor_axis = Axis::I;
     Real orientation = 1.0;

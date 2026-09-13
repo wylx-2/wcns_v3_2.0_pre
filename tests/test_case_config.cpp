@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -79,6 +80,27 @@ std::string valid_v2_config()
     return result;
 }
 
+std::string valid_sa_config()
+{
+    auto result = valid_v2_config();
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const auto position = result.find(from);
+        if (position == std::string::npos) throw std::logic_error("SA test fixture is incomplete");
+        result.replace(position, from.size(), to);
+    };
+    replace("turbulence.model = none", "turbulence.model = sa_neg");
+    replace("robustness.enabled = true", "robustness.enabled = false");
+    replace("run.viscous = false", "run.viscous = true");
+    const auto model = result.find("turbulence.model = sa_neg");
+    const auto line_end = result.find('\n', model);
+    result.insert(line_end + 1,
+                  "turbulence.prandtl = 0.9\n"
+                  "turbulence.wall_treatment = resolved\n"
+                  "turbulence.sa.farfield_nu_tilde_ratio = 3\n"
+                  "turbulence.sa.source_treatment = local_implicit\n");
+    return result;
+}
+
 } // namespace
 
 void test_case_config()
@@ -111,6 +133,32 @@ void test_case_config()
                           "turbulence.model = sa_neg");
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(model_key));
+
+        const auto sa = wcns::CaseConfig::from_text(valid_sa_config());
+        WCNS_REQUIRE(sa.turbulence.kind == wcns::TurbulenceModelKind::SaNegative);
+        WCNS_REQUIRE(sa.turbulence.wall_treatment == wcns::WallTreatment::Resolved);
+        WCNS_REQUIRE(sa.turbulence.source_treatment
+                     == wcns::TurbulenceSourceTreatment::LocalImplicit);
+        WCNS_REQUIRE_NEAR(sa.turbulence.sa_farfield_nu_tilde_ratio, 3.0, 0.0);
+        WCNS_REQUIRE(sa.summary().find("model=sa_neg") != std::string::npos);
+        WCNS_REQUIRE(sa.restart_signature().find("source=local_implicit")
+                     != std::string::npos);
+
+        auto invalid_ratio = valid_sa_config();
+        const auto ratio = invalid_ratio.find("farfield_nu_tilde_ratio = 3");
+        invalid_ratio.replace(ratio,
+                              std::string("farfield_nu_tilde_ratio = 3").size(),
+                              "farfield_nu_tilde_ratio = 2.99");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_ratio));
+
+        auto invalid_source = valid_sa_config();
+        const auto source = invalid_source.find("source_treatment = local_implicit");
+        invalid_source.replace(source,
+                               std::string("source_treatment = local_implicit").size(),
+                               "source_treatment = hidden_clipping");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_source));
 
         auto none_parameter = valid_v2_config();
         none_parameter += "turbulence.prandtl = 0.9\n";

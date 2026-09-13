@@ -24,7 +24,8 @@
 namespace wcns {
 namespace {
 
-constexpr int checkpoint_version = 1;
+constexpr int laminar_checkpoint_version = 1;
+constexpr int turbulence_checkpoint_version = 2;
 const std::array<std::string, 5> checkpoint_quantities {{
     "rho",
     "rho_u",
@@ -39,6 +40,21 @@ const std::array<const char*, 5> checkpoint_fields {{
     "MomentumZ",
     "EnergyStagnationDensity",
 }};
+constexpr const char* sa_checkpoint_quantity = "nu_tilde";
+constexpr const char* sa_checkpoint_field = "NuTilde";
+
+int checkpoint_version(const CaseConfig& config)
+{
+    return config.turbulence.kind == TurbulenceModelKind::None ? laminar_checkpoint_version
+                                                               : turbulence_checkpoint_version;
+}
+
+std::string turbulence_descriptor_signature(const CaseConfig& config)
+{
+    if (config.turbulence.kind == TurbulenceModelKind::None) return "none";
+    const auto model = TurbulenceModelRegistry::create_builtin().create(config.turbulence);
+    return TurbulenceFieldSet({1, 1, 1}, 0, model->fields()).descriptor_signature();
+}
 
 void check_cgns(int status, const char* operation)
 {
@@ -202,6 +218,18 @@ std::string real_list(const std::array<Real, euler_components>& values)
     return result.str();
 }
 
+std::string real_list(const std::vector<Real>& values)
+{
+    if (values.empty()) return "none";
+    std::ostringstream result;
+    result << std::setprecision(17);
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0) result << ',';
+        result << values[index];
+    }
+    return result.str();
+}
+
 std::array<Real, euler_components> parse_real_list(const std::string& text)
 {
     std::array<Real, euler_components> result {{}};
@@ -219,6 +247,31 @@ std::array<Real, euler_components> parse_real_list(const std::string& text)
     }
     if (std::getline(stream, item, ',')) {
         throw std::runtime_error("checkpoint residual reference has extra values");
+    }
+    return result;
+}
+
+std::vector<Real> parse_real_vector(const std::string& text, std::size_t expected)
+{
+    if (expected == 0) {
+        if (text != "none") {
+            throw std::runtime_error("checkpoint model residual reference has extra values");
+        }
+        return {};
+    }
+    std::vector<Real> result;
+    std::istringstream stream(text);
+    std::string item;
+    while (std::getline(stream, item, ',')) {
+        std::size_t consumed = 0;
+        const Real value = std::stod(item, &consumed);
+        if (consumed != item.size() || !std::isfinite(value)) {
+            throw std::runtime_error("checkpoint model residual reference is invalid");
+        }
+        result.push_back(value);
+    }
+    if (result.size() != expected) {
+        throw std::runtime_error("checkpoint model residual reference size differs");
     }
     return result;
 }
@@ -288,6 +341,11 @@ struct RootCheckpointData {
     std::vector<std::size_t> rank_counts;
 };
 
+struct ZoneCheckpointFields {
+    std::array<std::vector<Real>, euler_components> mean;
+    std::vector<Real> nu_tilde;
+};
+
 void collective_checkpoint_action(const MpiRuntime& mpi, const std::function<void()>& action)
 {
     std::string status;
@@ -327,6 +385,10 @@ CheckpointService::CheckpointService(const MpiRuntime& mpi,
     , registry_(FieldQuantityRegistry::create_builtin())
 {
     quantity_context_.dimensional = false;
+    const auto model = TurbulenceModelRegistry::create_builtin().create(config_.turbulence);
+    for (const auto& descriptor : model->fields()) {
+        registry_.register_turbulence_field(descriptor);
+    }
     std::string status;
     if (mpi_.rank() == 0) {
         try {
@@ -347,6 +409,15 @@ CheckpointService::CheckpointService(const MpiRuntime& mpi,
 
 std::vector<std::string> CheckpointService::write(const SimulationState& state) const
 {
+    const std::size_t expected_model_references
+        = config_.turbulence.kind == TurbulenceModelKind::SaNegative
+            && state.steady.reference_initialized
+        ? 1u
+        : 0u;
+    if (state.steady.model_reference_l2.size() != expected_model_references
+        || state.steady.model_reference_linf.size() != expected_model_references) {
+        throw std::runtime_error("checkpoint model residual reference identity differs");
+    }
     std::ostringstream name;
     name << safe_name(config_.case_name) << ".checkpoint.step" << std::setw(8) << std::setfill('0')
          << state.step << ".time" << time_tag(state.time) << ".cgns";
@@ -377,7 +448,14 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
             "cg_base_write checkpoint");
         check_cgns(cg_goto(file->id(), base, "end"), "cg_goto checkpoint output base");
         check_cgns(cg_dataclass_write(NormalizedByDimensional), "cg_dataclass_write checkpoint");
-        write_descriptor(file->id(), "WCNS_Version", std::to_string(checkpoint_version));
+        write_descriptor(file->id(),
+                         "WCNS_Version",
+                         std::to_string(checkpoint_version(config_)));
+        if (config_.turbulence.kind != TurbulenceModelKind::None) {
+            write_descriptor(file->id(),
+                             "WCNS_TurbulenceDescriptor",
+                             turbulence_descriptor_signature(config_));
+        }
         write_descriptor(file->id(), "WCNS_Step", std::to_string(state.step));
         write_descriptor(file->id(), "WCNS_Time", [&] {
             std::ostringstream value;
@@ -397,6 +475,14 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
             file->id(), "WCNS_Consecutive", std::to_string(state.steady.consecutive_passes));
         write_descriptor(file->id(), "WCNS_ReferenceL2", real_list(state.steady.reference_l2));
         write_descriptor(file->id(), "WCNS_ReferenceLinf", real_list(state.steady.reference_linf));
+        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+            write_descriptor(file->id(),
+                             "WCNS_ModelReferenceL2",
+                             real_list(state.steady.model_reference_l2));
+            write_descriptor(file->id(),
+                             "WCNS_ModelReferenceLinf",
+                             real_list(state.steady.model_reference_linf));
+        }
     });
 
     for (const auto& zone : partition_.zones()) {
@@ -472,6 +558,28 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
                            "cg_field_write checkpoint");
             });
         }
+        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+            auto values = gather_original_zone_quantity(mpi_,
+                                                        local_blocks_,
+                                                        metrics_,
+                                                        partition_,
+                                                        zone,
+                                                        registry_,
+                                                        sa_checkpoint_quantity,
+                                                        quantity_context_);
+            collective_checkpoint_action(mpi_, [&] {
+                int field = 0;
+                check_cgns(cg_field_write(file->id(),
+                                          base,
+                                          output_zone,
+                                          solution,
+                                          RealDouble,
+                                          sa_checkpoint_field,
+                                          values.data(),
+                                          &field),
+                           "cg_field_write SA checkpoint");
+            });
+        }
     }
     const auto latest = join_path(config_.output.directory,
                                   safe_name(config_.case_name) + ".checkpoint.latest.cgns");
@@ -495,8 +603,14 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
         try {
             CgnsFile file(path, CG_MODE_READ);
             const auto descriptors = read_descriptors(file.id());
-            if (required(descriptors, "WCNS_Version") != std::to_string(checkpoint_version)) {
+            if (required(descriptors, "WCNS_Version")
+                != std::to_string(checkpoint_version(config_))) {
                 throw std::runtime_error("unsupported checkpoint version");
+            }
+            if (config_.turbulence.kind != TurbulenceModelKind::None
+                && required(descriptors, "WCNS_TurbulenceDescriptor")
+                    != turbulence_descriptor_signature(config_)) {
+                throw std::runtime_error("checkpoint turbulence descriptor differs");
             }
             if (required(descriptors, "WCNS_MeshSignature") != mesh_signature_) {
                 throw std::runtime_error("checkpoint mesh signature differs");
@@ -530,13 +644,21 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                 = parse_real_list(required(descriptors, "WCNS_ReferenceL2"));
             root.restored.initial.steady.reference_linf
                 = parse_real_list(required(descriptors, "WCNS_ReferenceLinf"));
+            if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                const std::size_t expected_model_references
+                    = root.restored.initial.steady.reference_initialized ? 1u : 0u;
+                root.restored.initial.steady.model_reference_l2 = parse_real_vector(
+                    required(descriptors, "WCNS_ModelReferenceL2"), expected_model_references);
+                root.restored.initial.steady.model_reference_linf = parse_real_vector(
+                    required(descriptors, "WCNS_ModelReferenceLinf"), expected_model_references);
+            }
 
             int zones = 0;
             check_cgns(cg_nzones(file.id(), 1, &zones), "cg_nzones checkpoint");
             if (zones != static_cast<int>(partition_.zones().size())) {
                 throw std::runtime_error("checkpoint source-zone count differs");
             }
-            std::unordered_map<BlockId, std::array<std::vector<Real>, 5>> fields;
+            std::unordered_map<BlockId, ZoneCheckpointFields> fields;
             for (int zone_index = 1; zone_index <= zones; ++zone_index) {
                 const auto& expected = partition_.zones()[static_cast<std::size_t>(zone_index - 1)];
                 char name[33] = {};
@@ -552,7 +674,7 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                         throw std::runtime_error("checkpoint source-zone extent differs");
                     }
                 }
-                std::array<std::vector<Real>, 5> zone_fields;
+                ZoneCheckpointFields zone_fields;
                 const auto count = expected.cell_extent.size();
                 std::array<cgsize_t, 3> lower {{1, 1, 1}};
                 std::array<cgsize_t, 3> upper {{
@@ -561,7 +683,7 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                     static_cast<cgsize_t>(expected.cell_extent.nk),
                 }};
                 for (std::size_t component = 0; component < 5; ++component) {
-                    zone_fields[component].resize(count);
+                    zone_fields.mean[component].resize(count);
                     check_cgns(cg_field_read(file.id(),
                                              1,
                                              zone_index,
@@ -570,8 +692,21 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                                              RealDouble,
                                              lower.data(),
                                              upper.data(),
-                                             zone_fields[component].data()),
+                                             zone_fields.mean[component].data()),
                                "cg_field_read checkpoint");
+                }
+                if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                    zone_fields.nu_tilde.resize(count);
+                    check_cgns(cg_field_read(file.id(),
+                                             1,
+                                             zone_index,
+                                             1,
+                                             sa_checkpoint_field,
+                                             RealDouble,
+                                             lower.data(),
+                                             upper.data(),
+                                             zone_fields.nu_tilde.data()),
+                               "cg_field_read SA checkpoint");
                 }
                 fields.emplace(expected.source_zone, std::move(zone_fields));
             }
@@ -598,7 +733,20 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                                                                    leaf.cells.begin.j + j,
                                                                    leaf.cells.begin.k + k);
                                     root.rank_payload.push_back(
-                                        zone[static_cast<std::size_t>(component)][global]);
+                                        zone.mean[static_cast<std::size_t>(component)][global]);
+                                }
+                            }
+                        }
+                    }
+                    if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                        for (int k = 0; k < extent.nk; ++k) {
+                            for (int j = 0; j < extent.nj; ++j) {
+                                for (int i = 0; i < extent.ni; ++i) {
+                                    const auto global = flat_index(source.cell_extent,
+                                                                   leaf.cells.begin.i + i,
+                                                                   leaf.cells.begin.j + j,
+                                                                   leaf.cells.begin.k + k);
+                                    root.rank_payload.push_back(zone.nu_tilde[global]);
                                 }
                             }
                         }
@@ -615,6 +763,10 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                    << root.restored.initial.steady.consecutive_passes << '\n'
                    << real_list(root.restored.initial.steady.reference_l2) << '\n'
                    << real_list(root.restored.initial.steady.reference_linf) << '\n';
+            if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+                header << real_list(root.restored.initial.steady.model_reference_l2) << '\n'
+                       << real_list(root.restored.initial.steady.model_reference_linf) << '\n';
+            }
             status = header.str();
         } catch (const std::exception& error) {
             status = "ERROR\n" + std::string(error.what());
@@ -644,6 +796,16 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
     result.initial.steady.reference_l2 = parse_real_list(line);
     std::getline(header, line);
     result.initial.steady.reference_linf = parse_real_list(line);
+    if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+        const std::size_t expected_model_references
+            = result.initial.steady.reference_initialized ? 1u : 0u;
+        std::getline(header, line);
+        result.initial.steady.model_reference_l2
+            = parse_real_vector(line, expected_model_references);
+        std::getline(header, line);
+        result.initial.steady.model_reference_linf
+            = parse_real_vector(line, expected_model_references);
+    }
 
     const auto payload = mpi_.scatter_reals(root.rank_payload, root.rank_counts);
     std::unordered_map<BlockId, StructuredBlock*> blocks;
@@ -678,6 +840,24 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
             }
         }
         offset += euler_components * count;
+        if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
+            if (!block.turbulence.contains("nu_tilde") || offset + count > payload.size()) {
+                throw std::runtime_error("SA checkpoint rank payload is truncated");
+            }
+            for (int k = 0; k < extent.nk; ++k) {
+                for (int j = 0; j < extent.nj; ++j) {
+                    for (int i = 0; i < extent.ni; ++i) {
+                        const auto local = flat_index(extent, i, j, k);
+                        const Real value = payload[offset + local];
+                        if (!std::isfinite(value)) {
+                            throw std::runtime_error("SA checkpoint contains non-finite nu_tilde");
+                        }
+                        block.turbulence.at({i, j, k}, "nu_tilde") = value;
+                    }
+                }
+            }
+            offset += count;
+        }
     }
     if (offset != payload.size()) {
         throw std::runtime_error("checkpoint rank payload has trailing values");

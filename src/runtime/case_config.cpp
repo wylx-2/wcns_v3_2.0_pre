@@ -147,6 +147,15 @@ TurbulenceModelKind parse_turbulence_model(const std::string& value)
     }
 }
 
+TurbulenceSourceTreatment parse_turbulence_source_treatment(const std::string& value)
+{
+    try {
+        return turbulence_source_treatment(value);
+    } catch (const std::invalid_argument&) {
+        throw CaseConfigurationError("unknown turbulence source treatment: " + value);
+    }
+}
+
 WallTreatment parse_wall_treatment(const std::string& value)
 {
     try {
@@ -279,6 +288,8 @@ const std::set<std::string>& fixed_keys()
         "turbulence.model",
         "turbulence.prandtl",
         "turbulence.wall_treatment",
+        "turbulence.sa.farfield_nu_tilde_ratio",
+        "turbulence.sa.source_treatment",
         "time.integrator",
         "preconditioner.type",
         "gas.gamma",
@@ -1271,10 +1282,12 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     result.schema_version = static_cast<int>(version);
-    const std::array<const char*, 5> v2_keys {{
+    const std::array<const char*, 7> v2_keys {{
         "turbulence.model",
         "turbulence.prandtl",
         "turbulence.wall_treatment",
+        "turbulence.sa.farfield_nu_tilde_ratio",
+        "turbulence.sa.source_treatment",
         "time.integrator",
         "preconditioner.type",
     }};
@@ -1291,16 +1304,34 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         const bool has_turbulence_prandtl = entries.find("turbulence.prandtl") != entries.end();
         const bool has_wall_treatment
             = entries.find("turbulence.wall_treatment") != entries.end();
+        const bool has_sa_farfield
+            = entries.find("turbulence.sa.farfield_nu_tilde_ratio") != entries.end();
+        const bool has_sa_source
+            = entries.find("turbulence.sa.source_treatment") != entries.end();
         if (result.turbulence.kind == TurbulenceModelKind::None
-            && (has_turbulence_prandtl || has_wall_treatment)) {
+            && (has_turbulence_prandtl || has_wall_treatment || has_sa_farfield
+                || has_sa_source)) {
             throw CaseConfigurationError(
                 "turbulence.model=none does not accept model-specific turbulence keys");
+        }
+        if (result.turbulence.kind != TurbulenceModelKind::SaNegative
+            && (has_sa_farfield || has_sa_source)) {
+            throw CaseConfigurationError(
+                "turbulence.sa.* keys require turbulence.model=sa_neg");
         }
         result.turbulence.turbulent_prandtl = optional_real(
             entries, "turbulence.prandtl", result.turbulence.turbulent_prandtl);
         if (has_wall_treatment) {
             result.turbulence.wall_treatment
                 = parse_wall_treatment(require(entries, "turbulence.wall_treatment"));
+        }
+        result.turbulence.sa_farfield_nu_tilde_ratio = optional_real(
+            entries,
+            "turbulence.sa.farfield_nu_tilde_ratio",
+            result.turbulence.sa_farfield_nu_tilde_ratio);
+        if (has_sa_source) {
+            result.turbulence.source_treatment = parse_turbulence_source_treatment(
+                require(entries, "turbulence.sa.source_treatment"));
         }
         result.time_algorithm.integrator
             = parse_time_integrator(require(entries, "time.integrator"));
@@ -1691,10 +1722,23 @@ void CaseConfig::validate() const
         throw CaseConfigurationError(error.what());
     }
     if (schema_version == 2) {
-        if (turbulence.kind != TurbulenceModelKind::None) {
+        if (turbulence.kind != TurbulenceModelKind::None
+            && turbulence.kind != TurbulenceModelKind::SaNegative) {
             throw CaseConfigurationError(
-                std::string("turbulence model is reserved but not implemented in stage W: ")
+                std::string("turbulence model is reserved but not implemented: ")
                 + turbulence_model_name(turbulence.kind));
+        }
+        if (turbulence.kind == TurbulenceModelKind::SaNegative) {
+            if (!run.viscous) {
+                throw CaseConfigurationError("SA-neg requires run.viscous=true");
+            }
+            if (turbulence.wall_treatment != WallTreatment::Resolved) {
+                throw CaseConfigurationError("stage X SA-neg requires resolved wall treatment");
+            }
+            if (robustness.enabled) {
+                throw CaseConfigurationError(
+                    "stage X SA-neg does not yet support mean-flow step retry transactions");
+            }
         }
         if (time_algorithm.integrator != TimeIntegratorKind::SspRk3) {
             throw CaseConfigurationError(

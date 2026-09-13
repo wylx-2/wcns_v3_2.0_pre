@@ -32,10 +32,147 @@ public:
         return {};
     }
 
+    std::vector<Real> diffusion_coefficients(const TurbulenceCellContext&) const override
+    {
+        return {};
+    }
+
     TurbulenceSourceLinearization
     source_linearization(const TurbulenceCellContext&) const override
     {
         return {};
+    }
+
+private:
+    TurbulenceModelConfig config_;
+};
+
+class SaNegativeTurbulenceModel final : public ITurbulenceModel {
+public:
+    explicit SaNegativeTurbulenceModel(TurbulenceModelConfig config)
+        : config_(std::move(config))
+    {
+        config_.validate();
+        if (config_.kind != TurbulenceModelKind::SaNegative) {
+            throw std::invalid_argument("SA-neg factory received a different model");
+        }
+    }
+
+    const TurbulenceModelConfig& config() const noexcept override { return config_; }
+    TurbulenceModelFamily family() const noexcept override
+    {
+        return TurbulenceModelFamily::RansTransport;
+    }
+    std::vector<TurbulenceFieldDescriptor> fields() const override
+    {
+        const Real any_finite = std::numeric_limits<Real>::lowest();
+        return {
+            {"nu_tilde",
+             TurbulenceFieldRole::Transported,
+             TurbulenceFieldScale::KinematicViscosity,
+             false,
+             any_finite},
+            {"mu_t_over_mu",
+             TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless,
+             false,
+             0.0},
+            {"sa_production",
+             TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation,
+             false,
+             any_finite},
+            {"sa_destruction",
+             TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation,
+             false,
+             any_finite},
+            {"wall_distance",
+             TurbulenceFieldRole::Auxiliary,
+             TurbulenceFieldScale::Length,
+             true,
+             0.0},
+            {"sa_negative_branch",
+             TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless,
+             false,
+             0.0},
+        };
+    }
+
+    TurbulenceViscousContribution
+    viscous_contribution(const TurbulenceCellContext& context) const override
+    {
+        if ((context.dimension != 2 && context.dimension != 3)
+            || context.model_values.size() != 1
+            || !std::isfinite(context.model_values.front())
+            || !std::isfinite(context.molecular_kinematic_viscosity)
+            || context.molecular_kinematic_viscosity <= 0.0
+            || !std::isfinite(context.mean_state[temperature_density])
+            || context.mean_state[temperature_density] <= 0.0) {
+            throw std::invalid_argument("SA-neg viscous context is invalid");
+        }
+        const Real nu_tilde = context.model_values.front();
+        Real eddy_kinematic = 0.0;
+        if (nu_tilde >= 0.0) {
+            const Real chi = nu_tilde / context.molecular_kinematic_viscosity;
+            const Real chi3 = chi * chi * chi;
+            const Real cv13 = 7.1 * 7.1 * 7.1;
+            eddy_kinematic = nu_tilde * chi3 / (chi3 + cv13);
+        }
+        if (!std::isfinite(eddy_kinematic) || eddy_kinematic < 0.0
+            || !std::isfinite(context.reference_reynolds)
+            || context.reference_reynolds <= 0.0) {
+            throw PhysicsError("SA-neg eddy viscosity is invalid");
+        }
+        const Real mu_t = context.mean_state[temperature_density] * context.reference_reynolds
+            * eddy_kinematic;
+        const auto& du = context.primitive_gradients[0];
+        const auto& dv = context.primitive_gradients[1];
+        const auto& dw = context.primitive_gradients[2];
+        const Real divergence = du[0] + dv[1] + dw[2];
+        TurbulenceViscousContribution result;
+        result.eddy_viscosity = mu_t;
+        result.stress.xx = 2.0 * mu_t * (du[0] - divergence / 3.0);
+        result.stress.yy = 2.0 * mu_t * (dv[1] - divergence / 3.0);
+        result.stress.zz = 2.0 * mu_t * (dw[2] - divergence / 3.0);
+        result.stress.xy = mu_t * (du[1] + dv[0]);
+        result.stress.xz = mu_t * (du[2] + dw[0]);
+        result.stress.yz = mu_t * (dv[2] + dw[1]);
+        if (!std::isfinite(context.reference_mach) || context.reference_mach <= 0.0
+            || !std::isfinite(context.heat_capacity_ratio)
+            || context.heat_capacity_ratio <= 1.0) {
+            throw std::invalid_argument("SA-neg thermal context is invalid");
+        }
+        const Real heat = mu_t
+            / ((context.heat_capacity_ratio - 1.0) * context.reference_mach
+               * context.reference_mach * config_.turbulent_prandtl);
+        const auto& temperature_gradient = context.primitive_gradients[3];
+        for (int direction = 0; direction < context.dimension; ++direction) {
+            result.energy_heat_flux[static_cast<std::size_t>(direction)]
+                = heat * temperature_gradient[static_cast<std::size_t>(direction)];
+        }
+        result.validate(context.dimension);
+        return result;
+    }
+
+    std::vector<Real> diffusion_coefficients(const TurbulenceCellContext& context) const override
+    {
+        const auto evaluation = evaluate_sa_negative(context);
+        return {context.mean_state[temperature_density] * evaluation.diffusion_coefficient};
+    }
+
+    TurbulenceSourceLinearization
+    source_linearization(const TurbulenceCellContext& context) const override
+    {
+        const auto evaluation = evaluate_sa_negative(context);
+        const Real density_value = context.mean_state[temperature_density];
+        TurbulenceSourceLinearization result {
+            {density_value * evaluation.source},
+            {evaluation.source_derivative},
+        };
+        result.validate(1);
+        return result;
     }
 
 private:
@@ -106,6 +243,22 @@ WallTreatment wall_treatment(const std::string& name)
     throw std::invalid_argument("unknown turbulence wall treatment: " + name);
 }
 
+TurbulenceSourceTreatment turbulence_source_treatment(const std::string& name)
+{
+    if (name == "explicit") return TurbulenceSourceTreatment::Explicit;
+    if (name == "local_implicit") return TurbulenceSourceTreatment::LocalImplicit;
+    throw std::invalid_argument("unknown turbulence source treatment: " + name);
+}
+
+const char* turbulence_source_treatment_name(TurbulenceSourceTreatment treatment)
+{
+    switch (treatment) {
+    case TurbulenceSourceTreatment::Explicit: return "explicit";
+    case TurbulenceSourceTreatment::LocalImplicit: return "local_implicit";
+    }
+    throw std::invalid_argument("invalid turbulence source treatment");
+}
+
 const char* wall_treatment_name(WallTreatment treatment)
 {
     switch (treatment) {
@@ -126,6 +279,11 @@ void TurbulenceModelConfig::validate() const
         && wall_treatment != WallTreatment::WallFunction) {
         throw std::invalid_argument("k_epsilon requires wall_function treatment");
     }
+    static_cast<void>(turbulence_source_treatment_name(source_treatment));
+    if (!std::isfinite(sa_farfield_nu_tilde_ratio)
+        || sa_farfield_nu_tilde_ratio < 3.0 || sa_farfield_nu_tilde_ratio > 5.0) {
+        throw std::invalid_argument("SA-neg farfield nu-tilde ratio must lie in [3,5]");
+    }
 }
 
 std::string TurbulenceModelConfig::summary() const
@@ -140,7 +298,12 @@ std::string TurbulenceModelConfig::summary() const
     case TurbulenceModelFamily::LesAlgebraic: result << "les_algebraic"; break;
     }
     result << ",wall_treatment=" << wall_treatment_name(wall_treatment)
-           << ",Pr_t=" << std::setprecision(17) << turbulent_prandtl << ')';
+           << ",Pr_t=" << std::setprecision(17) << turbulent_prandtl;
+    if (kind == TurbulenceModelKind::SaNegative) {
+        result << ",farfield_nu_tilde_over_nu=" << sa_farfield_nu_tilde_ratio
+               << ",source=" << turbulence_source_treatment_name(source_treatment);
+    }
+    result << ')';
     return result.str();
 }
 
@@ -200,6 +363,10 @@ TurbulenceModelRegistry TurbulenceModelRegistry::create_builtin()
     result.register_model(TurbulenceModelKind::None, [](const TurbulenceModelConfig& config) {
         return std::make_unique<NoneTurbulenceModel>(config);
     });
+    result.register_model(TurbulenceModelKind::SaNegative,
+                          [](const TurbulenceModelConfig& config) {
+                              return std::make_unique<SaNegativeTurbulenceModel>(config);
+                          });
     return result;
 }
 

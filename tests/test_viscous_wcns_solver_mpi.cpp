@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -296,6 +297,99 @@ void run_wall_case(const wcns::MpiRuntime& mpi, wcns::AlgorithmProfileKind kind,
     WCNS_REQUIRE(energy_error < 2.0e-10);
 }
 
+// 验收 SA-neg 使用独立模型场经过真实多块/MPI 求解路径推进，并保持有限负分支能力。
+void run_sa_negative_smoke(const wcns::MpiRuntime& mpi, wcns::AlgorithmProfileKind kind)
+{
+    using namespace wcns;
+    auto mesh = make_mesh(BoundaryType::Farfield, BoundaryType::NoSlipAdiabaticWall);
+    std::vector<BlockLoad> loads;
+    for (const auto& block : mesh.blocks()) {
+        loads.push_back({block.id(), block.cell_extent().size()});
+    }
+    const auto distribution = BlockDistribution::balanced(std::move(loads), mpi.size());
+    distribution.apply(mesh);
+    const auto topology = DistributedTopology::build(mesh, distribution);
+    std::vector<StructuredBlock> local_storage;
+    for (const auto& block : mesh.blocks()) {
+        if (block.owner_rank() == mpi.rank()) local_storage.push_back(block);
+    }
+    LocalBlockSet local(mpi.rank(), std::move(local_storage), distribution);
+    const auto gas = make_gas();
+    const auto reference
+        = ReferenceScales::derive({100.0, 1.0, 300.0, 1.0, 2.0e-5, {}, {}}, gas);
+    const NumericalFloors floors;
+    const TemperaturePrimitiveState freestream {{1.0, 0.2, 0.0, 0.0, 1.0}};
+    const auto conservative = thermodynamic_conservative(freestream, gas, reference, floors, 2);
+    const auto profile = ProfileFactory::create(kind);
+    BlockMetricMap metrics;
+    BlockBoundaryDataMap boundary_data;
+    for (auto& block : local.blocks()) {
+        const auto cells = block.cell_extent();
+        for (int j = 0; j < cells.nj; ++j) {
+            for (int i = 0; i < cells.ni; ++i) {
+                store_state(block.flow.conservative, {i, j, 0}, conservative);
+            }
+        }
+        metrics.emplace(std::piecewise_construct,
+                        std::forward_as_tuple(block.id()),
+                        std::forward_as_tuple(initialize_metric_field(block, profile).metric));
+        BoundaryDataMap data;
+        for (const auto& patch : block.boundaries) {
+            BoundaryData patch_data;
+            if (patch.type == BoundaryType::Farfield) patch_data.target_state = freestream;
+            data.emplace(patch.name, patch_data);
+        }
+        boundary_data.emplace(block.id(), std::move(data));
+    }
+    TurbulenceModelConfig turbulence;
+    turbulence.kind = TurbulenceModelKind::SaNegative;
+    turbulence.source_treatment = TurbulenceSourceTreatment::LocalImplicit;
+    initialize_sa_negative_fields(mpi, local, turbulence, reference.reynolds());
+
+    ViscousWcnsConfig config;
+    config.inviscid.reconstruction.scheme
+        = std::string(reconstruction_name(ReconstructionKind::Linear5));
+    config.turbulence = turbulence;
+    ViscousWcnsSolver solver(mpi,
+                             local,
+                             mesh,
+                             topology,
+                             distribution.rank_count(),
+                             metrics,
+                             boundary_data,
+                             profile,
+                             gas,
+                             reference,
+                             floors,
+                             config);
+    solver.compute_residuals(0.0);
+    const Real time_step = std::min(solver.global_time_step(0.05), 1.0e-5);
+    WCNS_REQUIRE(std::isfinite(time_step));
+    WCNS_REQUIRE(time_step > 0.0);
+    const Real accepted = solver.advance(time_step, 0.0);
+    WCNS_REQUIRE_NEAR(accepted, time_step, 0.0);
+    solver.compute_residuals(time_step);
+    Real local_minimum_distance = std::numeric_limits<Real>::infinity();
+    Real local_maximum_ratio = 0.0;
+    for (const auto& block : local.blocks()) {
+        block.turbulence.validate_interior();
+        const auto cells = block.cell_extent();
+        for (int j = 0; j < cells.nj; ++j) {
+            for (int i = 0; i < cells.ni; ++i) {
+                local_minimum_distance = std::min(
+                    local_minimum_distance,
+                    block.turbulence.at({i, j, 0}, "wall_distance"));
+                local_maximum_ratio = std::max(
+                    local_maximum_ratio,
+                    block.turbulence.at({i, j, 0}, "mu_t_over_mu"));
+            }
+        }
+    }
+    WCNS_REQUIRE(mpi.min(local_minimum_distance) > 0.0);
+    WCNS_REQUIRE(std::isfinite(mpi.max(local_maximum_ratio)));
+    WCNS_REQUIRE(mpi.max(local_maximum_ratio) >= 0.0);
+}
+
 } // namespace
 
 // 验收两套粘性 WCNS 驱动在单 rank/双 rank 多块网格上的自由流、halo 和一步状态一致性。
@@ -309,6 +403,8 @@ int main(int argc, char** argv)
         run_wall_case(mpi, wcns::AlgorithmProfileKind::Scmm6Wcns, WallCase::Couette);
         run_wall_case(mpi, wcns::AlgorithmProfileKind::PhengleiWcns, WallCase::LinearConduction);
         run_wall_case(mpi, wcns::AlgorithmProfileKind::Scmm6Wcns, WallCase::LinearConduction);
+        run_sa_negative_smoke(mpi, wcns::AlgorithmProfileKind::PhengleiWcns);
+        run_sa_negative_smoke(mpi, wcns::AlgorithmProfileKind::Scmm6Wcns);
         if (mpi.rank() == 0) {
             std::cout << "viscous WCNS solver tests passed with " << mpi.size() << " ranks\n";
         }
