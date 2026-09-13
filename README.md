@@ -18,6 +18,15 @@ Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.m
 物理容许性、局部通量降阶、壁面载荷/热流、输运和性能公式见
 [`算法补充.md`](算法补充.md) 第 11 节；各阶段实现状态以对应设计和验收报告为准。
 
+v2.0.0 当前处于开发前计划审查，尚未开始生产功能实现。计划包括 SA-neg、k--omega SST、
+标准 k--epsilon，以及三维 LES 的原始 Smagorinsky、尺度相似、混合/动态 Smagorinsky 和 WALE；
+同时固定以 LU-SGS 实现定常伪时间和非定常 BDF2 双时间隐式推进，并把 Roe/Weiss--Smith
+低 Mach 预处理一致接入两种模式。最终依次完成二维 Case06 NACA0012 RANS/URANS 及用户后续
+提供的三维翼型/机翼算例。详细阶段 V--AE、自动卡口、人工放行和 Git 规则见
+[`docs/v2.0.0-development-plan.md`](docs/v2.0.0-development-plan.md)，计划算法见
+[`算法补充.md`](算法补充.md) 第 12 节，Case06 只读登记见
+[`docs/v2.0.0/case06-intake.md`](docs/v2.0.0/case06-intake.md)。
+
 本开发仓库保留阶段设计、自动测试、人工算例及验收证据。v1.1.0 的确定性内部源码包由
 `tools/package_release.py` 从版本提交直接生成，并包含版本验收所需的 Case07；NACA0012 不在
 本版本范围内。历史上的独立 `wcns_v3_release` 精简仓库不再作为版本来源真值。
