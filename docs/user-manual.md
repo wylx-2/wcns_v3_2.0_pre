@@ -37,7 +37,7 @@ wcns/
 `-- 算法补充.md            数学及离散算法约定
 ```
 
-启用 CGNS 后会生成四个面向用户的程序：
+启用 CGNS 后会生成五个面向用户的程序：
 
 | 程序 | 用途 |
 |---|---|
@@ -45,6 +45,7 @@ wcns/
 | `wcns_generate_release_cgns` | 生成均匀、扭曲、加密、周期和通道测试网格 |
 | `wcns_validate_release_case` | 独立重读输出 CGNS，检查有限性、解析误差或两场差异 |
 | `wcns_compare_metric_profiles` | 对同一网格独立计算两套 profile 的度量并报告差异 |
+| `wcns_inspect_structured_mesh` | 只读报告结构网格拓扑、二维单元质量及指定壁面几何 |
 
 `wcns_unit_tests` 等测试程序只在 `WCNS_BUILD_TESTS=ON` 时构建，不是生产求解入口。
 
@@ -1227,7 +1228,12 @@ wcns_validate_release_case compare serial.cgns mpi.cgns 1e-12
 wcns_validate_release_case field-error initial.cgns final.cgns
 wcns_validate_release_case tecplot-consistency final.cgns final.dat 1e-12
 wcns_compare_metric_profiles mesh.cgns
+wcns_inspect_structured_mesh mesh.cgns Wall
 ```
+
+`wcns_inspect_structured_mesh` 的可选第二参数是需要详细检查的壁面 patch 名；省略时检查所有
+CGNS wall 类型 patch。首层高度是壁面线与第一层网格线的中点间距，仅是几何量，不能在缺少
+Re、物性和壁面剪切速度时直接解释为 $y^+$。
 
 解析算例还支持 `uniform`、`vortex`、`sod`、`diagonal-symmetry`、`viscous-profile`、`poiseuille-profile`、`uniform-source`、`derived` 和 `nonzero`。完整参数表和 Python 矩阵驱动见 [`release-validation.md`](release-validation.md)。验证器独立通过 CGNS API 重读文件，不直接信任求解器内存结果。
 
