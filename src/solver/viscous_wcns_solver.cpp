@@ -152,6 +152,12 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     , topology_(topology)
     , state_exchanger_(mpi, topology, distribution_rank_count, euler_components)
     , turbulence_exchanger_(mpi, topology, distribution_rank_count)
+    , les_resolved_exchanger_(
+          mpi, topology, distribution_rank_count, les_resolved_components)
+    , les_dynamic_moment_exchanger_(
+          mpi, topology, distribution_rank_count, les_dynamic_moment_components)
+    , les_closure_exchanger_(
+          mpi, topology, distribution_rank_count, les_closure_components)
     , metrics_(metrics)
     , boundary_data_(boundary_data)
     , profile_(std::move(profile))
@@ -218,6 +224,9 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     turbulence_flux_workspace_.reserve(local_count);
     turbulence_residual_workspace_.reserve(local_count);
     turbulence_source_jacobian_workspace_.reserve(local_count);
+    les_resolved_workspace_.reserve(local_count);
+    les_dynamic_moment_workspace_.reserve(local_count);
+    les_closure_workspace_.reserve(local_count);
     for (auto& block : local_blocks_.blocks()) {
         block_workspace_.push_back(&block);
         const auto inviscid = inviscid_flux_workspace_.emplace(
@@ -296,6 +305,39 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
                 throw std::logic_error("duplicate turbulence workspace block");
             }
         }
+        if (les_active()) {
+            if (block.cell_dimension() != 3 || block.ghost_width() < 1) {
+                throw std::invalid_argument(
+                    "LES solver requires three dimensions and at least one ghost layer");
+            }
+            const auto resolved = les_resolved_workspace_.emplace(
+                std::piecewise_construct,
+                std::forward_as_tuple(block.id()),
+                std::forward_as_tuple(block.cell_extent(),
+                                      les_resolved_components,
+                                      block.ghost_width(),
+                                      std::numeric_limits<Real>::quiet_NaN()));
+            const auto moments = les_dynamic_moment_workspace_.emplace(
+                std::piecewise_construct,
+                std::forward_as_tuple(block.id()),
+                std::forward_as_tuple(block.cell_extent(),
+                                      les_dynamic_moment_components,
+                                      block.ghost_width(),
+                                      std::numeric_limits<Real>::quiet_NaN()));
+            const auto closure = les_closure_workspace_.emplace(
+                std::piecewise_construct,
+                std::forward_as_tuple(block.id()),
+                std::forward_as_tuple(block.cell_extent(),
+                                      les_closure_components,
+                                      block.ghost_width(),
+                                      std::numeric_limits<Real>::quiet_NaN()));
+            if (!resolved.second || !moments.second || !closure.second) {
+                throw std::logic_error("duplicate LES workspace block");
+            }
+            les_resolved_registry_.add(block.id(), resolved.first->second);
+            les_dynamic_moment_registry_.add(block.id(), moments.first->second);
+            les_closure_registry_.add(block.id(), closure.first->second);
+        }
     }
     const bool any_history = std::any_of(local_blocks_.blocks().begin(),
                                          local_blocks_.blocks().end(),
@@ -349,6 +391,50 @@ bool ViscousWcnsSolver::turbulence_active() const noexcept
 {
     return turbulence_model_ != nullptr
         && turbulence_model_->family() == TurbulenceModelFamily::RansTransport;
+}
+
+bool ViscousWcnsSolver::les_active() const noexcept
+{
+    return turbulence_model_ != nullptr
+        && turbulence_model_->family() == TurbulenceModelFamily::LesAlgebraic;
+}
+
+void ViscousWcnsSolver::update_les_closure_fields()
+{
+    if (!les_active()) return;
+    for (const auto& block : local_blocks_.blocks()) {
+        populate_les_resolved_field(les_resolved_workspace_.at(block.id()),
+                                    block,
+                                    metrics_.at(block.id()),
+                                    gradient_workspace_.at(block.id()),
+                                    config_.turbulence);
+    }
+    les_resolved_exchanger_.exchange(les_resolved_registry_);
+    for (auto& [block, field] : les_resolved_workspace_) {
+        static_cast<void>(block);
+        complete_les_fixed_stencil_ghosts(field);
+    }
+    for (const auto& block : local_blocks_.blocks()) {
+        compute_les_dynamic_moments(les_dynamic_moment_workspace_.at(block.id()),
+                                    les_resolved_workspace_.at(block.id()),
+                                    config_.turbulence);
+    }
+    les_dynamic_moment_exchanger_.exchange(les_dynamic_moment_registry_);
+    for (auto& [block, field] : les_dynamic_moment_workspace_) {
+        static_cast<void>(block);
+        complete_les_fixed_stencil_ghosts(field);
+    }
+    for (const auto& block : local_blocks_.blocks()) {
+        compute_les_closure_field(les_closure_workspace_.at(block.id()),
+                                  les_resolved_workspace_.at(block.id()),
+                                  les_dynamic_moment_workspace_.at(block.id()),
+                                  config_.turbulence);
+    }
+    les_closure_exchanger_.exchange(les_closure_registry_);
+    for (auto& [block, field] : les_closure_workspace_) {
+        static_cast<void>(block);
+        complete_les_fixed_stencil_ghosts(field);
+    }
 }
 
 void ViscousWcnsSolver::compute_residuals(Real stage_time, int rk_stage)
@@ -445,6 +531,8 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
     gradient_plan_.set_version(version_);
     gradient_exchanger_.exchange(gradient_registry_);
 
+    update_les_closure_fields();
+
     if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
         for (auto& block : local_blocks_.blocks()) {
             compute_sa_negative_gradient(turbulence_gradient_workspace_.at(block.id()),
@@ -468,7 +556,12 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                                          reference_,
                                          floors_,
                                          version_,
-                                         turbulence_active() ? turbulence_model_.get() : nullptr);
+                                         (turbulence_active() || les_active())
+                                             ? turbulence_model_.get()
+                                             : nullptr,
+                                         les_active()
+                                             ? &les_closure_workspace_.at(block.id())
+                                             : nullptr);
         if (config_.turbulence.kind == TurbulenceModelKind::SaNegative) {
             compute_sa_negative_flux_and_source(
                 turbulence_flux_workspace_.at(block.id()),
@@ -701,6 +794,8 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
     const TransportModel& transport,
     const ViscousStabilityCoefficients& stability,
     const ITurbulenceModel* turbulence_model,
+    const std::unordered_map<BlockId, PrimitiveGradientField>* mean_gradients,
+    const std::unordered_map<BlockId, Field<Real>>* les_closures,
     AlgorithmProfileKind profile,
     const RiemannSolverParameters& riemann_parameters,
     const std::vector<TurbulenceFieldDescriptor>& descriptors,
@@ -771,6 +866,66 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
                              turbulence_model->diffusion_coefficients(context)) {
                             model_diffusivity = std::max(model_diffusivity, diffusion / rho);
                         }
+                    } else if (turbulence_model != nullptr
+                               && turbulence_model->family()
+                                   == TurbulenceModelFamily::LesAlgebraic) {
+                        if (mean_gradients == nullptr || les_closures == nullptr) {
+                            throw std::invalid_argument(
+                                "LES implicit spectral radius lacks closure fields");
+                        }
+                        TurbulenceCellContext context;
+                        context.mean_state = {{
+                            block.flow.temperature_primitive(i, j, k, temperature_density),
+                            block.flow.temperature_primitive(i, j, k, temperature_velocity_x),
+                            block.flow.temperature_primitive(i, j, k, temperature_velocity_y),
+                            block.flow.temperature_primitive(i, j, k, temperature_velocity_z),
+                            block.flow.temperature_primitive(i, j, k, temperature_value),
+                        }};
+                        const auto& gradients = mean_gradients->at(block.id());
+                        for (int variable = 0; variable < viscous_primitive_components;
+                             ++variable) {
+                            for (int direction = 0; direction < 3; ++direction) {
+                                context.primitive_gradients[static_cast<std::size_t>(variable)]
+                                                           [static_cast<std::size_t>(direction)]
+                                    = gradients(cell,
+                                                static_cast<ViscousPrimitive>(variable),
+                                                direction);
+                            }
+                        }
+                        const auto& closure = les_closures->at(block.id());
+                        context.filter_width
+                            = closure(i, j, k, les_filter_width);
+                        context.reference_reynolds = reference.reynolds();
+                        context.reference_mach = reference.mach();
+                        context.heat_capacity_ratio = gas.gamma();
+                        context.dimension = 3;
+                        if (turbulence_model->config().kind
+                                == TurbulenceModelKind::ScaleSimilarity
+                            || turbulence_model->config().kind
+                                == TurbulenceModelKind::MixedSmagorinskySimilarity) {
+                            context.leonard_stress = {
+                                closure(i, j, k, les_leonard_xx),
+                                closure(i, j, k, les_leonard_yy),
+                                closure(i, j, k, les_leonard_zz),
+                                closure(i, j, k, les_leonard_xy),
+                                closure(i, j, k, les_leonard_xz),
+                                closure(i, j, k, les_leonard_yz),
+                            };
+                            context.has_leonard_stress = true;
+                        }
+                        if (turbulence_model->config().kind
+                            == TurbulenceModelKind::DynamicSmagorinsky) {
+                            context.dynamic_coefficient
+                                = closure(i, j, k, les_dynamic_coefficient);
+                            context.has_dynamic_coefficient = true;
+                        }
+                        const auto contribution
+                            = turbulence_model->viscous_contribution(context);
+                        mean_diffusivity = std::max(
+                            mean_diffusivity,
+                            molecular
+                                + std::max(Real {0.0}, contribution.eddy_viscosity)
+                                    / (rho * reference.reynolds()));
                     }
                     const Real volume = metric.jacobian()(i, j, k);
                     const Real diffusivity = std::max(mean_diffusivity, model_diffusivity);
@@ -1190,6 +1345,12 @@ Real ViscousWcnsSolver::advance_lu_sgs(Real pseudo_cfl,
                                                              transport_,
                                                              config_.stability,
                                                              turbulence_model_.get(),
+                                                             les_active()
+                                                                 ? &gradient_workspace_
+                                                                 : nullptr,
+                                                             les_active()
+                                                                 ? &les_closure_workspace_
+                                                                 : nullptr,
                                                              profile_.kind(),
                                                              config_.inviscid.riemann.parameters,
                                                              descriptors,
@@ -1254,6 +1415,8 @@ Real ViscousWcnsSolver::advance_dual_time(Real physical_time_step,
             transport_,
             config_.stability,
             turbulence_model_.get(),
+            les_active() ? &gradient_workspace_ : nullptr,
+            les_active() ? &les_closure_workspace_ : nullptr,
             profile_.kind(),
             config_.inviscid.riemann.parameters,
             descriptors,

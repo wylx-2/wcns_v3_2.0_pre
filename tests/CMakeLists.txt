@@ -37,6 +37,7 @@ add_executable(wcns_unit_tests
     test_boundary_output.cpp
     test_quantity_registry.cpp
     test_turbulence_infrastructure.cpp
+    test_stage_z_les.cpp
 )
 
 target_link_libraries(
@@ -134,6 +135,37 @@ if(WCNS_ENABLE_CGNS)
         ${CMAKE_CURRENT_BINARY_DIR}/implicit_checkpoint_restart.wcns
         @ONLY
     )
+    foreach(les_model IN ITEMS
+            smagorinsky
+            scale_similarity
+            mixed_smagorinsky_similarity
+            dynamic_smagorinsky
+            wale)
+        set(WCNS_LES_MODEL ${les_model})
+        if(les_model STREQUAL "smagorinsky")
+            set(WCNS_LES_MODEL_LINES
+                "les.smagorinsky.cs = 0.17\nles.smagorinsky.wall_damping = none")
+        elseif(les_model STREQUAL "scale_similarity")
+            set(WCNS_LES_MODEL_LINES
+                "les.test_filter.ratio = 2\nles.similarity.cb = 1")
+        elseif(les_model STREQUAL "mixed_smagorinsky_similarity")
+            set(WCNS_LES_MODEL_LINES
+                "les.test_filter.ratio = 2\nles.smagorinsky.cs = 0.17\nles.smagorinsky.wall_damping = none\nles.similarity.cb = 1")
+        elseif(les_model STREQUAL "dynamic_smagorinsky")
+            set(WCNS_LES_MODEL_LINES
+                "les.test_filter.ratio = 2\nles.dynamic.average = local_box3_tensor\nles.dynamic.clipping = bounded\nles.dynamic.denominator_floor = 1e-20\nles.dynamic.coefficient_minimum = -0.05\nles.dynamic.coefficient_maximum = 0.09")
+        else()
+            set(WCNS_LES_MODEL_LINES "les.wale.cw = 0.325")
+        endif()
+        foreach(les_rank_label IN ITEMS serial mpi2 mpi4)
+            set(WCNS_LES_RANK_LABEL ${les_rank_label})
+            configure_file(
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/les_freestream_case.wcns.in
+                ${CMAKE_CURRENT_BINARY_DIR}/les_${les_model}_${les_rank_label}.wcns
+                @ONLY
+            )
+        endforeach()
+    endforeach()
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_sa_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/implicit_sa_steady.wcns
@@ -540,6 +572,22 @@ if(WCNS_ENABLE_CGNS)
         )
         set_tests_properties(
             wcns.run.implicit_freestream.${implicit_case}.serial
+            PROPERTIES FIXTURES_REQUIRED cgns_files
+        )
+    endforeach()
+    foreach(les_model IN ITEMS
+            smagorinsky
+            scale_similarity
+            mixed_smagorinsky_similarity
+            dynamic_smagorinsky
+            wale)
+        add_test(
+            NAME wcns.run.les_${les_model}.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_${les_model}_serial.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_${les_model}.serial
             PROPERTIES FIXTURES_REQUIRED cgns_files
         )
     endforeach()
@@ -1475,6 +1523,23 @@ if(WCNS_ENABLE_CGNS)
                 )
                 set_tests_properties(
                     wcns.run.implicit_freestream.${implicit_case}.${rank_count}
+                    PROPERTIES FIXTURES_REQUIRED cgns_files
+                )
+            endforeach()
+            foreach(les_model IN ITEMS
+                    smagorinsky
+                    scale_similarity
+                    mixed_smagorinsky_similarity
+                    dynamic_smagorinsky
+                    wale)
+                add_test(
+                    NAME wcns.run.les_${les_model}.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/les_${les_model}_mpi${rank_count}.wcns
+                )
+                set_tests_properties(
+                    wcns.run.les_${les_model}.${rank_count}
                     PROPERTIES FIXTURES_REQUIRED cgns_files
                 )
             endforeach()

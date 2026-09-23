@@ -388,7 +388,8 @@ TurbulenceViscousContribution evaluate_turbulence_viscous_face(
     Axis axis,
     Index3 face,
     const BoundaryPatch* physical_boundary,
-    const ITurbulenceModel* turbulence_model)
+    const ITurbulenceModel* turbulence_model,
+    const Field<Real>* les_closure)
 {
     TurbulenceViscousContribution result;
     if (turbulence_model == nullptr
@@ -410,6 +411,33 @@ TurbulenceViscousContribution evaluate_turbulence_viscous_face(
             || physical_boundary->type == BoundaryType::NoSlipIsothermalWall);
     if (no_slip && turbulence_model->config().wall_treatment == WallTreatment::Resolved) {
         return result;
+    }
+    if (turbulence_model->family() == TurbulenceModelFamily::LesAlgebraic) {
+        if (les_closure == nullptr || les_closure->components() != les_closure_components
+            || les_closure->interior_extent() != block.cell_extent()) {
+            throw PhysicsConfigurationError("LES closure field is missing or incompatible");
+        }
+        context.filter_width = interpolate_les_closure_face(
+            *les_closure, axis, face, les_filter_width);
+        if (turbulence_model->config().kind == TurbulenceModelKind::ScaleSimilarity
+            || turbulence_model->config().kind
+                == TurbulenceModelKind::MixedSmagorinskySimilarity) {
+            context.leonard_stress = {
+                interpolate_les_closure_face(*les_closure, axis, face, les_leonard_xx),
+                interpolate_les_closure_face(*les_closure, axis, face, les_leonard_yy),
+                interpolate_les_closure_face(*les_closure, axis, face, les_leonard_zz),
+                interpolate_les_closure_face(*les_closure, axis, face, les_leonard_xy),
+                interpolate_les_closure_face(*les_closure, axis, face, les_leonard_xz),
+                interpolate_les_closure_face(*les_closure, axis, face, les_leonard_yz),
+            };
+            context.has_leonard_stress = true;
+        }
+        if (turbulence_model->config().kind
+            == TurbulenceModelKind::DynamicSmagorinsky) {
+            context.dynamic_coefficient = interpolate_les_closure_face(
+                *les_closure, axis, face, les_dynamic_coefficient);
+            context.has_dynamic_coefficient = true;
+        }
     }
     for (const auto& descriptor : turbulence_model->fields()) {
         if (descriptor.role != TurbulenceFieldRole::Transported) continue;
@@ -470,7 +498,8 @@ void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                       const ReferenceScales& reference,
                                       const NumericalFloors& floors,
                                       std::uint64_t version,
-                                      const ITurbulenceModel* turbulence_model)
+                                      const ITurbulenceModel* turbulence_model,
+                                      const Field<Real>* les_closure)
 {
     if (metric.profile() != profile.kind() || gradients.profile() != profile.kind()
         || metric.dimension() != block.cell_dimension()
@@ -526,7 +555,8 @@ void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                                                              axis,
                                                                              face,
                                                                              patch,
-                                                                             turbulence_model);
+                                                                             turbulence_model,
+                                                                             les_closure);
                     const auto cartesian = compute_viscous_cartesian_flux(trace,
                                                                           transport,
                                                                           gas,
@@ -565,7 +595,8 @@ ViscousFaceFluxField compute_viscous_face_fluxes(const StructuredBlock& block,
                                                  const ReferenceScales& reference,
                                                  const NumericalFloors& floors,
                                                  std::uint64_t version,
-                                                 const ITurbulenceModel* turbulence_model)
+                                                 const ITurbulenceModel* turbulence_model,
+                                                 const Field<Real>* les_closure)
 {
     ViscousFaceFluxField result(
         block.cell_extent(), block.cell_dimension(), profile.kind(), version);
@@ -580,7 +611,8 @@ ViscousFaceFluxField compute_viscous_face_fluxes(const StructuredBlock& block,
                                      reference,
                                      floors,
                                      version,
-                                     turbulence_model);
+                                     turbulence_model,
+                                     les_closure);
     return result;
 }
 

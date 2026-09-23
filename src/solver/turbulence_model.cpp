@@ -1,4 +1,5 @@
 #include <wcns/solver/turbulence_model.hpp>
+#include <wcns/solver/les_models.hpp>
 #include <wcns/solver/two_equation_models.hpp>
 
 #include <algorithm>
@@ -358,6 +359,131 @@ private:
     TurbulenceModelConfig config_;
 };
 
+class LesAlgebraicTurbulenceModel final : public ITurbulenceModel {
+public:
+    explicit LesAlgebraicTurbulenceModel(TurbulenceModelConfig config)
+        : config_(std::move(config))
+    {
+        config_.validate();
+        if (turbulence_model_family(config_.kind) != TurbulenceModelFamily::LesAlgebraic) {
+            throw std::invalid_argument("LES factory received a non-LES model");
+        }
+    }
+
+    const TurbulenceModelConfig& config() const noexcept override { return config_; }
+    TurbulenceModelFamily family() const noexcept override
+    {
+        return TurbulenceModelFamily::LesAlgebraic;
+    }
+    std::vector<TurbulenceFieldDescriptor> fields() const override { return {}; }
+
+    TurbulenceViscousContribution
+    viscous_contribution(const TurbulenceCellContext& context) const override
+    {
+        if (context.dimension != 3 || !std::isfinite(context.filter_width)
+            || context.filter_width <= 0.0
+            || !std::isfinite(context.mean_state[temperature_density])
+            || context.mean_state[temperature_density] <= 0.0
+            || !std::isfinite(context.reference_mach) || context.reference_mach <= 0.0
+            || !std::isfinite(context.heat_capacity_ratio)
+            || context.heat_capacity_ratio <= 1.0) {
+            throw std::invalid_argument("LES viscous context is invalid");
+        }
+        VelocityGradient gradient {};
+        for (int velocity = 0; velocity < 3; ++velocity) {
+            gradient[static_cast<std::size_t>(velocity)]
+                = context.primitive_gradients[static_cast<std::size_t>(velocity)];
+        }
+        Real damping = 1.0;
+        if (config_.les_wall_damping == LesWallDamping::VanDriest) {
+            damping = les_van_driest_factor(context.wall_y_plus);
+        }
+
+        LesPointEvaluation evaluation;
+        switch (config_.kind) {
+        case TurbulenceModelKind::Smagorinsky:
+            evaluation = evaluate_smagorinsky(context.mean_state[temperature_density],
+                                              context.filter_width,
+                                              config_.les_smagorinsky_coefficient,
+                                              gradient,
+                                              damping);
+            break;
+        case TurbulenceModelKind::ScaleSimilarity:
+            if (!context.has_leonard_stress) {
+                throw std::invalid_argument("scale-similarity context lacks Leonard stress");
+            }
+            evaluation = evaluate_scale_similarity(
+                gradient, context.leonard_stress, config_.les_similarity_coefficient);
+            break;
+        case TurbulenceModelKind::MixedSmagorinskySimilarity:
+            if (!context.has_leonard_stress) {
+                throw std::invalid_argument("mixed LES context lacks Leonard stress");
+            }
+            evaluation = evaluate_mixed_smagorinsky_similarity(
+                context.mean_state[temperature_density],
+                context.filter_width,
+                config_.les_smagorinsky_coefficient,
+                gradient,
+                context.leonard_stress,
+                config_.les_similarity_coefficient,
+                damping);
+            break;
+        case TurbulenceModelKind::DynamicSmagorinsky:
+            if (!context.has_dynamic_coefficient) {
+                throw std::invalid_argument("dynamic LES context lacks Germano coefficient");
+            }
+            evaluation = evaluate_dynamic_smagorinsky(context.mean_state[temperature_density],
+                                                      context.filter_width,
+                                                      context.dynamic_coefficient,
+                                                      gradient);
+            break;
+        case TurbulenceModelKind::Wale:
+            evaluation = evaluate_wale(context.mean_state[temperature_density],
+                                       context.filter_width,
+                                       config_.les_wale_coefficient,
+                                       gradient);
+            break;
+        default: throw std::logic_error("invalid LES algebraic model kind");
+        }
+
+        TurbulenceViscousContribution result;
+        result.stress = {-evaluation.physical_sgs_stress.xx,
+                         -evaluation.physical_sgs_stress.yy,
+                         -evaluation.physical_sgs_stress.zz,
+                         -evaluation.physical_sgs_stress.xy,
+                         -evaluation.physical_sgs_stress.xz,
+                         -evaluation.physical_sgs_stress.yz};
+        result.eddy_viscosity = evaluation.eddy_viscosity;
+        result.sgs_energy_transfer = evaluation.energy_transfer;
+        result.backscatter_allowed
+            = config_.kind == TurbulenceModelKind::ScaleSimilarity
+            || config_.kind == TurbulenceModelKind::MixedSmagorinskySimilarity
+            || config_.kind == TurbulenceModelKind::DynamicSmagorinsky;
+        const Real heat = evaluation.eddy_viscosity
+            / ((context.heat_capacity_ratio - 1.0) * context.reference_mach
+               * context.reference_mach * config_.les_sgs_prandtl);
+        for (int direction = 0; direction < 3; ++direction) {
+            result.energy_heat_flux[static_cast<std::size_t>(direction)]
+                = heat * context.primitive_gradients[3][static_cast<std::size_t>(direction)];
+        }
+        result.validate(context.dimension);
+        return result;
+    }
+
+    std::vector<Real> diffusion_coefficients(const TurbulenceCellContext&) const override
+    {
+        return {};
+    }
+    TurbulenceSourceLinearization
+    source_linearization(const TurbulenceCellContext&) const override
+    {
+        return {};
+    }
+
+private:
+    TurbulenceModelConfig config_;
+};
+
 bool finite_stress(const SymmetricStress& stress)
 {
     return std::isfinite(stress.xx) && std::isfinite(stress.yy) && std::isfinite(stress.zz)
@@ -429,6 +555,22 @@ TurbulenceSourceTreatment turbulence_source_treatment(const std::string& name)
     throw std::invalid_argument("unknown turbulence source treatment: " + name);
 }
 
+LesWallDamping les_wall_damping(const std::string& name)
+{
+    if (name == "none") return LesWallDamping::None;
+    if (name == "van_driest") return LesWallDamping::VanDriest;
+    throw std::invalid_argument("unknown LES wall damping: " + name);
+}
+
+const char* les_wall_damping_name(LesWallDamping damping)
+{
+    switch (damping) {
+    case LesWallDamping::None: return "none";
+    case LesWallDamping::VanDriest: return "van_driest";
+    }
+    throw std::invalid_argument("invalid LES wall damping");
+}
+
 const char* turbulence_source_treatment_name(TurbulenceSourceTreatment treatment)
 {
     switch (treatment) {
@@ -466,6 +608,7 @@ void TurbulenceModelConfig::validate() const
             "turbulence.experimental is reserved for k_epsilon");
     }
     static_cast<void>(turbulence_source_treatment_name(source_treatment));
+    static_cast<void>(les_wall_damping_name(les_wall_damping));
     if (!std::isfinite(sa_farfield_nu_tilde_ratio)
         || sa_farfield_nu_tilde_ratio < 3.0 || sa_farfield_nu_tilde_ratio > 5.0) {
         throw std::invalid_argument("SA-neg farfield nu-tilde ratio must lie in [3,5]");
@@ -486,6 +629,25 @@ void TurbulenceModelConfig::validate() const
         || wall_function_y_plus_min <= 0.0
         || wall_function_y_plus_max <= wall_function_y_plus_min) {
         throw std::invalid_argument("wall-function y+ interval is invalid");
+    }
+    if (!std::isfinite(les_filter_width_ratio) || les_filter_width_ratio <= 0.0
+        || !std::isfinite(les_test_filter_ratio) || les_test_filter_ratio <= 1.0
+        || !std::isfinite(les_smagorinsky_coefficient)
+        || les_smagorinsky_coefficient < 0.0 || les_smagorinsky_coefficient > 0.3
+        || !std::isfinite(les_similarity_coefficient)
+        || !std::isfinite(les_dynamic_denominator_floor)
+        || les_dynamic_denominator_floor <= 0.0
+        || !std::isfinite(les_dynamic_coefficient_minimum)
+        || !std::isfinite(les_dynamic_coefficient_maximum)
+        || les_dynamic_coefficient_minimum > les_dynamic_coefficient_maximum
+        || !std::isfinite(les_wale_coefficient) || les_wale_coefficient <= 0.0
+        || les_wale_coefficient > 1.0 || !std::isfinite(les_sgs_prandtl)
+        || les_sgs_prandtl <= 0.0) {
+        throw std::invalid_argument("LES model parameters are invalid");
+    }
+    if (turbulence_model_family(kind) == TurbulenceModelFamily::LesAlgebraic
+        && wall_treatment != WallTreatment::Resolved) {
+        throw std::invalid_argument("LES requires resolved wall treatment");
     }
 }
 
@@ -518,6 +680,30 @@ std::string TurbulenceModelConfig::summary() const
             result << ",wall_function_y_plus=[" << wall_function_y_plus_min << ','
                    << wall_function_y_plus_max << ']';
         }
+    } else if (turbulence_model_family(kind) == TurbulenceModelFamily::LesAlgebraic) {
+        result << ",filter=box3_tensor"
+               << ",boundary=nearest_constant_extension"
+               << ",filter_width_ratio=" << les_filter_width_ratio
+               << ",test_filter_ratio=" << les_test_filter_ratio
+               << ",sgs_Pr=" << les_sgs_prandtl;
+        if (kind == TurbulenceModelKind::Smagorinsky
+            || kind == TurbulenceModelKind::MixedSmagorinskySimilarity) {
+            result << ",Cs=" << les_smagorinsky_coefficient
+                   << ",wall_damping=" << les_wall_damping_name(les_wall_damping);
+        }
+        if (kind == TurbulenceModelKind::ScaleSimilarity
+            || kind == TurbulenceModelKind::MixedSmagorinskySimilarity) {
+            result << ",Cb=" << les_similarity_coefficient;
+        }
+        if (kind == TurbulenceModelKind::DynamicSmagorinsky) {
+            result << ",dynamic_average=local_box3_tensor"
+                   << ",dynamic_floor=" << les_dynamic_denominator_floor
+                   << ",dynamic_clip=[" << les_dynamic_coefficient_minimum << ','
+                   << les_dynamic_coefficient_maximum << ']';
+        }
+        if (kind == TurbulenceModelKind::Wale) {
+            result << ",Cw=" << les_wale_coefficient;
+        }
     }
     result << ')';
     return result.str();
@@ -525,7 +711,10 @@ std::string TurbulenceModelConfig::summary() const
 
 std::string TurbulenceModelConfig::restart_signature() const
 {
-    return "turbulence_v1;" + summary();
+    const char* version = turbulence_model_family(kind) == TurbulenceModelFamily::LesAlgebraic
+        ? "turbulence_v2;"
+        : "turbulence_v1;";
+    return version + summary();
 }
 
 void TurbulenceViscousContribution::validate(int dimension) const
@@ -534,7 +723,8 @@ void TurbulenceViscousContribution::validate(int dimension) const
         || !std::all_of(energy_heat_flux.begin(), energy_heat_flux.end(), [](Real value) {
                return std::isfinite(value);
            })
-        || !std::isfinite(eddy_viscosity) || eddy_viscosity < 0.0) {
+        || !std::isfinite(eddy_viscosity) || !std::isfinite(sgs_energy_transfer)
+        || (eddy_viscosity < 0.0 && !backscatter_allowed)) {
         throw std::invalid_argument("invalid turbulence viscous contribution");
     }
     if (dimension == 2
@@ -591,6 +781,16 @@ TurbulenceModelRegistry TurbulenceModelRegistry::create_builtin()
                           [](const TurbulenceModelConfig& config) {
                               return std::make_unique<StandardKEpsilonTurbulenceModel>(config);
                           });
+    const auto register_les = [&](TurbulenceModelKind kind) {
+        result.register_model(kind, [](const TurbulenceModelConfig& config) {
+            return std::make_unique<LesAlgebraicTurbulenceModel>(config);
+        });
+    };
+    register_les(TurbulenceModelKind::Smagorinsky);
+    register_les(TurbulenceModelKind::ScaleSimilarity);
+    register_les(TurbulenceModelKind::MixedSmagorinskySimilarity);
+    register_les(TurbulenceModelKind::DynamicSmagorinsky);
+    register_les(TurbulenceModelKind::Wale);
     return result;
 }
 

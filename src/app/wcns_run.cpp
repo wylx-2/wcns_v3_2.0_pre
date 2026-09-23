@@ -409,6 +409,17 @@ int main(int argc, char** argv)
         const auto mesh_name = resolve_mesh_path(command.config_path, config.mesh_path);
         wcns::CgnsReader reader;
         const auto metadata = reader.read_metadata(mesh_name);
+        if (wcns::turbulence_model_family(config.turbulence.kind)
+            == wcns::TurbulenceModelFamily::LesAlgebraic) {
+            const bool all_three_dimensional
+                = std::all_of(metadata.zones.begin(), metadata.zones.end(), [](const auto& zone) {
+                      return zone.cell_dimension == 3 && zone.physical_dimension == 3;
+                  });
+            if (!all_three_dimensional) {
+                throw wcns::CaseConfigurationError(
+                    "LES requires a fully three-dimensional mesh");
+            }
+        }
         const auto plan = wcns::StructuredPartitionPlan::build(
             partition_zones(metadata), mpi.size(), config.partition);
         if (config.output.xz_planes.enabled) {

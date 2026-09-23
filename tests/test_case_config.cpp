@@ -4,6 +4,7 @@
 #include <wcns/runtime/quantity_registry.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -163,10 +164,87 @@ std::string valid_lu_sgs_config(bool unsteady = false)
     return result;
 }
 
+std::string valid_les_config(const std::string& model)
+{
+    auto result = valid_lu_sgs_config(true);
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const auto position = result.find(from);
+        if (position == std::string::npos) throw std::logic_error("LES test fixture is incomplete");
+        result.replace(position, from.size(), to);
+    };
+    replace("turbulence.model = none", "turbulence.model = " + model);
+    replace("run.viscous = false", "run.viscous = true");
+    result += "les.filter.type = box3_tensor\n"
+              "les.filter.width_ratio = 1\n"
+              "les.sgs_prandtl = 0.9\n";
+    if (model == "smagorinsky" || model == "mixed_smagorinsky_similarity") {
+        result += "les.smagorinsky.cs = 0.17\n"
+                  "les.smagorinsky.wall_damping = none\n";
+    }
+    if (model == "scale_similarity" || model == "mixed_smagorinsky_similarity"
+        || model == "dynamic_smagorinsky") {
+        result += "les.test_filter.ratio = 2\n";
+    }
+    if (model == "scale_similarity" || model == "mixed_smagorinsky_similarity") {
+        result += "les.similarity.cb = 1\n";
+    }
+    if (model == "dynamic_smagorinsky") {
+        result += "les.dynamic.average = local_box3_tensor\n"
+                  "les.dynamic.clipping = bounded\n"
+                  "les.dynamic.denominator_floor = 1e-20\n"
+                  "les.dynamic.coefficient_minimum = -0.05\n"
+                  "les.dynamic.coefficient_maximum = 0.09\n";
+    }
+    if (model == "wale") result += "les.wale.cw = 0.325\n";
+    return result;
+}
+
 } // namespace
 
 void test_case_config()
 {
+    {
+        const std::array<std::string, 5> models {{
+            "smagorinsky",
+            "scale_similarity",
+            "mixed_smagorinsky_similarity",
+            "dynamic_smagorinsky",
+            "wale",
+        }};
+        for (const auto& name : models) {
+            const auto config = wcns::CaseConfig::from_text(valid_les_config(name));
+            WCNS_REQUIRE(wcns::turbulence_model_family(config.turbulence.kind)
+                         == wcns::TurbulenceModelFamily::LesAlgebraic);
+            WCNS_REQUIRE(config.run.mode == wcns::RunMode::Unsteady);
+            WCNS_REQUIRE(config.run.viscous);
+            WCNS_REQUIRE(config.time_algorithm.integrator
+                         == wcns::TimeIntegratorKind::LuSgs);
+            WCNS_REQUIRE(config.restart_signature().find("turbulence_v2")
+                         != std::string::npos);
+            WCNS_REQUIRE(config.summary().find("filter=box3_tensor")
+                         != std::string::npos);
+        }
+        auto steady = valid_les_config("wale");
+        const auto mode = steady.find("run.mode = unsteady");
+        steady.replace(mode, std::string("run.mode = unsteady").size(), "run.mode = steady");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(steady));
+        auto explicit_time = valid_les_config("wale");
+        const auto integrator = explicit_time.find("time.integrator = lu_sgs");
+        explicit_time.replace(integrator,
+                              std::string("time.integrator = lu_sgs").size(),
+                              "time.integrator = ssprk3");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(explicit_time));
+        auto wrong_key = valid_les_config("wale") + "les.smagorinsky.cs = 0.1\n";
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(wrong_key));
+        auto missing = valid_les_config("dynamic_smagorinsky");
+        const std::string required = "les.dynamic.average = local_box3_tensor\n";
+        missing.erase(missing.find(required), required.size());
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(missing));
+    }
     {
         const auto config = wcns::CaseConfig::from_text(valid_v2_config());
         WCNS_REQUIRE(config.schema_version == 2);

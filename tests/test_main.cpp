@@ -76,6 +76,7 @@ void test_sa_negative_model();
 void test_turbulence_transport_interface();
 void test_turbulence_viscous_coupling();
 void test_wall_distance();
+void test_stage_z_les();
 
 // 顺序运行不依赖独立输入文件的全部单元验收入口。
 int main()
@@ -162,6 +163,7 @@ int main()
         test_turbulence_transport_interface();
         test_turbulence_viscous_coupling();
         test_wall_distance();
+        test_stage_z_les();
 
         std::cout << "WCNS unit tests passed\n";
         return EXIT_SUCCESS;

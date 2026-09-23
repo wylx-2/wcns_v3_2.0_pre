@@ -269,9 +269,11 @@ void write_periodic_translation_2d(const std::string& path)
 
 void write_periodic_rotation_3d(const std::string& path)
 {
-    constexpr int ni = 5;
-    constexpr int nj = 5;
-    constexpr int nk = 5;
+    // Eight cells per direction keep the periodic fixture lightweight while
+    // allowing the PH profile to exercise deterministic 1/2/4-rank splits.
+    constexpr int ni = 9;
+    constexpr int nj = 9;
+    constexpr int nk = 9;
     constexpr float half_pi = 1.57079632679489661923F;
     const double cosine = std::cos(static_cast<double>(half_pi));
     const double sine = std::sin(static_cast<double>(half_pi));

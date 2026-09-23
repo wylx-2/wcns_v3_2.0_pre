@@ -1,6 +1,7 @@
 #pragma once
 
 #include <wcns/solver/inviscid_wcns_solver.hpp>
+#include <wcns/solver/les_closure.hpp>
 #include <wcns/solver/rans_two_equation_transport.hpp>
 #include <wcns/solver/sa_negative_transport.hpp>
 #include <wcns/solver/viscous_operator.hpp>
@@ -79,6 +80,8 @@ private:
                                 int rk_stage,
                                 const BlockFaceRobustnessMap* robustness_levels);
     [[nodiscard]] bool turbulence_active() const noexcept;
+    [[nodiscard]] bool les_active() const noexcept;
+    void update_les_closure_fields();
     void capture_turbulence_stage_state();
     void update_turbulence_stage(Real initial_weight,
                                  Real stage_weight,
@@ -90,6 +93,9 @@ private:
     const DistributedTopology& topology_;
     HaloExchanger state_exchanger_;
     HaloExchanger turbulence_exchanger_;
+    HaloExchanger les_resolved_exchanger_;
+    HaloExchanger les_dynamic_moment_exchanger_;
+    HaloExchanger les_closure_exchanger_;
     BlockMetricMap& metrics_;
     const BlockBoundaryDataMap& boundary_data_;
     AlgorithmProfile profile_;
@@ -130,6 +136,12 @@ private:
     ViscousFaceFluxHaloExchanger turbulence_flux_exchanger_;
     std::unordered_map<BlockId, Field<Real>> turbulence_residual_workspace_;
     std::unordered_map<BlockId, Field<Real>> turbulence_source_jacobian_workspace_;
+    std::unordered_map<BlockId, Field<Real>> les_resolved_workspace_;
+    std::unordered_map<BlockId, Field<Real>> les_dynamic_moment_workspace_;
+    std::unordered_map<BlockId, Field<Real>> les_closure_workspace_;
+    BlockFieldRegistry les_resolved_registry_ {les_resolved_components};
+    BlockFieldRegistry les_dynamic_moment_registry_ {les_dynamic_moment_components};
+    BlockFieldRegistry les_closure_registry_ {les_closure_components};
     std::unordered_map<BlockId, std::vector<Real>> turbulence_initial_state_;
     std::unordered_map<BlockId, std::vector<Real>> turbulence_stage_state_;
     SsprkWorkspace time_workspace_;
