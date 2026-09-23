@@ -280,32 +280,96 @@ void test_global_conservation_weights()
         WCNS_REQUIRE_THROWS(std::out_of_range, weights.block(99));
     }
 
-    const auto partial = make_partial_c_grid_mesh();
-    const auto profile = ProfileFactory::create(AlgorithmProfileKind::PhengleiWcns);
-    const auto weights = GlobalConservationWeights::build(partial, profile);
-    const auto normal = build_line_conservation_weights(profile, 8);
-    const auto tangent = build_line_conservation_weights(profile, 16);
-    const auto& cells = weights.block(0).cell;
-    for (int j = 0; j < 8; ++j) {
-        for (int i = 0; i < 16; ++i) {
-            WCNS_REQUIRE_NEAR(cells(i, j, 0),
-                              tangent.cell_weights[static_cast<std::size_t>(i)]
-                                  * normal.cell_weights[static_cast<std::size_t>(j)],
-                              2.0e-13);
-        }
-    }
-    WCNS_REQUIRE(weights.maximum_shared_face_mismatch() < 1.0e-13);
+    for (const auto kind : {AlgorithmProfileKind::PhengleiWcns,
+                            AlgorithmProfileKind::Scmm6Wcns}) {
+        auto partial = make_partial_c_grid_mesh();
+        auto& block = partial.block(0);
+        const auto profile = ProfileFactory::create(kind);
+        WCNS_REQUIRE(!connection_side_is_fully_covered(block, Axis::J, Side::Lower));
 
-    const auto flux_plan = FaceFluxHaloPlan::build(partial, profile, 17);
-    WCNS_REQUIRE(flux_plan.exchanges().size() == 2);
-    WCNS_REQUIRE(flux_plan.exchanges()[0].receiver_block == 0);
-    WCNS_REQUIRE(flux_plan.exchanges()[0].donor_block == 0);
-    WCNS_REQUIRE(flux_plan.exchanges()[0].direction == 0);
-    WCNS_REQUIRE(flux_plan.exchanges()[1].direction == 1);
-    WCNS_REQUIRE(flux_plan.exchanges()[0].pairs.size() == 4);
-    WCNS_REQUIRE(flux_plan.exchanges()[1].pairs.size() == 8);
-    WCNS_REQUIRE(flux_plan.exchanges()[0].pairs.front().layer == 1);
-    WCNS_REQUIRE(flux_plan.exchanges()[1].pairs.front().layer == 0);
-    WCNS_REQUIRE(flux_plan.exchanges()[0].message_tag()
-                 != flux_plan.exchanges()[1].message_tag());
+        const auto weights = GlobalConservationWeights::build(partial, profile);
+        const auto normal = build_line_conservation_weights(profile, 8);
+        const auto tangent = build_line_conservation_weights(profile, 16);
+        const auto& cells = weights.block(0).cell;
+        for (int j = 0; j < 8; ++j) {
+            for (int i = 0; i < 16; ++i) {
+                WCNS_REQUIRE_NEAR(cells(i, j, 0),
+                                  tangent.cell_weights[static_cast<std::size_t>(i)]
+                                      * normal.cell_weights[static_cast<std::size_t>(j)],
+                                  2.0e-13);
+            }
+        }
+        WCNS_REQUIRE(weights.maximum_shared_face_mismatch() < 1.0e-13);
+
+        // A connected sub-face on a mixed side must use the same bounded row
+        // that generated the tensor-product conservation weights.
+        const auto bounded = cached_line_operators(profile, 8).derivative_rows().front();
+        WCNS_REQUIRE(inviscid_residual_stencil(block,
+                                               profile,
+                                               FluxDifferenceMode::Profile,
+                                               Axis::J,
+                                               {0, 0, 0})
+                     == bounded);
+
+        const auto metric = initialize_metric_field(block, profile).metric;
+        InviscidFaceFluxField flux(block.cell_extent(), 2, kind, 19);
+        flux.field(Axis::I).fill(0.0);
+        flux.field(Axis::J).fill(0.0);
+        for (int i = 0; i < 16; ++i) {
+            flux.field(Axis::J)(i, 8, 0, density) = 0.2 + 0.013 * i;
+        }
+        for (int i = 0; i < 4; ++i) {
+            const Real value = 0.07 * (i + 1);
+            flux.field(Axis::J)(i, 0, 0, density) = value;
+            flux.field(Axis::J)(15 - i, 0, 0, density) = -value;
+        }
+        for (int i = 4; i < 12; ++i) {
+            flux.field(Axis::J)(i, 0, 0, density) = -0.15 + 0.009 * i;
+        }
+
+        compute_wcns_inviscid_residual(block, metric, flux, profile);
+        Real actual = 0.0;
+        for (int j = 0; j < 8; ++j) {
+            for (int i = 0; i < 16; ++i) {
+                actual += cells(i, j, 0) * metric.jacobian()(i, j, 0)
+                    * block.flow.residual(i, j, 0, density);
+            }
+        }
+        Real expected = 0.0;
+        for (int i = 0; i < 16; ++i) {
+            const Real lower_physical
+                = i >= 4 && i < 12 ? flux.field(Axis::J)(i, 0, 0, density) : 0.0;
+            expected -= tangent.cell_weights[static_cast<std::size_t>(i)]
+                * (flux.field(Axis::J)(i, 8, 0, density) - lower_physical);
+        }
+        WCNS_REQUIRE_NEAR(actual, expected, 2.0e-12);
+
+        const auto flux_plan = FaceFluxHaloPlan::build(partial, profile, 17);
+        WCNS_REQUIRE(flux_plan.exchanges().size() == 2);
+        WCNS_REQUIRE(flux_plan.exchanges()[0].receiver_block == 0);
+        WCNS_REQUIRE(flux_plan.exchanges()[0].donor_block == 0);
+        WCNS_REQUIRE(flux_plan.exchanges()[0].direction == 0);
+        WCNS_REQUIRE(flux_plan.exchanges()[1].direction == 1);
+        WCNS_REQUIRE(flux_plan.exchanges()[0].pairs.size()
+                     == static_cast<std::size_t>(kind == AlgorithmProfileKind::PhengleiWcns ? 4
+                                                                                           : 8));
+        WCNS_REQUIRE(flux_plan.exchanges()[1].pairs.size()
+                     == static_cast<std::size_t>(kind == AlgorithmProfileKind::PhengleiWcns ? 8
+                                                                                           : 12));
+        WCNS_REQUIRE(flux_plan.exchanges()[0].pairs.front().layer == 1);
+        WCNS_REQUIRE(flux_plan.exchanges()[1].pairs.front().layer == 0);
+        WCNS_REQUIRE(flux_plan.exchanges()[0].message_tag()
+                     != flux_plan.exchanges()[1].message_tag());
+    }
+
+    const auto complete = make_geometry_mesh();
+    WCNS_REQUIRE(
+        connection_side_is_fully_covered(complete.block(0), Axis::I, Side::Upper));
+    const auto complete_profile = ProfileFactory::create(AlgorithmProfileKind::PhengleiWcns);
+    const auto centered = inviscid_residual_stencil(complete.block(0),
+                                                    complete_profile,
+                                                    FluxDifferenceMode::Profile,
+                                                    Axis::I,
+                                                    {5, 2, 0});
+    WCNS_REQUIRE(centered.back().first > 6);
 }
