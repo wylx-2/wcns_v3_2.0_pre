@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -79,6 +80,89 @@ std::string valid_v2_config()
     return result;
 }
 
+std::string valid_sa_config()
+{
+    auto result = valid_v2_config();
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const auto position = result.find(from);
+        if (position == std::string::npos) throw std::logic_error("SA test fixture is incomplete");
+        result.replace(position, from.size(), to);
+    };
+    replace("turbulence.model = none", "turbulence.model = sa_neg");
+    replace("robustness.enabled = true", "robustness.enabled = false");
+    replace("run.viscous = false", "run.viscous = true");
+    const auto model = result.find("turbulence.model = sa_neg");
+    const auto line_end = result.find('\n', model);
+    result.insert(line_end + 1,
+                  "turbulence.prandtl = 0.9\n"
+                  "turbulence.wall_treatment = resolved\n"
+                  "turbulence.sa.farfield_nu_tilde_ratio = 3\n"
+                  "turbulence.sa.source_treatment = local_implicit\n");
+    return result;
+}
+
+std::string valid_two_equation_config(const std::string& model,
+                                      const std::string& wall_treatment)
+{
+    auto result = valid_v2_config();
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const auto position = result.find(from);
+        if (position == std::string::npos) {
+            throw std::logic_error("two-equation test fixture is incomplete");
+        }
+        result.replace(position, from.size(), to);
+    };
+    replace("turbulence.model = none", "turbulence.model = " + model);
+    replace("robustness.enabled = true", "robustness.enabled = false");
+    replace("run.viscous = false", "run.viscous = true");
+    const auto model_key = result.find("turbulence.model = " + model);
+    const auto line_end = result.find('\n', model_key);
+    result.insert(line_end + 1,
+                  (model == "k_epsilon" ? std::string("turbulence.experimental = true\n")
+                                        : std::string())
+                      + "turbulence.prandtl = 0.9\n"
+                  "turbulence.wall_treatment = "
+                      + wall_treatment
+                      + "\n"
+                        "turbulence.freestream.intensity = 0.02\n"
+                        "turbulence.freestream.length_scale = 0.15\n"
+                        "turbulence.model_floor = 1e-11\n"
+                        "turbulence.two_equation.source_treatment = local_implicit\n"
+                      + (wall_treatment == "wall_function"
+                             ? "turbulence.wall_function.y_plus_min = 30\n"
+                               "turbulence.wall_function.y_plus_max = 300\n"
+                             : ""));
+    return result;
+}
+
+std::string valid_lu_sgs_config(bool unsteady = false)
+{
+    auto result = valid_v2_config();
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const auto position = result.find(from);
+        if (position == std::string::npos) throw std::logic_error("LU-SGS test fixture is incomplete");
+        result.replace(position, from.size(), to);
+    };
+    replace("time.integrator = ssprk3", "time.integrator = lu_sgs");
+    replace("robustness.enabled = true", "robustness.enabled = false");
+    if (unsteady) {
+        replace("run.mode = steady", "run.mode = unsteady\nrun.t_end = 0.25");
+    }
+    const auto integrator = result.find("time.integrator = lu_sgs");
+    const auto line_end = result.find('\n', integrator);
+    result.insert(line_end + 1,
+                  "time.physical.scheme = bdf2\n"
+                  + std::string(unsteady ? "time.physical.step = 0.01\n" : "")
+                  + "time.dual_time.max_iterations = 40\n"
+                    "time.dual_time.absolute_tolerance = 1e-11\n"
+                    "time.dual_time.relative_tolerance = 1e-7\n"
+                    "time.dual_time.cfl = 4\n"
+                    "lu_sgs.sweeps = 1\n"
+                    "lu_sgs.jacobian = scalar_spectral\n"
+                    "lu_sgs.relaxation = 0.9\n");
+    return result;
+}
+
 } // namespace
 
 void test_case_config()
@@ -112,18 +196,131 @@ void test_case_config()
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(model_key));
 
+        const auto sa = wcns::CaseConfig::from_text(valid_sa_config());
+        WCNS_REQUIRE(sa.turbulence.kind == wcns::TurbulenceModelKind::SaNegative);
+        WCNS_REQUIRE(sa.turbulence.wall_treatment == wcns::WallTreatment::Resolved);
+        WCNS_REQUIRE(sa.turbulence.source_treatment
+                     == wcns::TurbulenceSourceTreatment::LocalImplicit);
+        WCNS_REQUIRE_NEAR(sa.turbulence.sa_farfield_nu_tilde_ratio, 3.0, 0.0);
+        WCNS_REQUIRE(sa.summary().find("model=sa_neg") != std::string::npos);
+        WCNS_REQUIRE(sa.restart_signature().find("source=local_implicit")
+                     != std::string::npos);
+
+        auto invalid_ratio = valid_sa_config();
+        const auto ratio = invalid_ratio.find("farfield_nu_tilde_ratio = 3");
+        invalid_ratio.replace(ratio,
+                              std::string("farfield_nu_tilde_ratio = 3").size(),
+                              "farfield_nu_tilde_ratio = 2.99");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_ratio));
+
+        auto invalid_source = valid_sa_config();
+        const auto source = invalid_source.find("source_treatment = local_implicit");
+        invalid_source.replace(source,
+                               std::string("source_treatment = local_implicit").size(),
+                               "source_treatment = hidden_clipping");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_source));
+
+        const auto sst
+            = wcns::CaseConfig::from_text(valid_two_equation_config("k_omega_sst", "resolved"));
+        WCNS_REQUIRE(sst.turbulence.kind == wcns::TurbulenceModelKind::KOmegaSst);
+        WCNS_REQUIRE(sst.turbulence.wall_treatment == wcns::WallTreatment::Resolved);
+        WCNS_REQUIRE_NEAR(sst.turbulence.freestream_turbulence_intensity, 0.02, 0.0);
+        WCNS_REQUIRE_NEAR(sst.turbulence.freestream_length_scale, 0.15, 0.0);
+        WCNS_REQUIRE_NEAR(sst.turbulence.model_floor, 1.0e-11, 0.0);
+        WCNS_REQUIRE(sst.restart_signature().find("model=k_omega_sst")
+                     != std::string::npos);
+
+        const auto k_epsilon = wcns::CaseConfig::from_text(
+            valid_two_equation_config("k_epsilon", "wall_function"));
+        WCNS_REQUIRE(k_epsilon.turbulence.kind == wcns::TurbulenceModelKind::KEpsilon);
+        WCNS_REQUIRE(k_epsilon.turbulence.wall_treatment
+                     == wcns::WallTreatment::WallFunction);
+        WCNS_REQUIRE(k_epsilon.turbulence.experimental);
+        WCNS_REQUIRE_NEAR(k_epsilon.turbulence.wall_function_y_plus_min, 30.0, 0.0);
+        WCNS_REQUIRE_NEAR(k_epsilon.turbulence.wall_function_y_plus_max, 300.0, 0.0);
+
+        auto invalid_k_epsilon = valid_two_equation_config("k_epsilon", "wall_function");
+        const auto wall = invalid_k_epsilon.find("wall_function");
+        invalid_k_epsilon.replace(wall, std::string("wall_function").size(), "resolved");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_k_epsilon));
+
+        auto missing_experimental
+            = valid_two_equation_config("k_epsilon", "wall_function");
+        const auto experimental_line
+            = missing_experimental.find("turbulence.experimental = true\n");
+        missing_experimental.erase(experimental_line,
+                                   std::string("turbulence.experimental = true\n").size());
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(missing_experimental));
+
+        auto invalid_intensity = valid_two_equation_config("k_omega_sst", "resolved");
+        const auto intensity = invalid_intensity.find("intensity = 0.02");
+        invalid_intensity.replace(intensity,
+                                  std::string("intensity = 0.02").size(),
+                                  "intensity = 0");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_intensity));
+
         auto none_parameter = valid_v2_config();
         none_parameter += "turbulence.prandtl = 0.9\n";
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(none_parameter));
 
-        auto implicit = valid_v2_config();
-        const auto integrator = implicit.find("time.integrator = ssprk3");
-        implicit.replace(integrator,
-                         std::string("time.integrator = ssprk3").size(),
-                         "time.integrator = lu_sgs");
+        const auto implicit = wcns::CaseConfig::from_text(valid_lu_sgs_config());
+        WCNS_REQUIRE(implicit.time_algorithm.integrator == wcns::TimeIntegratorKind::LuSgs);
+        WCNS_REQUIRE(implicit.time_algorithm.dual_time_max_iterations == 40);
+        WCNS_REQUIRE_NEAR(implicit.time_algorithm.dual_time_cfl, 4.0, 0.0);
+        WCNS_REQUIRE_NEAR(implicit.time_algorithm.lu_sgs_relaxation, 0.9, 0.0);
+        WCNS_REQUIRE(implicit.summary().find("jacobian=scalar_spectral")
+                     != std::string::npos);
+
+        auto three_sweeps_text = valid_lu_sgs_config();
+        const auto sweep_value = three_sweeps_text.find("lu_sgs.sweeps = 1");
+        three_sweeps_text.replace(sweep_value,
+                                  std::string("lu_sgs.sweeps = 1").size(),
+                                  "lu_sgs.sweeps = 3");
+        const auto three_sweeps = wcns::CaseConfig::from_text(three_sweeps_text);
+        WCNS_REQUIRE(three_sweeps.time_algorithm.lu_sgs_sweeps == 3);
+
+        auto invalid_sweeps = valid_lu_sgs_config();
+        const auto invalid_sweep_value = invalid_sweeps.find("lu_sgs.sweeps = 1");
+        invalid_sweeps.replace(invalid_sweep_value,
+                               std::string("lu_sgs.sweeps = 1").size(),
+                               "lu_sgs.sweeps = 5");
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
-                            wcns::CaseConfig::from_text(implicit));
+                            wcns::CaseConfig::from_text(invalid_sweeps));
+
+        const auto dual = wcns::CaseConfig::from_text(valid_lu_sgs_config(true));
+        WCNS_REQUIRE(dual.run.mode == wcns::RunMode::Unsteady);
+        WCNS_REQUIRE_NEAR(dual.time_algorithm.physical_time_step, 0.01, 0.0);
+
+        auto explicit_with_lu_key = valid_v2_config();
+        explicit_with_lu_key += "lu_sgs.sweeps = 1\n";
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(explicit_with_lu_key));
+
+        auto missing_physical_step = valid_lu_sgs_config(true);
+        const auto step = missing_physical_step.find("time.physical.step = 0.01\n");
+        missing_physical_step.erase(step, std::string("time.physical.step = 0.01\n").size());
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(missing_physical_step));
+
+        auto preconditioned = valid_lu_sgs_config();
+        const auto preconditioner_key = preconditioned.find("preconditioner.type = none");
+        preconditioned.replace(preconditioner_key,
+                               std::string("preconditioner.type = none").size(),
+                               "preconditioner.type = weiss_smith\n"
+                               "preconditioner.mach_cutoff = 0.002\n"
+                               "preconditioner.viscous_cutoff = 1.5");
+        const auto riemann = preconditioned.find("algorithm.riemann = hllc");
+        preconditioned.replace(
+            riemann, std::string("algorithm.riemann = hllc").size(), "algorithm.riemann = roe");
+        const auto low_mach = wcns::CaseConfig::from_text(preconditioned);
+        WCNS_REQUIRE(low_mach.preconditioner.kind == wcns::PreconditionerKind::WeissSmith);
+        WCNS_REQUIRE_NEAR(low_mach.preconditioner.mach_cutoff, 0.002, 0.0);
     }
     {
         const auto config = wcns::CaseConfig::from_text(valid_config());

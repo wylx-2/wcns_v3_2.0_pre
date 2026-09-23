@@ -593,7 +593,9 @@ void validate_metric(MetricField& metric,
                         throw GeometryError(
                             "high-order Jacobian failed strict reference validation at cell ("
                             + std::to_string(i) + ',' + std::to_string(j) + ',' + std::to_string(k)
-                            + ')');
+                            + "): value=" + std::to_string(value)
+                            + ", reference=" + std::to_string(reference)
+                            + ", relative_difference=" + std::to_string(difference));
                     }
                 }
             }

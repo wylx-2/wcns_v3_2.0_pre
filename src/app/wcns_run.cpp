@@ -12,6 +12,8 @@
 #include <wcns/runtime/simulation_driver.hpp>
 #include <wcns/runtime/structured_partition.hpp>
 #include <wcns/solver/inviscid_wcns_solver.hpp>
+#include <wcns/solver/sa_negative_transport.hpp>
+#include <wcns/solver/rans_two_equation_transport.hpp>
 #include <wcns/solver/viscous_wcns_solver.hpp>
 
 #include <cctype>
@@ -421,6 +423,16 @@ int main(int argc, char** argv)
             mpi, reader, mesh_name, metadata, plan, local_blocks, profile);
         const auto boundary_data = make_boundary_data(local_blocks, config, gas, reference, floors);
 
+        const auto turbulence_model
+            = wcns::TurbulenceModelRegistry::create_builtin().create(config.turbulence);
+        if (config.turbulence.kind == wcns::TurbulenceModelKind::SaNegative) {
+            wcns::initialize_sa_negative_fields(
+                mpi, local_blocks, config.turbulence, reference.reynolds());
+        } else if (config.turbulence.kind == wcns::TurbulenceModelKind::KOmegaSst
+                   || config.turbulence.kind == wcns::TurbulenceModelKind::KEpsilon) {
+            wcns::initialize_two_equation_fields(mpi, local_blocks, config.turbulence);
+        }
+
         wcns::QuantityContext quantity_context {
             gas,
             reference,
@@ -486,8 +498,18 @@ int main(int argc, char** argv)
             &boundary_data,
             config.run.viscous,
         };
-        wcns::ProductionFieldWriter field_writer(
-            mpi, config, plan, local_blocks, metrics, quantity_context, mesh_name);
+        auto field_registry = wcns::FieldQuantityRegistry::create_builtin();
+        for (const auto& descriptor : turbulence_model->fields()) {
+            field_registry.register_turbulence_field(descriptor);
+        }
+        wcns::ProductionFieldWriter field_writer(mpi,
+                                                 config,
+                                                 plan,
+                                                 local_blocks,
+                                                 metrics,
+                                                 quantity_context,
+                                                 mesh_name,
+                                                 std::move(field_registry));
         wcns::BoundaryOutputWriter boundary_writer(mpi,
                                                    config,
                                                    plan,
@@ -542,6 +564,7 @@ int main(int argc, char** argv)
             wcns::ViscousWcnsConfig solver_config;
             solver_config.inviscid = config.make_inviscid_config();
             solver_config.transport = transport_config;
+            solver_config.turbulence = config.turbulence;
             wcns::ViscousWcnsSolver solver(mpi,
                                            local_blocks,
                                            partitioned.global_mesh,
@@ -555,7 +578,14 @@ int main(int argc, char** argv)
                                            floors,
                                            solver_config);
             wcns::ViscousSimulationSolver adapter(
-                solver, mpi, local_blocks, metrics, plan, profile);
+                solver,
+                mpi,
+                local_blocks,
+                metrics,
+                plan,
+                profile,
+                config.time_algorithm,
+                config.run.mode);
             wcns::SimulationDriver driver(
                 mpi, adapter, config.run, observer, [] { return stop_requested != 0; });
             final_state = driver.run(simulation_initial);
@@ -574,7 +604,14 @@ int main(int argc, char** argv)
                                             floors,
                                             solver_config);
             wcns::InviscidSimulationSolver adapter(
-                solver, mpi, local_blocks, metrics, plan, profile);
+                solver,
+                mpi,
+                local_blocks,
+                metrics,
+                plan,
+                profile,
+                config.time_algorithm,
+                config.run.mode);
             wcns::SimulationDriver driver(
                 mpi, adapter, config.run, observer, [] { return stop_requested != 0; });
             final_state = driver.run(simulation_initial);

@@ -1,9 +1,12 @@
 #pragma once
 
 #include <wcns/solver/inviscid_wcns_solver.hpp>
+#include <wcns/solver/sa_negative_transport.hpp>
 #include <wcns/solver/viscous_operator.hpp>
 
 namespace wcns {
+
+struct WallFunctionDiagnostics;
 
 struct ViscousStabilityCoefficients {
     Real phenglei_2d_ssprk3 = 4.0;
@@ -19,6 +22,7 @@ struct ViscousStabilityCoefficients {
 struct ViscousWcnsConfig {
     InviscidWcnsConfig inviscid {};
     TransportConfig transport {};
+    TurbulenceModelConfig turbulence {};
     ViscousStabilityCoefficients stability {};
 
     void validate() const;
@@ -43,6 +47,12 @@ public:
 
     void compute_residuals(Real stage_time, int rk_stage = 0);
     [[nodiscard]] Real advance(Real time_step, Real initial_time);
+    [[nodiscard]] Real advance_lu_sgs(Real pseudo_cfl,
+                                      Real time,
+                                      const LuSgsIterationConfig& config = {});
+    [[nodiscard]] Real advance_dual_time(Real physical_time_step,
+                                         Real initial_time,
+                                         const DualTimeIterationConfig& config);
     [[nodiscard]] Real global_time_step(Real cfl);
     [[nodiscard]] Real global_residual_l2() const;
     [[nodiscard]] const ReconstructionDiagnostics& reconstruction_diagnostics() const noexcept
@@ -57,17 +67,30 @@ public:
     [[nodiscard]] std::size_t global_riemann_face_count() const;
     [[nodiscard]] std::size_t global_riemann_fallback_count() const;
     [[nodiscard]] RobustnessDiagnostics global_robustness_diagnostics() const;
+    [[nodiscard]] WallFunctionDiagnostics global_wall_function_diagnostics() const;
+    [[nodiscard]] std::vector<std::size_t> global_turbulence_floor_repairs() const;
+    [[nodiscard]] const std::unordered_map<BlockId, Field<Real>>&
+    turbulence_residuals() const noexcept
+    {
+        return turbulence_residual_workspace_;
+    }
 
 private:
     void compute_residuals_impl(Real stage_time,
                                 int rk_stage,
                                 const BlockFaceRobustnessMap* robustness_levels);
+    [[nodiscard]] bool turbulence_active() const noexcept;
+    void capture_turbulence_stage_state();
+    void update_turbulence_stage(Real initial_weight,
+                                 Real stage_weight,
+                                 Real residual_weight);
 
     const MpiRuntime& mpi_;
     LocalBlockSet& local_blocks_;
     const StructuredMesh& global_mesh_;
     const DistributedTopology& topology_;
     HaloExchanger state_exchanger_;
+    HaloExchanger turbulence_exchanger_;
     BlockMetricMap& metrics_;
     const BlockBoundaryDataMap& boundary_data_;
     AlgorithmProfile profile_;
@@ -77,6 +100,7 @@ private:
     ViscousWcnsConfig config_;
     SourceTermRegistry source_registry_;
     TransportModel transport_;
+    std::unique_ptr<ITurbulenceModel> turbulence_model_;
     RiemannSolver riemann_;
     RiemannSolver robust_riemann_;
     RobustnessLadder robustness_ladder_ {};
@@ -93,15 +117,31 @@ private:
     GradientFieldRegistry gradient_registry_;
     GradientHaloPlan gradient_plan_;
     GradientHaloExchanger gradient_exchanger_;
+    std::unordered_map<BlockId, PrimitiveGradientField> turbulence_gradient_workspace_;
+    GradientFieldRegistry turbulence_gradient_registry_;
+    std::unordered_map<BlockId, Field<Real>> two_equation_gradient_workspace_;
     std::unordered_map<BlockId, ViscousFaceFluxField> viscous_flux_workspace_;
     ViscousFaceFluxFieldRegistry viscous_flux_registry_;
     ViscousFaceFluxHaloPlan viscous_flux_plan_;
     ViscousFaceFluxHaloExchanger viscous_flux_exchanger_;
+    std::unordered_map<BlockId, ViscousFaceFluxField> turbulence_flux_workspace_;
+    ViscousFaceFluxFieldRegistry turbulence_flux_registry_;
+    ViscousFaceFluxHaloPlan turbulence_flux_plan_;
+    ViscousFaceFluxHaloExchanger turbulence_flux_exchanger_;
+    std::unordered_map<BlockId, Field<Real>> turbulence_residual_workspace_;
+    std::unordered_map<BlockId, Field<Real>> turbulence_source_jacobian_workspace_;
+    std::unordered_map<BlockId, std::vector<Real>> turbulence_initial_state_;
+    std::unordered_map<BlockId, std::vector<Real>> turbulence_stage_state_;
     SsprkWorkspace time_workspace_;
+    StateSnapshot previous_physical_state_;
+    std::unordered_map<BlockId, std::vector<Real>> previous_turbulence_physical_state_;
+    bool has_previous_physical_state_ = false;
+    Real previous_physical_time_step_ = 0.0;
     std::uint64_t version_ = 0;
     ReconstructionDiagnostics reconstruction_diagnostics_ {};
     RiemannDiagnostics riemann_diagnostics_ {};
     RobustnessDiagnostics robustness_diagnostics_ {};
+    std::vector<std::size_t> turbulence_floor_repairs_;
 };
 
 } // namespace wcns

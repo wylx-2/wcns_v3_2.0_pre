@@ -39,6 +39,29 @@ bool contains(const IndexRange3& range, Index3 index)
     return true;
 }
 
+template <class LeftRange, class RightRange>
+bool same_undirected_range(const LeftRange& lhs, const RightRange& rhs)
+{
+    return (lhs.begin == rhs.begin && lhs.end == rhs.end)
+        || (lhs.begin == rhs.end && lhs.end == rhs.begin);
+}
+
+bool reciprocal_pair(const ConnectivityPatch& connection,
+                     const ConnectivityPatch& candidate,
+                     int dimension)
+{
+    return candidate.receiver_block == connection.donor_block
+        && candidate.donor_block == connection.receiver_block
+        && candidate.receiver_face == connection.donor_face
+        && candidate.donor_face == connection.receiver_face
+        && same_undirected_range(candidate.receiver_vertex_range,
+                                 connection.donor_vertex_range)
+        && same_undirected_range(candidate.donor_vertex_range,
+                                 connection.receiver_vertex_range)
+        && candidate.transform == connection.transform.inverse(dimension)
+        && candidate.periodic == connection.periodic.inverse();
+}
+
 const ConnectivityPatch& reciprocal(const StructuredMesh& mesh, const ConnectivityPatch& connection)
 {
     const auto& donor = mesh.block(connection.donor_block);
@@ -46,11 +69,7 @@ const ConnectivityPatch& reciprocal(const StructuredMesh& mesh, const Connectivi
         donor.connectivities.begin(),
         donor.connectivities.end(),
         [&](const ConnectivityPatch& candidate) {
-            return candidate.receiver_block == connection.donor_block
-                && candidate.donor_block == connection.receiver_block
-                && candidate.receiver_face == connection.donor_face
-                && candidate.donor_face == connection.receiver_face
-                && candidate.transform == connection.transform.inverse(donor.cell_dimension());
+            return reciprocal_pair(connection, candidate, donor.cell_dimension());
         });
     if (iterator == donor.connectivities.end()) {
         throw TopologyError("face-flux plan cannot find reciprocal connectivity");
@@ -68,6 +87,10 @@ auto connection_key(const ConnectivityPatch& connection)
         connection.receiver_vertex_range.begin.i,
         connection.receiver_vertex_range.begin.j,
         connection.receiver_vertex_range.begin.k,
+        connection.receiver_vertex_range.end.i,
+        connection.receiver_vertex_range.end.j,
+        connection.receiver_vertex_range.end.k,
+        connection.name,
     };
 }
 
@@ -75,6 +98,7 @@ FaceFluxExchangeDescriptor make_descriptor(const StructuredMesh& mesh,
                                            const ConnectivityPatch& connection,
                                            ConnectionId id,
                                            BlockId owner,
+                                           bool receiver_is_owner,
                                            const AlgorithmProfile& profile,
                                            std::uint64_t version)
 {
@@ -85,6 +109,7 @@ FaceFluxExchangeDescriptor make_descriptor(const StructuredMesh& mesh,
     descriptor.receiver_rank = mesh.block(connection.receiver_block).owner_rank();
     descriptor.donor_rank = mesh.block(connection.donor_block).owner_rank();
     descriptor.shared_face_owner = owner;
+    descriptor.direction = receiver_is_owner ? 0 : 1;
     descriptor.receiver_axis = connection.receiver_face.axis;
     descriptor.donor_axis = connection.donor_face.axis;
     descriptor.orientation = static_cast<Real>(-side_sign(connection.receiver_face.side)
@@ -93,7 +118,7 @@ FaceFluxExchangeDescriptor make_descriptor(const StructuredMesh& mesh,
     descriptor.profile = profile.kind();
     descriptor.version = version;
     const int maximum_layer = profile.kind() == AlgorithmProfileKind::PhengleiWcns ? 1 : 2;
-    const int first_layer = connection.receiver_block == owner ? 1 : 0;
+    const int first_layer = receiver_is_owner ? 1 : 0;
     const auto& reverse = reciprocal(mesh, connection);
     const auto counts = connection.shared_face_range.counts();
     for (int layer = first_layer; layer <= maximum_layer; ++layer) {
@@ -374,7 +399,6 @@ int FaceFluxExchangeDescriptor::message_tag(int tag_base) const
     if (tag_base < 0 || connection < 0 || receiver_block < 0 || donor_block < 0) {
         throw TopologyError("face-flux message tag inputs are invalid");
     }
-    const int direction = receiver_block < donor_block ? 0 : 1;
     const long long tag = static_cast<long long>(tag_base) + 8LL * connection
         + 2LL * static_cast<int>(profile) + direction;
     if (tag > std::numeric_limits<int>::max()) {
@@ -398,6 +422,21 @@ FaceFluxHaloPlan FaceFluxHaloPlan::build(const StructuredMesh& mesh,
         for (const auto& connection : block.connectivities) {
             if (connection.receiver_block < connection.donor_block) {
                 canonical.push_back(&connection);
+            } else if (connection.receiver_block == connection.donor_block) {
+                const auto reciprocal_iterator = std::find_if(
+                    block.connectivities.begin(),
+                    block.connectivities.end(),
+                    [&](const ConnectivityPatch& candidate) {
+                        return &candidate != &connection
+                            && reciprocal_pair(
+                                connection, candidate, block.cell_dimension());
+                    });
+                if (reciprocal_iterator != block.connectivities.end()
+                    && connection_key(connection) < connection_key(*reciprocal_iterator)) {
+                    canonical.push_back(&connection);
+                } else if (reciprocal_pair(connection, connection, block.cell_dimension())) {
+                    canonical.push_back(&connection);
+                }
             }
         }
     }
@@ -410,8 +449,12 @@ FaceFluxHaloPlan FaceFluxHaloPlan::build(const StructuredMesh& mesh,
         const auto& forward = *canonical[index];
         const auto& reverse = reciprocal(mesh, forward);
         const BlockId owner = std::min(forward.receiver_block, forward.donor_block);
-        result.exchanges_.push_back(make_descriptor(mesh, forward, id, owner, profile, version));
-        result.exchanges_.push_back(make_descriptor(mesh, reverse, id, owner, profile, version));
+        result.exchanges_.push_back(
+            make_descriptor(mesh, forward, id, owner, true, profile, version));
+        if (&forward != &reverse) {
+            result.exchanges_.push_back(
+                make_descriptor(mesh, reverse, id, owner, false, profile, version));
+        }
     }
     std::set<int> tags;
     for (const auto& descriptor : result.exchanges_) {
@@ -573,7 +616,8 @@ void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
                                        Real stage_time,
                                        const FaceRobustnessField* robustness_levels,
                                        const RobustnessLadder* robustness_ladder,
-                                       const RiemannSolver* robust_riemann)
+                                       const RiemannSolver* robust_riemann,
+                                       Real viscous_preconditioner_scale)
 {
     ProfileFactory::validate_bundle(profile.components());
     if (metric.profile() != profile.kind() || metric.dimension() != block.cell_dimension()) {
@@ -583,6 +627,10 @@ void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
         throw std::invalid_argument("inviscid flux RK stage must lie in [0,3]");
     }
     reconstruction.validate();
+    if (!std::isfinite(viscous_preconditioner_scale)
+        || viscous_preconditioner_scale < 0.0) {
+        throw std::invalid_argument("viscous preconditioner scale is invalid");
+    }
     const bool robustness_enabled = robustness_levels != nullptr;
     if (robustness_enabled != (robustness_ladder != nullptr)
         || robustness_enabled != (robust_riemann != nullptr)) {
@@ -674,8 +722,38 @@ void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
                                                                      stage_time);
                         }
                     }
-                    const auto numerical
-                        = face_riemann->solve(states.left, states.right, normal, gas, floors);
+                    Real viscous_speed = 0.0;
+                    if (viscous_preconditioner_scale > 0.0) {
+                        for (int offset : {-1, 0}) {
+                            Index3 cell = face;
+                            cell[static_cast<std::size_t>(axis)] += offset;
+                            if (cell.i < 0 || cell.i >= cells.ni || cell.j < 0
+                                || cell.j >= cells.nj || cell.k < 0 || cell.k >= cells.nk) {
+                                continue;
+                            }
+                            Real area_sum = 0.0;
+                            for (int logical = 0; logical < block.cell_dimension(); ++logical) {
+                                const auto cell_axis = static_cast<Axis>(logical);
+                                const auto& cell_faces = metric_faces(metric, cell_axis);
+                                for (int side = 0; side <= 1; ++side) {
+                                    Index3 cell_face = cell;
+                                    cell_face[static_cast<std::size_t>(cell_axis)] += side;
+                                    area_sum += cell_faces.area(
+                                        cell_face.i, cell_face.j, cell_face.k);
+                                }
+                            }
+                            const Real length
+                                = 2.0 * metric.jacobian()(cell.i, cell.j, cell.k) / area_sum;
+                            if (!std::isfinite(length) || length <= 0.0) {
+                                throw PhysicsError(
+                                    "preconditioner characteristic length is invalid");
+                            }
+                            viscous_speed
+                                = std::max(viscous_speed, viscous_preconditioner_scale / length);
+                        }
+                    }
+                    const auto numerical = face_riemann->solve(
+                        states.left, states.right, normal, gas, floors, {viscous_speed});
                     if (riemann_diagnostics != nullptr) {
                         riemann_diagnostics->record(numerical, diagnostic_location);
                     }
@@ -709,7 +787,8 @@ InviscidFaceFluxField compute_inviscid_face_fluxes(const StructuredBlock& block,
                                                    Real stage_time,
                                                    const FaceRobustnessField* robustness_levels,
                                                    const RobustnessLadder* robustness_ladder,
-                                                   const RiemannSolver* robust_riemann)
+                                                   const RiemannSolver* robust_riemann,
+                                                   Real viscous_preconditioner_scale)
 {
     InviscidFaceFluxField result(
         block.cell_extent(), block.cell_dimension(), profile.kind(), version);
@@ -731,7 +810,8 @@ InviscidFaceFluxField compute_inviscid_face_fluxes(const StructuredBlock& block,
                                       stage_time,
                                       robustness_levels,
                                       robustness_ladder,
-                                      robust_riemann);
+                                      robust_riemann,
+                                      viscous_preconditioner_scale);
     return result;
 }
 

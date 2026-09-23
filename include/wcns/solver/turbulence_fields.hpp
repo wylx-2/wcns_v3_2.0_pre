@@ -37,6 +37,20 @@ struct TurbulenceFieldDescriptor {
     [[nodiscard]] std::string signature() const;
 };
 
+struct TurbulenceFloorProjection {
+    Real conservative = 0.0;
+    Real specific = 0.0;
+    bool repaired = false;
+};
+
+// Applies the declared inclusive numerical floor to a finite, strictly-positive
+// model field.  The caller remains responsible for rejecting non-finite states
+// and fields whose model definition permits negative values (for example SA-neg).
+[[nodiscard]] TurbulenceFloorProjection
+project_positive_turbulence_state(Real conservative,
+                                  Real density,
+                                  const TurbulenceFieldDescriptor& descriptor);
+
 // Model scalars remain separate from the five-component mean-flow layout.
 // Components are cell-major and share one allocation so the existing generic
 // BlockFieldRegistry can exchange any registered model in one halo message.

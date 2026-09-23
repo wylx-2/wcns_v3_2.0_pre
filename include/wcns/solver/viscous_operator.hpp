@@ -1,8 +1,10 @@
 #pragma once
 
+#include <wcns/solver/turbulence_model.hpp>
 #include <wcns/solver/viscous_boundary.hpp>
 #include <wcns/solver/viscous_halo.hpp>
 
+#include <stdexcept>
 #include <unordered_map>
 
 namespace wcns {
@@ -63,10 +65,14 @@ private:
 
 class ViscousFaceFluxHaloExchanger {
 public:
-    ViscousFaceFluxHaloExchanger(const MpiRuntime& mpi, const ViscousFaceFluxHaloPlan& plan)
+    ViscousFaceFluxHaloExchanger(const MpiRuntime& mpi,
+                                 const ViscousFaceFluxHaloPlan& plan,
+                                 int tag_base = 24576)
         : mpi_(mpi)
         , plan_(plan)
+        , tag_base_(tag_base)
     {
+        if (tag_base_ < 0) throw std::invalid_argument("face-flux MPI tag base is negative");
         prepare();
     }
 
@@ -81,12 +87,25 @@ private:
 
     const MpiRuntime& mpi_;
     const ViscousFaceFluxHaloPlan& plan_;
+    int tag_base_ = 24576;
     mutable std::vector<Pending> receives_;
     mutable std::vector<Pending> sends_;
 #if WCNS_HAS_MPI
     mutable std::vector<MPI_Request> requests_;
 #endif
 };
+
+[[nodiscard]] TurbulenceViscousContribution evaluate_turbulence_viscous_face(
+    const StructuredBlock& block,
+    const ViscousFaceTrace& trace,
+    const AlgorithmProfile& profile,
+    const TransportModel& transport,
+    const GasModel& gas,
+    const ReferenceScales& reference,
+    Axis axis,
+    Index3 face,
+    const BoundaryPatch* physical_boundary,
+    const ITurbulenceModel* turbulence_model);
 
 [[nodiscard]] ViscousFaceFluxField
 compute_viscous_face_fluxes(const StructuredBlock& block,
@@ -98,7 +117,8 @@ compute_viscous_face_fluxes(const StructuredBlock& block,
                             const GasModel& gas,
                             const ReferenceScales& reference,
                             const NumericalFloors& floors,
-                            std::uint64_t version);
+                            std::uint64_t version,
+                            const ITurbulenceModel* turbulence_model = nullptr);
 
 void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                       const StructuredBlock& block,
@@ -110,7 +130,8 @@ void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                       const GasModel& gas,
                                       const ReferenceScales& reference,
                                       const NumericalFloors& floors,
-                                      std::uint64_t version);
+                                      std::uint64_t version,
+                                      const ITurbulenceModel* turbulence_model = nullptr);
 
 void add_wcns_viscous_residual(StructuredBlock& block,
                                const MetricField& metric,

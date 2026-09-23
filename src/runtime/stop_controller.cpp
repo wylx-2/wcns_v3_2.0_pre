@@ -57,7 +57,9 @@ Real ResidualNorms::total_l2() const
     Real sum = 0.0;
     for (const Real value : l2)
         sum += value * value;
-    return std::sqrt(sum / static_cast<Real>(euler_components));
+    for (const Real value : model_l2)
+        sum += value * value;
+    return std::sqrt(sum / static_cast<Real>(euler_components + model_l2.size()));
 }
 
 ResidualNorms compute_global_residual_norms(const MpiRuntime& mpi,
@@ -146,6 +148,105 @@ ResidualNorms compute_global_residual_norms(const MpiRuntime& mpi,
     return result;
 }
 
+void append_global_model_residual_norms(
+    const MpiRuntime& mpi,
+    const LocalBlockSet& local_blocks,
+    const BlockMetricMap& metrics,
+    const StructuredPartitionPlan& partition,
+    const AlgorithmProfile& profile,
+    const std::unordered_map<BlockId, Field<Real>>& model_residuals,
+    int component_count,
+    ResidualNorms& result)
+{
+    if (component_count <= 0) {
+        throw std::invalid_argument("model residual component count must be positive");
+    }
+    std::unordered_map<BlockId, const PartitionLeaf*> leaves;
+    for (const auto& leaf : partition.leaves()) {
+        leaves.emplace(leaf.block, &leaf);
+    }
+    std::unordered_map<BlockId, LineWeights> zone_weights;
+    for (const auto& zone : partition.zones()) {
+        LineWeights lines;
+        lines[0] = build_line_conservation_weights(profile, zone.cell_extent.ni);
+        lines[1] = build_line_conservation_weights(profile, zone.cell_extent.nj);
+        lines[2] = build_line_conservation_weights(
+            profile, zone.cell_dimension == 3 ? zone.cell_extent.nk : 1, zone.cell_dimension == 2);
+        zone_weights.emplace(zone.source_zone, std::move(lines));
+    }
+
+    std::vector<Real> local_squared(static_cast<std::size_t>(component_count), 0.0);
+    std::vector<Real> local_maximum(static_cast<std::size_t>(component_count), 0.0);
+    Real local_weight = 0.0;
+    bool local_finite = true;
+    for (const auto& block : local_blocks.blocks()) {
+        const auto& leaf = leaf_for(leaves, block.id());
+        const auto metric_iterator = metrics.find(block.id());
+        const auto line_iterator = zone_weights.find(leaf.source_zone);
+        const auto residual_iterator = model_residuals.find(block.id());
+        if (metric_iterator == metrics.end() || line_iterator == zone_weights.end()
+            || residual_iterator == model_residuals.end()
+            || residual_iterator->second.components() != component_count
+            || residual_iterator->second.interior_extent() != block.cell_extent()) {
+            throw CaseConfigurationError("model residual norm inputs are incomplete");
+        }
+        const auto& jacobian = metric_iterator->second.jacobian();
+        const auto& lines = line_iterator->second;
+        const auto& residual = residual_iterator->second;
+        const auto extent = block.cell_extent();
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    const Real weight
+                        = lines[0].cell_weights[static_cast<std::size_t>(leaf.cells.begin.i + i)]
+                        * lines[1].cell_weights[static_cast<std::size_t>(leaf.cells.begin.j + j)]
+                        * lines[2].cell_weights[static_cast<std::size_t>(leaf.cells.begin.k + k)]
+                        * jacobian(i, j, k);
+                    if (!std::isfinite(weight) || weight <= 0.0) {
+                        local_finite = false;
+                        continue;
+                    }
+                    local_weight += weight;
+                    for (int component = 0; component < component_count; ++component) {
+                        const Real value = residual(i, j, k, component);
+                        if (!std::isfinite(value)) {
+                            local_finite = false;
+                            continue;
+                        }
+                        const auto index = static_cast<std::size_t>(component);
+                        local_squared[index] += weight * value * value;
+                        local_maximum[index] = std::max(local_maximum[index], std::abs(value));
+                    }
+                }
+            }
+        }
+    }
+
+    const Real global_weight = mpi.sum(local_weight);
+    result.model_l2.assign(static_cast<std::size_t>(component_count), 0.0);
+    result.model_linf.assign(static_cast<std::size_t>(component_count), 0.0);
+    bool finite = mpi.all_true(local_finite) && std::isfinite(global_weight)
+        && global_weight > 0.0;
+    for (int component = 0; component < component_count; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        const Real squared = mpi.sum(local_squared[index]);
+        result.model_linf[index] = mpi.max(local_maximum[index]);
+        if (!std::isfinite(squared) || squared < 0.0
+            || !std::isfinite(result.model_linf[index])) {
+            finite = false;
+        }
+        result.model_l2[index] = finite ? std::sqrt(squared / global_weight)
+                                        : std::numeric_limits<Real>::quiet_NaN();
+    }
+    result.finite = result.finite && finite;
+    if (!result.finite) {
+        result.model_l2.assign(static_cast<std::size_t>(component_count),
+                               std::numeric_limits<Real>::quiet_NaN());
+        result.model_linf.assign(static_cast<std::size_t>(component_count),
+                                 std::numeric_limits<Real>::quiet_NaN());
+    }
+}
+
 StopController::StopController(CaseRunConfig config)
     : config_(std::move(config))
 {
@@ -154,6 +255,9 @@ StopController::StopController(CaseRunConfig config)
 
 bool StopController::steady_passed(const ResidualNorms& residuals)
 {
+    if (residuals.model_l2.size() != residuals.model_linf.size()) {
+        throw CaseConfigurationError("model residual norm sizes differ");
+    }
     if (!steady_state_.reference_initialized) {
         for (int component = 0; component < euler_components; ++component) {
             const auto index = static_cast<std::size_t>(component);
@@ -162,7 +266,19 @@ bool StopController::steady_passed(const ResidualNorms& residuals)
             steady_state_.reference_linf[index]
                 = std::max(residuals.linf[index], config_.steady.reference_floor);
         }
+        steady_state_.model_reference_l2.resize(residuals.model_l2.size());
+        steady_state_.model_reference_linf.resize(residuals.model_linf.size());
+        for (std::size_t component = 0; component < residuals.model_l2.size(); ++component) {
+            steady_state_.model_reference_l2[component]
+                = std::max(residuals.model_l2[component], config_.steady.reference_floor);
+            steady_state_.model_reference_linf[component]
+                = std::max(residuals.model_linf[component], config_.steady.reference_floor);
+        }
         steady_state_.reference_initialized = true;
+    }
+    if (steady_state_.model_reference_l2.size() != residuals.model_l2.size()
+        || steady_state_.model_reference_linf.size() != residuals.model_linf.size()) {
+        throw CaseConfigurationError("steady model residual identity changed");
     }
     for (int component = 0; component < euler_components; ++component) {
         const auto index = static_cast<std::size_t>(component);
@@ -172,6 +288,16 @@ bool StopController::steady_passed(const ResidualNorms& residuals)
         const bool linf = !config_.steady.linf_enabled
             || residuals.linf[index] <= config_.steady.linf_absolute
             || residuals.linf[index] / steady_state_.reference_linf[index]
+                <= config_.steady.linf_relative;
+        if (!l2 || !linf) return false;
+    }
+    for (std::size_t component = 0; component < residuals.model_l2.size(); ++component) {
+        const bool l2 = residuals.model_l2[component] <= config_.steady.l2_absolute
+            || residuals.model_l2[component] / steady_state_.model_reference_l2[component]
+                <= config_.steady.l2_relative;
+        const bool linf = !config_.steady.linf_enabled
+            || residuals.model_linf[component] <= config_.steady.linf_absolute
+            || residuals.model_linf[component] / steady_state_.model_reference_linf[component]
                 <= config_.steady.linf_relative;
         if (!l2 || !linf) return false;
     }
@@ -233,6 +359,18 @@ void StopController::restore_steady_state(SteadyConvergenceState state)
                 || !std::isfinite(state.reference_linf[index])
                 || state.reference_linf[index] <= 0.0)) {
             throw CaseConfigurationError("restored steady residual reference is invalid");
+        }
+    }
+    if (state.model_reference_l2.size() != state.model_reference_linf.size()) {
+        throw CaseConfigurationError("restored model residual reference sizes differ");
+    }
+    for (std::size_t component = 0; component < state.model_reference_l2.size(); ++component) {
+        if (state.reference_initialized
+            && (!std::isfinite(state.model_reference_l2[component])
+                || state.model_reference_l2[component] <= 0.0
+                || !std::isfinite(state.model_reference_linf[component])
+                || state.model_reference_linf[component] <= 0.0)) {
+            throw CaseConfigurationError("restored steady model residual reference is invalid");
         }
     }
     steady_state_ = std::move(state);

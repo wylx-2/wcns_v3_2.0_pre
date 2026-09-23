@@ -121,6 +121,18 @@ void atomic_replace(const std::string& temporary, const std::string& target, boo
     }
 }
 
+std::vector<std::string> transported_model_names(const TurbulenceModelConfig& config)
+{
+    const auto model = TurbulenceModelRegistry::create_builtin().create(config);
+    std::vector<std::string> result;
+    for (const auto& descriptor : model->fields()) {
+        if (descriptor.role == TurbulenceFieldRole::Transported) {
+            result.push_back(descriptor.name);
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 OutputSchedule::OutputSchedule(OutputScheduleConfig config)
@@ -241,6 +253,7 @@ void RuntimeOutputManager::prepare_directory()
     prepared_ = true;
 
     if (config_.output.history.enabled && mpi_.rank() == 0) {
+        const auto model_names = transported_model_names(config_.turbulence);
         const auto base = safe_name(config_.case_name) + ".history.r" + std::to_string(mpi_.size());
         const char* extension
             = config_.output.history.format == SeriesOutputFormat::Text ? ".txt" : ".dat";
@@ -264,6 +277,9 @@ void RuntimeOutputManager::prepare_directory()
                 for (const char* component : residual_names) {
                     history_stream_ << ",\"" << component << '_' << suffix << "\"";
                 }
+                for (const auto& model_name : model_names) {
+                    history_stream_ << ",\"" << model_name << '_' << suffix << "\"";
+                }
             }
             history_stream_ << ",\"consecutive\",\"reconstruction_fallbacks\","
                                "\"riemann_fallbacks\",\"robustness_level0_faces\","
@@ -272,8 +288,12 @@ void RuntimeOutputManager::prepare_directory()
                                "\"local_recomputations\",\"step_retries\","
                                "\"proposed_dt\",\"accepted_dt\",\"minimum_rho\","
                                "\"minimum_p\",\"minimum_T\",\"minimum_e\","
-                               "\"residual_checked\","
-                               "\"stop_reason_code\"\n"
+                               "\"wall_function_faces\",\"wall_function_out_of_range\","
+                               "\"wall_function_min_y_plus\",\"wall_function_max_y_plus\"";
+            for (const auto& model_name : model_names) {
+                history_stream_ << ",\"" << model_name << "_floor_repairs\"";
+            }
+            history_stream_ << ",\"residual_checked\",\"stop_reason_code\"\n"
                                "AUXDATA STOP_REASON_CODES=\"0=running;1=steady_converged;"
                                "2=physical_time_reached;3=maximum_steps;"
                                "4=wall_time_checkpoint;5=user_signal_checkpoint;"
@@ -290,13 +310,21 @@ void RuntimeOutputManager::prepare_directory()
                 for (const char* component : residual_names) {
                     history_stream_ << ' ' << component << '_' << suffix;
                 }
+                for (const auto& model_name : model_names) {
+                    history_stream_ << ' ' << model_name << '_' << suffix;
+                }
             }
             history_stream_ << " consecutive reconstruction_fallbacks riemann_fallbacks "
                                "robustness_level0_faces robustness_level1_faces "
                                "robustness_level2_faces robustness_level3_faces "
                                "troubled_cells local_recomputations step_retries "
                                "proposed_dt accepted_dt minimum_rho minimum_p minimum_T minimum_e "
-                               "residual_checked stop_reason\n";
+                               "wall_function_faces wall_function_out_of_range "
+                               "wall_function_min_y_plus wall_function_max_y_plus";
+            for (const auto& model_name : model_names) {
+                history_stream_ << ' ' << model_name << "_floor_repairs";
+            }
+            history_stream_ << " residual_checked stop_reason\n";
         }
     }
     if (config_.output.statistics.enabled) {
@@ -377,14 +405,35 @@ void RuntimeOutputManager::write_history(const SimulationState& state, bool resi
     if (!history_stream_) {
         throw std::runtime_error("residual history stream is not writable");
     }
+    const std::size_t expected_model_components
+        = transported_model_names(config_.turbulence).size();
+    if (state.residuals.model_l2.size() != expected_model_components
+        || state.residuals.model_linf.size() != expected_model_components
+        || (state.steady.reference_initialized
+            && (state.steady.model_reference_l2.size() != expected_model_components
+                || state.steady.model_reference_linf.size() != expected_model_components))) {
+        throw std::runtime_error("history model residual identity differs from configuration");
+    }
+    if (state.diagnostics.turbulence_floor_repairs.size() != expected_model_components) {
+        throw std::runtime_error(
+            "history turbulence floor-repair identity differs from configuration");
+    }
     history_stream_ << std::setprecision(17) << state.step << ' ' << state.time << ' '
                     << state.time_step << ' ' << config_.run.cfl << ' ' << state.wall_time << ' '
                     << state.residuals.total_l2();
     for (const Real value : state.residuals.l2)
         history_stream_ << ' ' << value;
+    for (const Real value : state.residuals.model_l2)
+        history_stream_ << ' ' << value;
     const Real nan = std::numeric_limits<Real>::quiet_NaN();
     for (const Real value : state.steady.reference_l2) {
         history_stream_ << ' ' << (state.steady.reference_initialized ? value : nan);
+    }
+    for (std::size_t component = 0; component < expected_model_components; ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.steady.model_reference_l2[component]
+                                : nan);
     }
     for (std::size_t component = 0; component < euler_components; ++component) {
         history_stream_ << ' '
@@ -392,16 +441,38 @@ void RuntimeOutputManager::write_history(const SimulationState& state, bool resi
                                     / state.steady.reference_l2[component]
                                                                : nan);
     }
+    for (std::size_t component = 0; component < state.residuals.model_l2.size(); ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.residuals.model_l2[component]
+                                    / state.steady.model_reference_l2[component]
+                                : nan);
+    }
     for (const Real value : state.residuals.linf)
+        history_stream_ << ' ' << value;
+    for (const Real value : state.residuals.model_linf)
         history_stream_ << ' ' << value;
     for (const Real value : state.steady.reference_linf) {
         history_stream_ << ' ' << (state.steady.reference_initialized ? value : nan);
+    }
+    for (std::size_t component = 0; component < expected_model_components; ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.steady.model_reference_linf[component]
+                                : nan);
     }
     for (std::size_t component = 0; component < euler_components; ++component) {
         history_stream_ << ' '
                         << (state.steady.reference_initialized ? state.residuals.linf[component]
                                     / state.steady.reference_linf[component]
                                                                : nan);
+    }
+    for (std::size_t component = 0; component < state.residuals.model_linf.size(); ++component) {
+        history_stream_ << ' '
+                        << (state.steady.reference_initialized
+                                ? state.residuals.model_linf[component]
+                                    / state.steady.model_reference_linf[component]
+                                : nan);
     }
     history_stream_ << ' ' << state.steady.consecutive_passes << ' '
                     << state.diagnostics.reconstruction_fallbacks << ' '
@@ -419,7 +490,14 @@ void RuntimeOutputManager::write_history(const SimulationState& state, bool resi
                     << finite_or_nan(state.diagnostics.minimum_pressure) << ' '
                     << finite_or_nan(state.diagnostics.minimum_temperature) << ' '
                     << finite_or_nan(state.diagnostics.minimum_internal_energy) << ' '
-                    << (residual_checked ? 1 : 0) << ' ';
+                    << state.diagnostics.wall_function_faces << ' '
+                    << state.diagnostics.wall_function_out_of_range << ' '
+                    << finite_or_nan(state.diagnostics.wall_function_minimum_y_plus) << ' '
+                    << finite_or_nan(state.diagnostics.wall_function_maximum_y_plus);
+    for (const auto count : state.diagnostics.turbulence_floor_repairs) {
+        history_stream_ << ' ' << count;
+    }
+    history_stream_ << ' ' << (residual_checked ? 1 : 0) << ' ';
     if (config_.output.history.format == SeriesOutputFormat::Tecplot) {
         history_stream_ << static_cast<int>(state.stop_reason);
     } else {
@@ -434,6 +512,9 @@ void RuntimeOutputManager::write_history(const SimulationState& state, bool resi
 void RuntimeOutputManager::on_initial(const SimulationState& state)
 {
     prepare_directory();
+    turbulence_floor_repairs_total_.assign(
+        state.diagnostics.turbulence_floor_repairs.size(), std::size_t {0});
+    last_diagnostic_step_ = state.step;
     if (config_.output.history.enabled && history_schedule_.consume(state, true, false)) {
         write_history(state, false);
     }
@@ -458,6 +539,24 @@ void RuntimeOutputManager::on_initial(const SimulationState& state)
 
 void RuntimeOutputManager::on_step(const SimulationState& state, bool residual_checked)
 {
+    if (state.step > last_diagnostic_step_) {
+        if (state.diagnostics.turbulence_floor_repairs.size()
+            != turbulence_floor_repairs_total_.size()) {
+            throw std::runtime_error(
+                "turbulence floor-repair identity changed during the run");
+        }
+        for (std::size_t variable = 0;
+             variable < turbulence_floor_repairs_total_.size();
+             ++variable) {
+            const auto count = state.diagnostics.turbulence_floor_repairs[variable];
+            if (count > std::numeric_limits<std::size_t>::max()
+                    - turbulence_floor_repairs_total_[variable]) {
+                throw std::overflow_error("turbulence floor-repair total overflow");
+            }
+            turbulence_floor_repairs_total_[variable] += count;
+        }
+        last_diagnostic_step_ = state.step;
+    }
     if (config_.output.history.enabled && history_schedule_.consume(state, false, false)) {
         write_history(state, residual_checked);
     }
@@ -540,6 +639,12 @@ void RuntimeOutputManager::write_manifest(const SimulationState& state)
     if (!output) {
         throw std::runtime_error("cannot open manifest temporary file: " + temporary);
     }
+    const auto model_names = transported_model_names(config_.turbulence);
+    if (state.diagnostics.turbulence_floor_repairs.size() != model_names.size()
+        || turbulence_floor_repairs_total_.size() != model_names.size()) {
+        throw std::runtime_error(
+            "manifest turbulence floor-repair identity differs from configuration");
+    }
     output << "manifest_version=1\n"
            << "program_version=" << WCNS_PROGRAM_VERSION << '\n'
            << "git_commit=" << WCNS_GIT_COMMIT << '\n'
@@ -575,7 +680,23 @@ void RuntimeOutputManager::write_manifest(const SimulationState& state)
            << "robustness_minimum_rho=" << state.diagnostics.minimum_density << '\n'
            << "robustness_minimum_p=" << state.diagnostics.minimum_pressure << '\n'
            << "robustness_minimum_T=" << state.diagnostics.minimum_temperature << '\n'
-           << "robustness_minimum_e=" << state.diagnostics.minimum_internal_energy << '\n';
+           << "robustness_minimum_e=" << state.diagnostics.minimum_internal_energy << '\n'
+           << "wall_function_faces=" << state.diagnostics.wall_function_faces << '\n'
+           << "wall_function_out_of_range="
+           << state.diagnostics.wall_function_out_of_range << '\n'
+           << "wall_function_status="
+           << (state.diagnostics.wall_function_out_of_range == 0 ? "within_range" : "warning")
+           << '\n'
+           << "wall_function_minimum_y_plus="
+           << state.diagnostics.wall_function_minimum_y_plus << '\n'
+           << "wall_function_maximum_y_plus="
+           << state.diagnostics.wall_function_maximum_y_plus << '\n';
+    for (std::size_t variable = 0; variable < model_names.size(); ++variable) {
+        output << model_names[variable] << "_floor_repairs="
+               << turbulence_floor_repairs_total_[variable] << '\n'
+               << model_names[variable] << "_floor_repairs_last_step="
+               << state.diagnostics.turbulence_floor_repairs[variable] << '\n';
+    }
     for (const auto& file : files_)
         output << "file=" << file << '\n';
     output.close();
@@ -587,6 +708,9 @@ void RuntimeOutputManager::write_manifest(const SimulationState& state)
 void RuntimeOutputManager::on_final(const SimulationState& state)
 {
     if (finalized_) return;
+    // Initialization can fail before on_initial() is reached.  The failure
+    // manifest is still mandatory evidence, so prepare its directory here too.
+    prepare_directory();
     if (config_.output.history.enabled && history_schedule_.consume(state, false, true)) {
         write_history(state, true);
     }

@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "identity": "wcns-v2-stage-x-sa-neg-tmr-2026-09-13",
+  "model": {
+    "name": "sa_neg",
+    "variant": "NASA-TMR-SA-neg-modified-vorticity-1c",
+    "farfield_nu_tilde_ratio": 3.0,
+    "turbulent_prandtl": 0.9,
+    "trip_source": false,
+    "ft2_positive_branch": true,
+    "compressibility_correction": false
+  },
+  "assets": [
+    {
+      "path": "references/flatplate_cf_x0p8697742.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Finiteflatplatenumerics_val/all_cf_8697742.dat",
+      "sha256": "bf4def25780f1557f89c2b0f1c554622ab9d673d0fdbb8b06dbd8e4bed3d58a8"
+    },
+    {
+      "path": "references/flatplate_drag.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Finiteflatplatenumerics_val/all_dragfull.dat",
+      "sha256": "a33c28d4b1a012eee6a71ca1b19ec2b08108e1fa43885610333466fb89804a93"
+    },
+    {
+      "path": "references/naca0012_validation_clcd.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012clcd_cfl3d_sa.dat",
+      "sha256": "b07afec6ce3ae4bf2f2d1a1d53785fde0a5ca68481a0d4186aa92754d811944e"
+    },
+    {
+      "path": "references/naca0012_validation_cp.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cp_cfl3d_sa.dat",
+      "sha256": "2f1231eba6a7da0e988a6954ac34f2f420ff59a5e24fca331110f980cd881dd2"
+    },
+    {
+      "path": "references/naca0012_validation_cf.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cf_cfl3d_sa.dat",
+      "sha256": "e7372151e535d3f89c2eb8b8260a1e69e6b6681bb33aacdd677967ad5403ba5e"
+    },
+    {
+      "path": "archives/naca0012_validation_grids.zip",
+      "url": "https://www.nasa.gov/wp-content/uploads/2026/02/naca0012-grids.zip",
+      "sha256": "b4418dd04ab6aee04dc700f9f7769b6eca1af0dd31ccefb958b7d89da53ff1c4"
+    },
+    {
+      "path": "archives/finite_flat_plate_generator.f90",
+      "url": "https://tmbwg.github.io/turbmodels/Finiteflatplatenumerics_grids/plate_tmr.f90",
+      "sha256": "851f75a1891f2a6a61e5c82ea021025f715195897cb4d4d52f9de9de11496946"
+    },
+    {
+      "path": "archives/naca0012numerics-grids.zip",
+      "url": "https://www.nasa.gov/wp-content/uploads/2026/02/naca0012numerics-grids.zip",
+      "sha256": "3982924aa3d97e59c7b854b0db50287be9e1540d2b51acfcfdd8a7f0049b2c9f"
+    },
+    {
+      "path": "references/familyII_fun3d_sa_nopv_withN.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012numerics_val/fun3d_results_sa_nopv_withN.dat",
+      "sha256": "77946088e15198667c81715ec76590503ed89bc34b6bfa52bb34e63b9cb224d8"
+    },
+    {
+      "path": "references/familyII_cfl3d_sa_nopv_2nd_withN.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012numerics_val/cfl3d_results_sa_nopv_2ndorderturbadvection_withN.dat",
+      "sha256": "85d6db8244beb8f566cdedf4a1b18c9afdd00fb062a87ee918ceaa3e4e327af4"
+    },
+    {
+      "path": "references/familyII_tau_sa_nopv_withN.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012numerics_val/tau_results_sa_nopv_withN.dat",
+      "sha256": "3275620ca8684395230696947d78b417a9358d5495a769aeb0dcd10a3e5ca855"
+    },
+    {
+      "path": "references/familyII_fun3d_sa_withpv_withN.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012numerics_val/fun3d_results_sa_withN.dat",
+      "sha256": "34c8dea9cc1cd775fbab1ca63787f5ee9d9c8421a5c1c66f87c249832b50859f"
+    },
+    {
+      "path": "references/familyII_cfl3d_sa_withpv_withN.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012numerics_val/cfl3d_results_sa_withN.dat",
+      "sha256": "b1d31071acf7b92690cbc7565c30a6d10d4fe8123e5685579e1dce0c13f7b583"
+    }
+  ],
+  "derived_grids": [
+    {
+      "path": "grids/n0012familyII.6_225-65_2d.cgns",
+      "source_member": "n0012familyII.6.p2dfmt.gz",
+      "wall_vertex_range": [49, 177],
+      "sha256": "7c58203465fc1ca53d20f33051e26cb40c3f542a29a548113db98f410a093401"
+    },
+    {
+      "path": "grids/n0012familyII.5_449-129_2d.cgns",
+      "source_member": "n0012familyII.5.p2dfmt.gz",
+      "wall_vertex_range": [97, 353],
+      "sha256": "1ac113939b5d77befbac9e1183501aeebf0d9394b6765963da5126206b7a274d"
+    },
+    {
+      "path": "grids/n0012familyII.4_897-257_2d.cgns",
+      "source_member": "n0012familyII.4.p2dfmt.gz",
+      "wall_vertex_range": [193, 705],
+      "sha256": "e72bf031efbf8d64c3ec594a695b5a52c32673220774f9cac3f7631166f77af8"
+    }
+  ],
+  "mms": {
+    "resolutions": [32, 64, 128],
+    "minimum_order_l1": 1.9,
+    "minimum_order_l2": 1.9,
+    "minimum_order_linf": 1.9,
+    "mpi_max_abs": 5e-13
+  },
+  "finite_flat_plate": {
+    "mach": 0.2,
+    "reynolds": 5000000.0,
+    "prandtl": 0.72,
+    "turbulent_prandtl": 0.9,
+    "reference_temperature_rankine": 540.0,
+    "sutherland_rankine": 198.6,
+    "smoke_level": 8,
+    "acceptance_levels": [6, 5, 4],
+    "cf_sample_x": 0.8697742,
+    "level4_cf_envelope": [0.002748, 0.002758],
+    "level4_drag_relative_tolerance": 0.04,
+    "profile_l2_relative_tolerance": 0.08,
+    "first_cell_y_plus_max": 1.0
+  },
+  "naca0012_validation": {
+    "mach": 0.15,
+    "reynolds": 6000000.0,
+    "angles_deg": [0.0, 10.0, 15.0],
+    "reference_temperature_rankine": 540.0,
+    "sutherland_rankine": 198.6,
+    "prandtl": 0.72,
+    "adiabatic_wall": true,
+    "farfield_chords_approx": 500.0,
+    "smoke_grid": [113, 33],
+    "acceptance_grids": [[225, 65], [449, 129], [897, 257]],
+    "finest_integral_relative_tolerance": {"cl": 0.01, "cd": 0.03},
+    "finest_curve_l2_relative_tolerance": {"cp": 0.05, "cf": 0.08}
+  },
+  "naca0012_numerical_family_ii": {
+    "mach": 0.15,
+    "reynolds": 6000000.0,
+    "angle_deg": 10.0,
+    "point_vortex_branch": "without",
+    "point_vortex_lift_coefficient": 1.09125,
+    "minimum_non_smoke_grids": 3,
+    "asymptotic_intervals": {
+      "cl": [1.0909, 1.0911],
+      "cd": [0.012270, 0.012275],
+      "cm": [0.00676, 0.00680]
+    },
+    "with_pv_intervals": {
+      "cl": [1.0912, 1.0913],
+      "cd": [0.01221, 0.01222],
+      "cm": [0.00677, 0.00679]
+    }
+  },
+  "excluded": [
+    "cases/manual/case06_2d_naca0012"
+  ]
+}

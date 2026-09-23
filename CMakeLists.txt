@@ -169,9 +169,15 @@ add_library(wcns_solver STATIC
     src/solver/physical_boundary.cpp
     src/solver/riemann_solver.cpp
     src/solver/robustness.cpp
+    src/solver/rans_two_equation_transport.cpp
+    src/solver/sa_negative.cpp
+    src/solver/sa_negative_transport.cpp
     src/solver/source_operator.cpp
     src/solver/spatial_operator.cpp
     src/solver/time_integrator.cpp
+    src/solver/implicit_time_integrator.cpp
+    src/solver/low_mach_preconditioner.cpp
+    src/solver/two_equation_models.cpp
     src/solver/transport_model.cpp
     src/solver/turbulence_fields.cpp
     src/solver/turbulence_model.cpp
@@ -223,6 +229,14 @@ if(WCNS_ENABLE_CGNS)
     target_link_libraries(wcns_generate_release_cgns PRIVATE wcns::core wcns::cgns)
 
     add_executable(
+        wcns_generate_couette_validation_cgns
+        tools/generate_couette_validation_cgns.cpp
+    )
+    target_link_libraries(
+        wcns_generate_couette_validation_cgns PRIVATE wcns::core wcns::cgns
+    )
+
+    add_executable(
         wcns_validate_release_case
         tools/validate_release_case.cpp
     )
@@ -233,6 +247,20 @@ if(WCNS_ENABLE_CGNS)
         tools/compare_metric_profiles.cpp
     )
     target_link_libraries(wcns_compare_metric_profiles PRIVATE wcns::io)
+
+    add_executable(
+        wcns_convert_tmr_p2d_to_cgns
+        tools/convert_tmr_p2d_to_cgns.cpp
+    )
+    target_link_libraries(wcns_convert_tmr_p2d_to_cgns PRIVATE wcns::core wcns::cgns)
+
+    add_executable(
+        wcns_convert_tmr_flatplate_p3d_to_cgns
+        tools/convert_tmr_flatplate_p3d_to_cgns.cpp
+    )
+    target_link_libraries(
+        wcns_convert_tmr_flatplate_p3d_to_cgns PRIVATE wcns::core wcns::cgns
+    )
 endif()
 
 if(WCNS_BUILD_TESTS)

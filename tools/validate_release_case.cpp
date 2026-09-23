@@ -445,6 +445,71 @@ void validate_nonzero_field(const std::string& path,
               << '\n';
 }
 
+void report_field_extrema(const std::string& path, const std::string& field_name)
+{
+    const auto file = read_fields(path);
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -std::numeric_limits<double>::infinity();
+    double maximum_absolute = 0.0;
+    std::size_t samples = 0;
+    for (const auto& [zone_name, zone] : file) {
+        static_cast<void>(zone_name);
+        for (const double value : require_field(zone, field_name)) {
+            if (!std::isfinite(value)) {
+                throw std::runtime_error("field-extrema check encountered non-finite data");
+            }
+            minimum = std::min(minimum, value);
+            maximum = std::max(maximum, value);
+            maximum_absolute = std::max(maximum_absolute, std::abs(value));
+            ++samples;
+        }
+    }
+    if (samples == 0) throw std::runtime_error("field-extrema check found no samples");
+    std::cout << std::setprecision(17) << "check=field_extrema field=" << field_name
+              << " samples=" << samples << " min=" << minimum << " max=" << maximum
+              << " max_abs=" << maximum_absolute << '\n';
+}
+
+void report_flatplate_profile(const std::string& path, double target_x)
+{
+    const auto file = read_fields(path);
+    std::cout << std::setprecision(17)
+              << "# zone i j x y velocity_x k omega mu_t_over_mu\n";
+    for (const auto& [zone_name, zone] : file) {
+        if (zone.dimension != 2 || zone.cells.size() != 2) {
+            throw std::runtime_error("flatplate-profile requires a two-dimensional field");
+        }
+        const auto ni = static_cast<std::size_t>(zone.cells[0]);
+        const auto nj = static_cast<std::size_t>(zone.cells[1]);
+        const auto& density = require_field(zone, "Density");
+        const auto& momentum_x = require_field(zone, "MomentumX");
+        const auto& k = require_field(zone, "k");
+        const auto& omega = require_field(zone, "omega");
+        const auto& viscosity_ratio = require_field(zone, "mu_t_over_mu");
+        for (std::size_t j = 0; j < nj; ++j) {
+            std::size_t selected = j * ni;
+            double distance = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < ni; ++i) {
+                const auto cell = j * ni + i;
+                const double candidate
+                    = std::abs(zone.cell_centers[cell][0] - target_x);
+                if (candidate < distance) {
+                    selected = cell;
+                    distance = candidate;
+                }
+            }
+            if (!(density[selected] > 0.0) || !std::isfinite(momentum_x[selected])) {
+                throw std::runtime_error("flatplate-profile encountered an invalid mean state");
+            }
+            std::cout << zone_name << ' ' << selected % ni << ' ' << j << ' '
+                      << zone.cell_centers[selected][0] << ' '
+                      << zone.cell_centers[selected][1] << ' '
+                      << momentum_x[selected] / density[selected] << ' ' << k[selected] << ' '
+                      << omega[selected] << ' ' << viscosity_ratio[selected] << '\n';
+        }
+    }
+}
+
 double validate_uniform(const std::string& path,
                         const std::map<std::string, double>& expected,
                         double tolerance)
@@ -641,6 +706,65 @@ void compare_fields(const std::string& lhs_path, const std::string& rhs_path, do
     }
     std::cout << std::setprecision(17) << "check=compare samples=" << samples
               << " max_abs=" << maximum << " tolerance=" << tolerance << '\n';
+}
+
+void compare_scaled_primitive_fields(const std::string& lhs_path,
+                                     const std::string& rhs_path,
+                                     double gamma,
+                                     double mach,
+                                     double tolerance)
+{
+    require_tolerance(tolerance);
+    if (!(gamma > 1.0) || !(mach > 0.0) || !std::isfinite(gamma)
+        || !std::isfinite(mach)) {
+        throw std::invalid_argument("scaled primitive comparison requires gamma>1 and Mach>0");
+    }
+    const auto lhs = read_fields(lhs_path);
+    const auto rhs = read_fields(rhs_path);
+    if (lhs.size() != rhs.size()) {
+        throw std::runtime_error("scaled primitive comparison zone counts differ");
+    }
+    double maximum = 0.0;
+    std::string maximum_field;
+    std::size_t samples = 0;
+    for (const auto& [name, lhs_zone] : lhs) {
+        const auto rhs_iterator = rhs.find(name);
+        if (rhs_iterator == rhs.end()) {
+            throw std::runtime_error("scaled primitive comparison zone names differ");
+        }
+        const auto& rhs_zone = rhs_iterator->second;
+        if (lhs_zone.dimension != rhs_zone.dimension || lhs_zone.cells != rhs_zone.cells
+            || lhs_zone.fields.size() != rhs_zone.fields.size()) {
+            throw std::runtime_error("scaled primitive comparison metadata differs");
+        }
+        for (const auto& [field_name, lhs_values] : lhs_zone.fields) {
+            const auto& rhs_values = require_field(rhs_zone, field_name);
+            if (lhs_values.size() != rhs_values.size()) {
+                throw std::runtime_error("scaled primitive comparison array sizes differ");
+            }
+            const double scale = field_name == "Pressure" ? gamma * mach * mach : 1.0;
+            for (std::size_t index = 0; index < lhs_values.size(); ++index) {
+                if (!std::isfinite(lhs_values[index]) || !std::isfinite(rhs_values[index])) {
+                    throw std::runtime_error("scaled primitive comparison is non-finite");
+                }
+                const double difference
+                    = scale * std::abs(lhs_values[index] - rhs_values[index]);
+                if (difference > maximum) {
+                    maximum = difference;
+                    maximum_field = field_name;
+                }
+                ++samples;
+            }
+        }
+    }
+    if (maximum > tolerance) {
+        throw std::runtime_error("scaled primitive field " + maximum_field
+                                 + " exceeds tolerance " + std::to_string(tolerance));
+    }
+    std::cout << std::setprecision(17) << "check=compare_scaled_primitive samples=" << samples
+              << " max_abs=" << maximum << " maximum_field=" << maximum_field
+              << " pressure_scale=" << gamma * mach * mach
+              << " tolerance=" << tolerance << '\n';
 }
 
 struct SpatialValue {
@@ -1378,6 +1502,12 @@ int main(int argc, char** argv)
             validate_constant_series(argv[2], parse_real(argv[3], "tolerance"));
         } else if (argc == 5 && std::string(argv[1]) == "compare") {
             compare_fields(argv[2], argv[3], parse_real(argv[4], "tolerance"));
+        } else if (argc == 7 && std::string(argv[1]) == "compare-scaled-primitive") {
+            compare_scaled_primitive_fields(argv[2],
+                                            argv[3],
+                                            parse_real(argv[4], "gamma"),
+                                            parse_real(argv[5], "Mach"),
+                                            parse_real(argv[6], "tolerance"));
         } else if (argc == 6 && std::string(argv[1]) == "compare-spatial") {
             compare_spatial_fields(argv[2],
                                    argv[3],
@@ -1443,6 +1573,10 @@ int main(int argc, char** argv)
             validate_tecplot_consistency(argv[2], argv[3], parse_real(argv[4], "tolerance"));
         } else if (argc == 5 && std::string(argv[1]) == "nonzero") {
             validate_nonzero_field(argv[2], argv[3], parse_real(argv[4], "threshold"));
+        } else if (argc == 4 && std::string(argv[1]) == "field-extrema") {
+            report_field_extrema(argv[2], argv[3]);
+        } else if (argc == 4 && std::string(argv[1]) == "flatplate-profile") {
+            report_flatplate_profile(argv[2], parse_real(argv[3], "target x"));
         } else if (argc == 7 && std::string(argv[1]) == "derived") {
             validate_derived_fields(argv[2],
                                     parse_real(argv[3], "gamma"),
@@ -1456,6 +1590,8 @@ int main(int argc, char** argv)
                          "<reference.cgns> <value.cgns>\n"
                          "  wcns_validate_release_case series-constant <series.txt> <tol>\n"
                          "  wcns_validate_release_case compare <lhs.cgns> <rhs.cgns> <tol>\n"
+                         "  wcns_validate_release_case compare-scaled-primitive <lhs.cgns> "
+                         "<rhs.cgns> <gamma> <Mach> <tol>\n"
                          "  wcns_validate_release_case compare-spatial <lhs.cgns> "
                          "<rhs.cgns> <field-tol> <coordinate-tol>\n"
                          "  wcns_validate_release_case uniform <field.cgns> "
@@ -1479,7 +1615,11 @@ int main(int argc, char** argv)
                          "  wcns_validate_release_case derived <field.cgns> "
                          "<gamma> <viscosity> <Jacobian> <tol>\n"
                          "  wcns_validate_release_case nonzero <field.cgns> "
-                         "<field-name> <minimum-maximum-absolute-value>\n";
+                         "<field-name> <minimum-maximum-absolute-value>\n"
+                         "  wcns_validate_release_case field-extrema <field.cgns> "
+                         "<field-name>\n"
+                         "  wcns_validate_release_case flatplate-profile <field.cgns> "
+                         "<target-x>\n";
             return EXIT_FAILURE;
         }
         return EXIT_SUCCESS;

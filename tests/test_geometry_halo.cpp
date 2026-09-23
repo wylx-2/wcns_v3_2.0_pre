@@ -2,6 +2,7 @@
 
 #include <wcns/mesh/geometry_halo.hpp>
 #include <wcns/mesh/conservation_weights.hpp>
+#include <wcns/solver/inviscid_flux.hpp>
 
 #include <set>
 #include <unordered_map>
@@ -122,6 +123,48 @@ wcns::StructuredMesh make_periodic_geometry_mesh()
     return StructuredMesh(std::move(blocks));
 }
 
+wcns::StructuredMesh make_partial_c_grid_mesh()
+{
+    using namespace wcns;
+    StructuredBlock block(0, "partial-c-grid", 0, 2, 2, {17, 9, 1}, 3);
+    for (int j = 0; j < 9; ++j) {
+        for (int i = 0; i < 17; ++i) {
+            block.coordinates.x(i, j, 0) = static_cast<Real>(i);
+            block.coordinates.y(i, j, 0) = static_cast<Real>(j);
+            block.coordinates.z(i, j, 0) = 0.0;
+        }
+    }
+    block.connectivities.push_back({"wake-left-to-right",
+                                    0,
+                                    0,
+                                    0,
+                                    {Axis::J, Side::Lower},
+                                    {Axis::J, Side::Lower},
+                                    {{0, 0, 0}, {4, 0, 0}},
+                                    {{16, 0, 0}, {12, 0, 0}},
+                                    {{0, 0, 0}, {3, 0, 0}},
+                                    {{15, 0, 0}, {12, 0, 0}},
+                                    {{0, 0, 0}, {3, 0, 0}},
+                                    {{{-1, 2, 3}}},
+                                    3});
+    block.connectivities.push_back({"wake-right-to-left",
+                                    0,
+                                    0,
+                                    0,
+                                    {Axis::J, Side::Lower},
+                                    {Axis::J, Side::Lower},
+                                    {{16, 0, 0}, {12, 0, 0}},
+                                    {{0, 0, 0}, {4, 0, 0}},
+                                    {{15, 0, 0}, {12, 0, 0}},
+                                    {{0, 0, 0}, {3, 0, 0}},
+                                    {{15, 0, 0}, {12, 0, 0}},
+                                    {{{-1, 2, 3}}},
+                                    3});
+    std::vector<StructuredBlock> blocks;
+    blocks.push_back(std::move(block));
+    return StructuredMesh(std::move(blocks));
+}
+
 } // namespace
 
 // 验收分阶段几何消息的种类、层宽、donor 路径、唯一标签和共享面所有者。
@@ -236,4 +279,33 @@ void test_global_conservation_weights()
         }
         WCNS_REQUIRE_THROWS(std::out_of_range, weights.block(99));
     }
+
+    const auto partial = make_partial_c_grid_mesh();
+    const auto profile = ProfileFactory::create(AlgorithmProfileKind::PhengleiWcns);
+    const auto weights = GlobalConservationWeights::build(partial, profile);
+    const auto normal = build_line_conservation_weights(profile, 8);
+    const auto tangent = build_line_conservation_weights(profile, 16);
+    const auto& cells = weights.block(0).cell;
+    for (int j = 0; j < 8; ++j) {
+        for (int i = 0; i < 16; ++i) {
+            WCNS_REQUIRE_NEAR(cells(i, j, 0),
+                              tangent.cell_weights[static_cast<std::size_t>(i)]
+                                  * normal.cell_weights[static_cast<std::size_t>(j)],
+                              2.0e-13);
+        }
+    }
+    WCNS_REQUIRE(weights.maximum_shared_face_mismatch() < 1.0e-13);
+
+    const auto flux_plan = FaceFluxHaloPlan::build(partial, profile, 17);
+    WCNS_REQUIRE(flux_plan.exchanges().size() == 2);
+    WCNS_REQUIRE(flux_plan.exchanges()[0].receiver_block == 0);
+    WCNS_REQUIRE(flux_plan.exchanges()[0].donor_block == 0);
+    WCNS_REQUIRE(flux_plan.exchanges()[0].direction == 0);
+    WCNS_REQUIRE(flux_plan.exchanges()[1].direction == 1);
+    WCNS_REQUIRE(flux_plan.exchanges()[0].pairs.size() == 4);
+    WCNS_REQUIRE(flux_plan.exchanges()[1].pairs.size() == 8);
+    WCNS_REQUIRE(flux_plan.exchanges()[0].pairs.front().layer == 1);
+    WCNS_REQUIRE(flux_plan.exchanges()[1].pairs.front().layer == 0);
+    WCNS_REQUIRE(flux_plan.exchanges()[0].message_tag()
+                 != flux_plan.exchanges()[1].message_tag());
 }

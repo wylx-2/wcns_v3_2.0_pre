@@ -51,6 +51,39 @@ void test_stop_controller()
     }
     {
         wcns::CaseRunConfig config;
+        config.mode = wcns::RunMode::Steady;
+        config.max_steps = 10;
+        config.steady.min_steps = 1;
+        config.steady.consecutive_checks = 1;
+        config.steady.l2_relative = 1.0e-6;
+        config.steady.linf_relative = 1.0e-6;
+        wcns::StopController controller(config);
+
+        wcns::SimulationProgress progress;
+        progress.step = 1;
+        progress.time = 0.1;
+        progress.time_step = 0.1;
+        progress.residuals = uniform_norm(1.0);
+        progress.residuals.model_l2 = {1.0};
+        progress.residuals.model_linf = {2.0};
+        WCNS_REQUIRE(controller.evaluate(progress).reason == wcns::StopReason::Running);
+        WCNS_REQUIRE(controller.steady_state().model_reference_l2.size() == 1);
+
+        progress.step = 2;
+        progress.time = 0.2;
+        progress.residuals = uniform_norm(1.0e-8);
+        progress.residuals.model_l2 = {1.0};
+        progress.residuals.model_linf = {2.0};
+        WCNS_REQUIRE(controller.evaluate(progress).reason == wcns::StopReason::Running);
+
+        progress.step = 3;
+        progress.time = 0.3;
+        progress.residuals.model_l2 = {1.0e-8};
+        progress.residuals.model_linf = {2.0e-8};
+        WCNS_REQUIRE(controller.evaluate(progress).reason == wcns::StopReason::SteadyConverged);
+    }
+    {
+        wcns::CaseRunConfig config;
         config.mode = wcns::RunMode::Unsteady;
         config.end_time = 0.5;
         config.max_steps = 2;

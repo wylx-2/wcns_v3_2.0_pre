@@ -36,10 +36,23 @@ enum class WallTreatment {
     WallFunction,
 };
 
+enum class TurbulenceSourceTreatment {
+    Explicit,
+    LocalImplicit,
+};
+
 struct TurbulenceModelConfig {
     TurbulenceModelKind kind = TurbulenceModelKind::None;
     WallTreatment wall_treatment = WallTreatment::Resolved;
+    bool experimental = false;
     Real turbulent_prandtl = 0.9;
+    Real sa_farfield_nu_tilde_ratio = 3.0;
+    Real freestream_turbulence_intensity = 0.01;
+    Real freestream_length_scale = 0.1;
+    Real model_floor = 1.0e-12;
+    Real wall_function_y_plus_min = 30.0;
+    Real wall_function_y_plus_max = 300.0;
+    TurbulenceSourceTreatment source_treatment = TurbulenceSourceTreatment::Explicit;
 
     void validate() const;
     [[nodiscard]] std::string summary() const;
@@ -77,10 +90,64 @@ struct TurbulenceCellContext {
     TemperaturePrimitiveState mean_state {};
     std::array<std::array<Real, 3>, 4> primitive_gradients {};
     std::vector<Real> model_values;
+    std::vector<std::array<Real, 3>> model_gradients;
+    Real molecular_kinematic_viscosity = 0.0;
     Real wall_distance = 0.0;
     Real filter_width = 0.0;
+    Real reference_reynolds = 0.0;
+    Real reference_mach = 0.0;
+    Real heat_capacity_ratio = 0.0;
     int dimension = 3;
 };
+
+struct SaNegativeConstants {
+    Real cb1 = 0.1355;
+    Real sigma = 2.0 / 3.0;
+    Real cb2 = 0.622;
+    Real kappa = 0.41;
+    Real cw2 = 0.3;
+    Real cw3 = 2.0;
+    Real cv1 = 7.1;
+    Real ct3 = 1.2;
+    Real ct4 = 0.5;
+    Real cn1 = 16.0;
+    Real c2 = 0.7;
+    Real c3 = 0.9;
+
+    [[nodiscard]] Real cw1() const noexcept;
+    void validate() const;
+};
+
+struct SaNegativeEvaluation {
+    Real chi = 0.0;
+    Real fv1 = 0.0;
+    Real fv2 = 0.0;
+    Real ft2 = 0.0;
+    Real fn = 1.0;
+    Real vorticity_magnitude = 0.0;
+    Real modified_vorticity = 0.0;
+    Real r = 0.0;
+    Real fw = 0.0;
+    Real diffusion_coefficient = 0.0;
+    Real eddy_kinematic_viscosity = 0.0;
+    Real production_source = 0.0;
+    Real destruction_source = 0.0;
+    Real cross_diffusion_source = 0.0;
+    Real source = 0.0;
+    Real source_derivative = 0.0;
+    bool negative_branch = false;
+};
+
+[[nodiscard]] SaNegativeEvaluation
+evaluate_sa_negative(const TurbulenceCellContext& context,
+                     const SaNegativeConstants& constants = {});
+
+[[nodiscard]] Real sa_negative_farfield_value(const TurbulenceModelConfig& config,
+                                              Real reference_reynolds);
+
+[[nodiscard]] Real local_implicit_turbulence_increment(Real explicit_residual,
+                                                       Real source_jacobian,
+                                                       Real time_step);
 
 class ITurbulenceModel {
 public:
@@ -90,6 +157,8 @@ public:
     [[nodiscard]] virtual std::vector<TurbulenceFieldDescriptor> fields() const = 0;
     [[nodiscard]] virtual TurbulenceViscousContribution
     viscous_contribution(const TurbulenceCellContext& context) const = 0;
+    [[nodiscard]] virtual std::vector<Real>
+    diffusion_coefficients(const TurbulenceCellContext& context) const = 0;
     [[nodiscard]] virtual TurbulenceSourceLinearization
     source_linearization(const TurbulenceCellContext& context) const = 0;
 };
@@ -114,5 +183,7 @@ private:
 [[nodiscard]] TurbulenceModelFamily turbulence_model_family(TurbulenceModelKind kind);
 [[nodiscard]] WallTreatment wall_treatment(const std::string& name);
 [[nodiscard]] const char* wall_treatment_name(WallTreatment treatment);
+[[nodiscard]] TurbulenceSourceTreatment turbulence_source_treatment(const std::string& name);
+[[nodiscard]] const char* turbulence_source_treatment_name(TurbulenceSourceTreatment treatment);
 
 } // namespace wcns

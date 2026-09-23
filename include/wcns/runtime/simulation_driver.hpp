@@ -25,6 +25,11 @@ struct SolverDiagnostics {
     Real minimum_pressure = std::numeric_limits<Real>::infinity();
     Real minimum_temperature = std::numeric_limits<Real>::infinity();
     Real minimum_internal_energy = std::numeric_limits<Real>::infinity();
+    std::size_t wall_function_faces = 0;
+    std::size_t wall_function_out_of_range = 0;
+    Real wall_function_minimum_y_plus = std::numeric_limits<Real>::infinity();
+    Real wall_function_maximum_y_plus = 0.0;
+    std::vector<std::size_t> turbulence_floor_repairs;
 };
 
 class ISimulationSolver {
@@ -45,7 +50,9 @@ public:
                              const LocalBlockSet& local_blocks,
                              const BlockMetricMap& metrics,
                              const StructuredPartitionPlan& partition,
-                             AlgorithmProfile profile);
+                             AlgorithmProfile profile,
+                             TimeAlgorithmConfig time_algorithm = {},
+                             RunMode run_mode = RunMode::Steady);
 
     [[nodiscard]] Real global_time_step(Real cfl) override;
     [[nodiscard]] Real advance(Real time_step, Real initial_time) override;
@@ -60,6 +67,9 @@ private:
     const BlockMetricMap& metrics_;
     const StructuredPartitionPlan& partition_;
     AlgorithmProfile profile_;
+    TimeAlgorithmConfig time_algorithm_;
+    RunMode run_mode_ = RunMode::Steady;
+    Real pending_pseudo_cfl_ = 0.0;
 };
 
 class ViscousSimulationSolver final : public ISimulationSolver {
@@ -69,7 +79,9 @@ public:
                             const LocalBlockSet& local_blocks,
                             const BlockMetricMap& metrics,
                             const StructuredPartitionPlan& partition,
-                            AlgorithmProfile profile);
+                            AlgorithmProfile profile,
+                            TimeAlgorithmConfig time_algorithm = {},
+                            RunMode run_mode = RunMode::Steady);
 
     [[nodiscard]] Real global_time_step(Real cfl) override;
     [[nodiscard]] Real advance(Real time_step, Real initial_time) override;
@@ -84,6 +96,9 @@ private:
     const BlockMetricMap& metrics_;
     const StructuredPartitionPlan& partition_;
     AlgorithmProfile profile_;
+    TimeAlgorithmConfig time_algorithm_;
+    RunMode run_mode_ = RunMode::Steady;
+    Real pending_pseudo_cfl_ = 0.0;
 };
 
 struct SimulationState {

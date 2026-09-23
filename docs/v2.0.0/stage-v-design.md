@@ -26,12 +26,13 @@ V 只冻结需求、公式选择、配置草案、用户输入身份、测试矩
 | 配置名 | 冻结变体 | v2.0.0 目标支持级别 |
 |---|---|---|
 | `none` | v1.1.0 层流路径 | 生产，兼容基线 |
-| `sa_neg` | NASA TMR fully turbulent SA-noft2-neg；trip/压缩修正关闭 | 生产 |
+| `sa_neg` | NASA TMR SA-neg；保留标准 $f_{t2}$，关闭 $f_{t1}\Delta U^2$ trip 源和压缩修正 | 生产 |
 | `k_omega_sst` | SST-2003m；明确 $F_1/F_2$、cross diffusion 和 production limiter | 生产 |
 | `k_epsilon` | 标准高 Reynolds 数模型，只与显式 wall function 组合 | 实验目标；阶段 Y 决定是否升级 |
 
-RANS 总能不含 $k$；各向同性 $-2\rho k/3$ 显式进入应力。候选 $Pr_t=0.9$，最终键和边界值在
-W/Y 设计冻结。模型常数以《算法补充》12.4--12.6 和阶段 X/Y 的逐式表为准。
+RANS 总能不含 $k$。Y0 最终冻结 SST-2003m 与标准 k-epsilon 均采用 modified 约定，省略
+各向同性 $-2\rho k/3$；候选 $Pr_t=0.9$。模型常数、边界值和支持级别以《算法补充》
+12.4--12.6 和阶段 X/Y 的逐式表为准。
 
 ### 2.2 LES
 

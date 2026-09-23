@@ -64,6 +64,7 @@ struct FaceFluxExchangeDescriptor {
     RankId receiver_rank = invalid_rank_id;
     RankId donor_rank = invalid_rank_id;
     BlockId shared_face_owner = invalid_block_id;
+    int direction = 0;
     Axis receiver_axis = Axis::I;
     Axis donor_axis = Axis::I;
     Real orientation = 1.0;
@@ -159,7 +160,8 @@ compute_inviscid_face_fluxes(const StructuredBlock& block,
                              Real stage_time = 0.0,
                              const FaceRobustnessField* robustness_levels = nullptr,
                              const RobustnessLadder* robustness_ladder = nullptr,
-                             const RiemannSolver* robust_riemann = nullptr);
+                             const RiemannSolver* robust_riemann = nullptr,
+                             Real viscous_preconditioner_scale = 0.0);
 
 void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
                                        const StructuredBlock& block,
@@ -179,7 +181,8 @@ void compute_inviscid_face_fluxes_into(InviscidFaceFluxField& result,
                                        Real stage_time = 0.0,
                                        const FaceRobustnessField* robustness_levels = nullptr,
                                        const RobustnessLadder* robustness_ladder = nullptr,
-                                       const RiemannSolver* robust_riemann = nullptr);
+                                       const RiemannSolver* robust_riemann = nullptr,
+                                       Real viscous_preconditioner_scale = 0.0);
 
 void compute_wcns_inviscid_residual(StructuredBlock& block,
                                     const MetricField& metric,
