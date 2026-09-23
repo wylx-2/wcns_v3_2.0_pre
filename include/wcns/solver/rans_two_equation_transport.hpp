@@ -34,19 +34,33 @@ global_wall_function_diagnostics(const MpiRuntime& mpi,
                                  const LocalBlockSet& local_blocks,
                                  const TurbulenceModelConfig& config);
 
-// The Y-stage two-equation path uses one conservative face mass flux and a
-// cell-centred second-order diffusive flux for every transported scalar.
-void compute_two_equation_residual_and_source(
+// Six Cartesian model-gradient components followed by two cell-centred
+// diffusion coefficients.  The complete workspace is exchanged before a
+// partition-interface flux is assembled.
+inline constexpr int two_equation_face_workspace_components = 8;
+
+void compute_two_equation_gradients_and_source(
     Field<Real>& residual,
     Field<Real>& source_jacobian,
-    Field<Real>& model_gradients,
+    Field<Real>& face_workspace,
     StructuredBlock& block,
     const MetricField& metric,
-    const InviscidFaceFluxField& mean_flux,
     const PrimitiveGradientField& mean_gradients,
     const ITurbulenceModel& model,
     const TransportModel& transport,
     const GasModel& gas,
     const ReferenceScales& reference);
+
+void fill_two_equation_workspace_physical_ghosts(const StructuredBlock& block,
+                                                 Field<Real>& face_workspace);
+
+// The Y-stage two-equation path uses the already synchronized mean-flow mass
+// flux and one synchronized second-order scalar flux on every interface.
+void assemble_two_equation_flux_residual(Field<Real>& residual,
+                                         const Field<Real>& face_workspace,
+                                         const StructuredBlock& block,
+                                         const MetricField& metric,
+                                         const InviscidFaceFluxField& mean_flux,
+                                         const ITurbulenceModel& model);
 
 } // namespace wcns

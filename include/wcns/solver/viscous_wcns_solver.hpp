@@ -1,12 +1,11 @@
 #pragma once
 
 #include <wcns/solver/inviscid_wcns_solver.hpp>
+#include <wcns/solver/rans_two_equation_transport.hpp>
 #include <wcns/solver/sa_negative_transport.hpp>
 #include <wcns/solver/viscous_operator.hpp>
 
 namespace wcns {
-
-struct WallFunctionDiagnostics;
 
 struct ViscousStabilityCoefficients {
     Real phenglei_2d_ssprk3 = 4.0;
@@ -119,7 +118,8 @@ private:
     GradientHaloExchanger gradient_exchanger_;
     std::unordered_map<BlockId, PrimitiveGradientField> turbulence_gradient_workspace_;
     GradientFieldRegistry turbulence_gradient_registry_;
-    std::unordered_map<BlockId, Field<Real>> two_equation_gradient_workspace_;
+    std::unordered_map<BlockId, Field<Real>> two_equation_face_workspace_;
+    BlockFieldRegistry two_equation_face_registry_ {two_equation_face_workspace_components};
     std::unordered_map<BlockId, ViscousFaceFluxField> viscous_flux_workspace_;
     ViscousFaceFluxFieldRegistry viscous_flux_registry_;
     ViscousFaceFluxHaloPlan viscous_flux_plan_;

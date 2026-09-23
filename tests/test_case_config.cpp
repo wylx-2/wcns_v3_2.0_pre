@@ -175,6 +175,51 @@ void test_case_config()
         WCNS_REQUIRE(config.preconditioner.kind == wcns::PreconditionerKind::None);
         WCNS_REQUIRE(config.summary().find("turbulence(model=none") != std::string::npos);
         WCNS_REQUIRE(config.restart_signature().find("turbulence_v1") != std::string::npos);
+        const auto point_vortex = wcns::CaseConfig::from_text(
+            valid_v2_config()
+            + "boundary.point_vortex.enabled = true\n"
+              "boundary.point_vortex.lift_coefficient = 1.09125\n"
+              "boundary.point_vortex.center_x = 0.25\n"
+              "boundary.point_vortex.center_y = 0\n"
+              "boundary.point_vortex.chord = 1\n");
+        WCNS_REQUIRE(point_vortex.farfield_point_vortex.enabled);
+        WCNS_REQUIRE_NEAR(
+            point_vortex.farfield_point_vortex.lift_coefficient, 1.09125, 0.0);
+        WCNS_REQUIRE(point_vortex.restart_signature().find("point_vortex(enabled=true")
+                     != std::string::npos);
+        const auto metric = wcns::CaseConfig::from_text(
+            valid_v2_config()
+            + "geometry.metric.fallback = strict\n"
+              "geometry.metric.maximum_reference_relative_difference = 0.35\n");
+        WCNS_REQUIRE(metric.metric_options.fallback == wcns::MetricFallback::Strict);
+        WCNS_REQUIRE_NEAR(
+            metric.metric_options.maximum_reference_relative_difference, 0.35, 0.0);
+        WCNS_REQUIRE(metric.restart_signature().find(
+                         "metric_reference_tolerance=0.34999999999999998")
+                     != std::string::npos);
+        WCNS_REQUIRE(config.restart_signature().find("metric_reference_tolerance=")
+                     == std::string::npos);
+        WCNS_REQUIRE_THROWS(
+            wcns::CaseConfigurationError,
+            wcns::CaseConfig::from_text(
+                valid_v2_config() + "geometry.metric.fallback = unsupported\n"));
+        WCNS_REQUIRE_THROWS(
+            std::invalid_argument,
+            wcns::CaseConfig::from_text(
+                valid_v2_config()
+                + "geometry.metric.maximum_reference_relative_difference = -0.1\n"));
+        auto scmm_fallback = valid_v2_config();
+        const auto profile = scmm_fallback.find("algorithm.profile = phenglei_wcns");
+        scmm_fallback.replace(profile,
+                              std::string("algorithm.profile = phenglei_wcns").size(),
+                              "algorithm.profile = scmm6_wcns");
+        scmm_fallback += "geometry.metric.fallback = phenglei_finite_volume\n";
+        WCNS_REQUIRE_THROWS(wcns::ProfileError,
+                            wcns::CaseConfig::from_text(scmm_fallback));
+        WCNS_REQUIRE_THROWS(
+            wcns::CaseConfigurationError,
+            wcns::CaseConfig::from_text(
+                valid_config() + "boundary.point_vortex.enabled = true\n"));
         const auto schema_one = wcns::CaseConfig::from_text(valid_config());
         WCNS_REQUIRE(config.legacy_v1_restart_signature()
                          + ";transport=" + config.transport.restart_signature()
@@ -534,6 +579,14 @@ output.boundary.tangent_direction_z = 0
         WCNS_REQUIRE_NEAR(config.output.boundary.reference_pressure, 0.02, 1.0e-15);
         WCNS_REQUIRE(config.output.boundary.summary().find("A_ref=1") != std::string::npos);
         WCNS_REQUIRE(config.restart_signature().find("output.boundary") == std::string::npos);
+
+        auto wall_units_without_rans = boundary;
+        const auto quantities
+            = wall_units_without_rans.find("output.boundary.quantities = ");
+        const auto quantities_end = wall_units_without_rans.find('\n', quantities);
+        wall_units_without_rans.insert(quantities_end, ",wall_y_plus");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(wall_units_without_rans));
 
         auto inviscid = boundary;
         const auto enabled_viscous = inviscid.find("run.viscous = true");

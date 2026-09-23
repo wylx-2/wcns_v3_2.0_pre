@@ -229,6 +229,14 @@ wcns::BlockBoundaryDataMap make_boundary_data(const wcns::LocalBlockSet& local_b
                 || patch.type == wcns::BoundaryType::Inflow) {
                 patch_data.target_state = target;
             }
+            if (patch.type == wcns::BoundaryType::Farfield
+                && config.farfield_point_vortex.enabled) {
+                patch_data.farfield_point_vortex = wcns::FarfieldPointVortex {
+                    config.farfield_point_vortex.lift_coefficient,
+                    config.farfield_point_vortex.center,
+                    config.farfield_point_vortex.chord,
+                };
+            }
             if (physical != nullptr && physical->has_target_state()) {
                 const wcns::Real rho = *physical->rho;
                 const wcns::Real u = physical->u.value_or(0.0);
@@ -290,7 +298,8 @@ wcns::BlockMetricMap initialize_partitioned_metrics(const wcns::MpiRuntime& mpi,
                                                     const wcns::CgnsMeshMetadata& metadata,
                                                     const wcns::StructuredPartitionPlan& plan,
                                                     wcns::LocalBlockSet& local_blocks,
-                                                    const wcns::AlgorithmProfile& profile)
+                                                    const wcns::AlgorithmProfile& profile,
+                                                    const wcns::MetricBuildOptions& metric_options)
 {
     // Low-order physical-boundary normals remain block-local. High-order metric
     // operands are evaluated once on each original CGNS zone and then sliced,
@@ -316,7 +325,13 @@ wcns::BlockMetricMap initialize_partitioned_metrics(const wcns::MpiRuntime& mpi,
             counts.assign(static_cast<std::size_t>(mpi.size()), 0);
             auto source_block = reader.read_block(
                 mesh_name, source_zone_metadata(metadata, zone.source_zone), metric_owner, 0);
-            const auto source_metric = wcns::initialize_metric_field(source_block, profile).metric;
+            auto initialized
+                = wcns::initialize_metric_field(source_block, profile, metric_options);
+            std::cout << "metric zone=" << zone.source_zone
+                      << " max_jacobian_relative_difference="
+                      << initialized.diagnostics.maximum_jacobian_relative_difference
+                      << " fallback_cells=" << initialized.diagnostics.fallback_cell_count << '\n';
+            const auto source_metric = std::move(initialized.metric);
             for (int rank = 0; rank < mpi.size(); ++rank) {
                 for (const auto& leaf : plan.leaves()) {
                     if (leaf.source_zone != zone.source_zone || leaf.owner != rank) {
@@ -420,7 +435,7 @@ int main(int argc, char** argv)
         const wcns::TransportModel transport(transport_config);
         const wcns::NumericalFloors floors;
         auto metrics = initialize_partitioned_metrics(
-            mpi, reader, mesh_name, metadata, plan, local_blocks, profile);
+            mpi, reader, mesh_name, metadata, plan, local_blocks, profile, config.metric_options);
         const auto boundary_data = make_boundary_data(local_blocks, config, gas, reference, floors);
 
         const auto turbulence_model

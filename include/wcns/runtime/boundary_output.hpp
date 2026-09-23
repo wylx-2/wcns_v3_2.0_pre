@@ -6,6 +6,8 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,6 +20,10 @@ struct BoundaryFacePhysics {
     Real pressure_coefficient = 0.0;
     Real skin_friction_coefficient = 0.0;
     Real heat_flux_into_wall = 0.0;
+    Real wall_distance = std::numeric_limits<Real>::quiet_NaN();
+    Real friction_velocity = std::numeric_limits<Real>::quiet_NaN();
+    Real wall_y_plus = std::numeric_limits<Real>::quiet_NaN();
+    Real wall_y_plus_class = std::numeric_limits<Real>::quiet_NaN();
     std::array<Real, 3> pressure_traction {};
     std::array<Real, 3> viscous_traction {};
     std::array<Real, 3> total_traction {};
@@ -29,6 +35,7 @@ struct BoundaryOutputScales {
     Real pressure = 1.0;
     Real temperature = 1.0;
     Real viscosity = 1.0;
+    Real velocity = 1.0;
     Real force = 1.0;
     Real moment = 1.0;
 };
@@ -49,6 +56,15 @@ evaluate_boundary_face_physics(Real pressure,
                                Real reynolds,
                                bool viscous,
                                const BoundaryOutputConfig& config);
+
+// The optional prescribed y+ is the wall-function value used by the model.
+// Without it, wall units are reconstructed from the resolved tangential stress.
+void populate_boundary_wall_units(BoundaryFacePhysics& physics,
+                                  const std::array<Real, 3>& outward_normal,
+                                  Real density,
+                                  Real wall_distance,
+                                  Real reynolds,
+                                  std::optional<Real> prescribed_y_plus = std::nullopt);
 
 class BoundaryOutputWriter {
 public:

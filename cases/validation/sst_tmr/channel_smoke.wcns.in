@@ -1,0 +1,108 @@
+schema_version = 2
+case.name = y-tmr-channel-sst2003m-smoke
+mesh.path = @SST_TMR_GRID@
+
+algorithm.profile = phenglei_wcns
+algorithm.reconstruction = linear5
+algorithm.reconstruction_variables = characteristic
+algorithm.riemann = roe
+robustness.enabled = false
+
+gas.gamma = 1.4
+gas.specific_gas_constant = 287.05
+reference.velocity = 68.14566098520956
+reference.density = 1.0
+reference.temperature = 288.8888888888889
+reference.length = 1.0
+reference.viscosity = 8.518207623151195e-7
+
+transport.model = sutherland
+transport.prandtl = 0.72
+transport.sutherland.reference_viscosity_ratio = 1.0
+transport.sutherland.temperature = 110.33333333333333
+
+partition.mode = auto_split
+partition.allow_idle_ranks = false
+partition.max_load_ratio = 1.2
+partition.min_cells_per_active_direction = 4
+
+initial.type = uniform
+initial.rho = 1.0
+initial.u = 1.0
+initial.v = 0.0
+initial.w = 0.0
+initial.temperature = 1.0
+
+boundary.default = farfield
+boundary.Inflow.type = farfield
+boundary.Outflow.type = outflow
+boundary.Outflow.rho = 1.0
+boundary.Outflow.u = 1.0
+boundary.Outflow.v = 0.0
+boundary.Outflow.w = 0.0
+boundary.Outflow.pressure = 16.875
+boundary.LowerWall.type = no_slip_adiabatic_wall
+boundary.UpperWall.type = no_slip_adiabatic_wall
+
+source.enabled = false
+turbulence.model = k_omega_sst
+turbulence.prandtl = 0.9
+turbulence.wall_treatment = resolved
+turbulence.freestream.intensity = 0.00039
+turbulence.freestream.length_scale = 4.300130725961135e-7
+turbulence.model_floor = 1e-20
+turbulence.two_equation.source_treatment = local_implicit
+
+time.integrator = lu_sgs
+time.physical.scheme = bdf2
+time.dual_time.max_iterations = 100
+time.dual_time.absolute_tolerance = 1e-10
+time.dual_time.relative_tolerance = 1e-8
+time.dual_time.cfl = 5
+lu_sgs.sweeps = 1
+lu_sgs.jacobian = scalar_spectral
+lu_sgs.relaxation = 0.5
+preconditioner.type = none
+
+run.mode = steady
+run.viscous = true
+run.cfl = 0.2
+run.max_steps = 1
+steady.min_steps = 1
+steady.consecutive_checks = 1
+
+output.directory = @SST_TMR_OUTPUT_DIRECTORY@
+output.allow_existing = true
+output.dimensional = false
+output.field.enabled = true
+output.field.write_final = true
+output.field.quantities = rho,rho_u,rho_v,rho_w,rho_E,k,omega,mu_t_over_mu,sst_f1,sst_f2,turbulence_production,turbulence_destruction,cross_diffusion,wall_distance,wall_y_plus
+output.history.enabled = true
+output.history.every_steps = 1
+output.statistics.enabled = false
+output.boundary.enabled = true
+output.boundary.format = txt
+output.boundary.every_steps = 1
+output.boundary.write_final = true
+output.boundary.patches = LowerWall,UpperWall
+output.boundary.quantities = p_w,mu_w,Cp,Cf,wall_distance,friction_velocity,wall_y_plus,wall_y_plus_class,viscous_traction_x,viscous_traction_y,viscous_traction_z,traction_x,traction_y
+output.boundary.reference_pressure = 17.857142857142858
+output.boundary.reference_density = 1.0
+output.boundary.reference_velocity_x = 1.0
+output.boundary.reference_velocity_y = 0.0
+output.boundary.reference_velocity_z = 0.0
+output.boundary.reference_area = 1000.0
+output.boundary.reference_length = 1.0
+output.boundary.moment_center_x = 500.0
+output.boundary.moment_center_y = 0.5
+output.boundary.moment_center_z = 0.0
+output.boundary.drag_direction_x = 1.0
+output.boundary.drag_direction_y = 0.0
+output.boundary.drag_direction_z = 0.0
+output.boundary.lift_direction_x = 0.0
+output.boundary.lift_direction_y = 1.0
+output.boundary.lift_direction_z = 0.0
+output.boundary.tangent_direction_x = 1.0
+output.boundary.tangent_direction_y = 0.0
+output.boundary.tangent_direction_z = 0.0
+output.checkpoint.enabled = false

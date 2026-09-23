@@ -22,7 +22,7 @@
 namespace wcns {
 namespace {
 
-constexpr std::size_t sample_width = 34;
+constexpr std::size_t sample_width = 38;
 
 enum SampleOffset : std::size_t {
     sample_patch = 0,
@@ -56,6 +56,10 @@ enum SampleOffset : std::size_t {
     sample_total_tx,
     sample_total_ty,
     sample_total_tz,
+    sample_wall_distance,
+    sample_friction_velocity,
+    sample_wall_y_plus,
+    sample_wall_y_plus_class,
     sample_dimension,
     sample_local_ordinal,
     sample_reserved,
@@ -200,6 +204,10 @@ bool requests_viscous_quantity(const BoundaryOutputConfig& config)
     const std::set<std::string> viscous {
         "Cf",
         "q_wall",
+        "wall_distance",
+        "friction_velocity",
+        "wall_y_plus",
+        "wall_y_plus_class",
         "viscous_traction_x",
         "viscous_traction_y",
         "viscous_traction_z",
@@ -286,6 +294,10 @@ Sample decode_sample(const std::vector<Real>& values, std::size_t begin)
         = {{at(sample_viscous_tx), at(sample_viscous_ty), at(sample_viscous_tz)}};
     result.physics.total_traction
         = {{at(sample_total_tx), at(sample_total_ty), at(sample_total_tz)}};
+    result.physics.wall_distance = at(sample_wall_distance);
+    result.physics.friction_velocity = at(sample_friction_velocity);
+    result.physics.wall_y_plus = at(sample_wall_y_plus);
+    result.physics.wall_y_plus_class = at(sample_wall_y_plus_class);
     result.dimension = exact_signed_index(at(sample_dimension), "dimension");
     result.local_ordinal = exact_index(at(sample_local_ordinal), "ordinal");
     return result;
@@ -320,6 +332,10 @@ void append_sample(std::vector<Real>& values, const Sample& sample)
     append_vector(values, sample.physics.pressure_traction);
     append_vector(values, sample.physics.viscous_traction);
     append_vector(values, sample.physics.total_traction);
+    values.push_back(sample.physics.wall_distance);
+    values.push_back(sample.physics.friction_velocity);
+    values.push_back(sample.physics.wall_y_plus);
+    values.push_back(sample.physics.wall_y_plus_class);
     values.push_back(static_cast<Real>(sample.dimension));
     values.push_back(static_cast<Real>(sample.local_ordinal));
     values.push_back(0.0);
@@ -336,6 +352,10 @@ Real selected_quantity(const Sample& sample, const std::string& name)
     if (name == "Cp") return sample.physics.pressure_coefficient;
     if (name == "Cf") return sample.physics.skin_friction_coefficient;
     if (name == "q_wall") return sample.physics.heat_flux_into_wall;
+    if (name == "wall_distance") return sample.physics.wall_distance;
+    if (name == "friction_velocity") return sample.physics.friction_velocity;
+    if (name == "wall_y_plus") return sample.physics.wall_y_plus;
+    if (name == "wall_y_plus_class") return sample.physics.wall_y_plus_class;
     const auto component = [&](const char* prefix, const Vector3& value) -> Real {
         const std::string base(prefix);
         if (name == base + "x") return value[0];
@@ -357,10 +377,15 @@ Real selected_quantity(const Sample& sample, const std::string& name)
 
 Real quantity_scale(const std::string& name, const QuantityContext& context)
 {
-    if (!context.dimensional || name == "Cp" || name == "Cf") return 1.0;
+    if (!context.dimensional || name == "Cp" || name == "Cf"
+        || name == "wall_y_plus" || name == "wall_y_plus_class") {
+        return 1.0;
+    }
     const auto scales = boundary_output_scales(context, 2);
     if (name == "T_w") return scales.temperature;
     if (name == "mu_w") return scales.viscosity;
+    if (name == "wall_distance") return scales.coordinate;
+    if (name == "friction_velocity") return scales.velocity;
     return scales.pressure;
 }
 
@@ -461,6 +486,7 @@ BoundaryOutputScales boundary_output_scales(const QuantityContext& context, int 
     result.pressure = pressure;
     result.temperature = context.reference.temperature();
     result.viscosity = context.reference.viscosity();
+    result.velocity = context.reference.velocity();
     result.force = pressure * result.area;
     result.moment = result.force * length;
     return result;
@@ -514,6 +540,49 @@ BoundaryFacePhysics evaluate_boundary_face_physics(Real pressure,
         throw PhysicsError("boundary face physics result is non-finite");
     }
     return result;
+}
+
+void populate_boundary_wall_units(BoundaryFacePhysics& physics,
+                                  const Vector3& outward_normal,
+                                  Real density,
+                                  Real wall_distance,
+                                  Real reynolds,
+                                  std::optional<Real> prescribed_y_plus)
+{
+    const Real normal_norm = dot(outward_normal, outward_normal);
+    if (!std::isfinite(density) || density <= 0.0 || !std::isfinite(wall_distance)
+        || wall_distance <= 0.0 || !std::isfinite(reynolds) || reynolds <= 0.0
+        || !std::isfinite(physics.viscosity) || physics.viscosity <= 0.0
+        || !finite_vector(physics.viscous_traction) || !finite_vector(outward_normal)
+        || std::abs(normal_norm - 1.0) > 1.0e-12
+        || (prescribed_y_plus
+            && (!std::isfinite(*prescribed_y_plus) || *prescribed_y_plus <= 0.0))) {
+        throw PhysicsError("boundary wall-unit input is invalid");
+    }
+    physics.wall_distance = wall_distance;
+    if (prescribed_y_plus) {
+        physics.wall_y_plus = *prescribed_y_plus;
+        physics.friction_velocity
+            = physics.wall_y_plus * physics.viscosity
+            / (density * reynolds * wall_distance);
+    } else {
+        const auto tangential = subtract(
+            physics.viscous_traction,
+            multiply(outward_normal, dot(physics.viscous_traction, outward_normal)));
+        const Real shear = std::sqrt(dot(tangential, tangential));
+        physics.friction_velocity = std::sqrt(shear / density);
+        physics.wall_y_plus = physics.friction_velocity * wall_distance * density * reynolds
+            / physics.viscosity;
+    }
+    if (!std::isfinite(physics.friction_velocity) || physics.friction_velocity < 0.0
+        || !std::isfinite(physics.wall_y_plus) || physics.wall_y_plus < 0.0) {
+        throw PhysicsError("boundary wall-unit result is invalid");
+    }
+    // 0: viscous sublayer, 1: buffer layer, 2: log layer, 3: outer/high-y+.
+    physics.wall_y_plus_class = physics.wall_y_plus <= 5.0   ? 0.0
+        : physics.wall_y_plus < 30.0                         ? 1.0
+        : physics.wall_y_plus <= 300.0                       ? 2.0
+                                                              : 3.0;
 }
 
 BoundaryOutputWriter::BoundaryOutputWriter(const MpiRuntime& mpi,
@@ -760,6 +829,28 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
                                                              quantities_.reference.reynolds(),
                                                              config_.run.viscous,
                                                              config_.output.boundary);
+                        const bool rans_transport
+                            = config_.turbulence.kind == TurbulenceModelKind::SaNegative
+                            || config_.turbulence.kind == TurbulenceModelKind::KOmegaSst
+                            || config_.turbulence.kind == TurbulenceModelKind::KEpsilon;
+                        if (rans_transport && no_slip_wall(patch.type)) {
+                            const Real density = block.flow.temperature_primitive(
+                                nearest.i, nearest.j, nearest.k, temperature_density);
+                            const Real wall_distance
+                                = block.turbulence.at(nearest, "wall_distance");
+                            std::optional<Real> prescribed_y_plus;
+                            if (config_.turbulence.wall_treatment
+                                == WallTreatment::WallFunction) {
+                                prescribed_y_plus
+                                    = block.turbulence.at(nearest, "wall_y_plus");
+                            }
+                            populate_boundary_wall_units(sample.physics,
+                                                         normal,
+                                                         density,
+                                                         wall_distance,
+                                                         quantities_.reference.reynolds(),
+                                                         prescribed_y_plus);
+                        }
                         sample.dimension = block.cell_dimension();
                         sample.local_ordinal = ordinal++;
                         append_sample(local_payload, sample);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <wcns/mesh/algorithm_profile.hpp>
+#include <wcns/mesh/high_order_metrics.hpp>
 #include <wcns/physics/source_terms.hpp>
 #include <wcns/physics/thermodynamics.hpp>
 #include <wcns/solver/inviscid_wcns_solver.hpp>
@@ -63,6 +64,17 @@ struct BoundaryPhysicalDataConfig {
     [[nodiscard]] bool has_target_state() const noexcept;
     void validate() const;
     [[nodiscard]] std::string summary() const;
+};
+
+struct FarfieldPointVortexConfig {
+    bool enabled = false;
+    Real lift_coefficient = 0.0;
+    std::array<Real, 2> center {{0.25, 0.0}};
+    Real chord = 1.0;
+
+    void validate(int schema_version) const;
+    [[nodiscard]] std::string summary() const;
+    [[nodiscard]] std::string restart_signature() const;
 };
 
 enum class RunMode {
@@ -275,10 +287,12 @@ struct CaseConfig {
     GasModelInput gas;
     ReferenceInput reference;
     PartitionConfig partition;
+    MetricBuildOptions metric_options;
     InitialConditionConfig initial;
     BoundaryType default_boundary = BoundaryType::Farfield;
     std::unordered_map<std::string, BoundaryType> boundary_overrides;
     std::unordered_map<std::string, BoundaryPhysicalDataConfig> boundary_data;
+    FarfieldPointVortexConfig farfield_point_vortex;
     SourceTermConfig source_terms;
     CaseRunConfig run;
     OutputConfig output;

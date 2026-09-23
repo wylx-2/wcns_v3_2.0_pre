@@ -147,4 +147,20 @@ void test_inviscid_boundary_face_state()
                                                                    2);
     WCNS_REQUIRE(characteristic != subsonic_interior);
     WCNS_REQUIRE(characteristic != target_pressure);
+
+    farfield_data.farfield_point_vortex
+        = FarfieldPointVortex {1.0, {{0.25, 0.0}}, 1.0};
+    const auto corrected = farfield_target_at(farfield_data, {{0.25, 2.0, 0.0}}, 2);
+    const double speed = std::hypot(target_temperature[temperature_velocity_x],
+                                    target_temperature[temperature_velocity_y]);
+    WCNS_REQUIRE_NEAR(corrected[temperature_velocity_x]
+                          - target_temperature[temperature_velocity_x],
+                      0.5 * speed / (4.0 * std::acos(-1.0)),
+                      1.0e-14);
+    WCNS_REQUIRE_NEAR(corrected[temperature_velocity_y],
+                      target_temperature[temperature_velocity_y],
+                      1.0e-14);
+    WCNS_REQUIRE_THROWS(
+        PhysicsConfigurationError,
+        farfield_target_at(farfield_data, {{0.25, 2.0, 0.0}}, 3));
 }

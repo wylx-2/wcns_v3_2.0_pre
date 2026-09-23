@@ -330,13 +330,12 @@ WallFunctionDiagnostics global_wall_function_diagnostics(
     return result;
 }
 
-void compute_two_equation_residual_and_source(
+void compute_two_equation_gradients_and_source(
     Field<Real>& residual,
     Field<Real>& source_jacobian,
-    Field<Real>& model_gradients,
+    Field<Real>& face_workspace,
     StructuredBlock& block,
     const MetricField& metric,
-    const InviscidFaceFluxField& mean_flux,
     const PrimitiveGradientField& mean_gradients,
     const ITurbulenceModel& model,
     const TransportModel& transport,
@@ -345,16 +344,18 @@ void compute_two_equation_residual_and_source(
 {
     const auto descriptors = transported_fields(model);
     if (descriptors.size() != 2 || residual.components() != 2
-        || source_jacobian.components() != 4 || model_gradients.components() != 6
+        || source_jacobian.components() != 4
+        || face_workspace.components() != two_equation_face_workspace_components
+        || face_workspace.ghost_width() < 1
         || residual.interior_extent() != block.cell_extent()
         || source_jacobian.interior_extent() != block.cell_extent()
-        || model_gradients.interior_extent() != block.cell_extent()) {
+        || face_workspace.interior_extent() != block.cell_extent()) {
         throw std::invalid_argument("two-equation transport workspace is incompatible");
     }
     const auto extent = block.cell_extent();
     residual.fill(0.0);
     source_jacobian.fill(0.0);
-    model_gradients.fill(0.0);
+    face_workspace.fill(0.0);
 
     for (int k = 0; k < extent.nk; ++k) {
         for (int j = 0; j < extent.nj; ++j) {
@@ -388,7 +389,7 @@ void compute_two_equation_residual_and_source(
                         }
                     }
                     for (int direction = 0; direction < 3; ++direction) {
-                        model_gradients(i, j, k, static_cast<int>(3 * variable + direction))
+                        face_workspace(i, j, k, static_cast<int>(3 * variable + direction))
                             = gradient[static_cast<std::size_t>(direction)] / volume;
                     }
                 }
@@ -403,7 +404,7 @@ void compute_two_equation_residual_and_source(
                 const auto context = make_context(block,
                                                   cell,
                                                   mean_gradients,
-                                                  model_gradients,
+                                                  face_workspace,
                                                   descriptors,
                                                   transport,
                                                   gas,
@@ -434,9 +435,62 @@ void compute_two_equation_residual_and_source(
                     = context.mean_state[temperature_density] * evaluation.production;
                 block.turbulence.at(cell, "turbulence_destruction")
                     = context.mean_state[temperature_density] * evaluation.destruction_k;
+                face_workspace(i, j, k, 6)
+                    = evaluation.diffusion_coefficients[0];
+                face_workspace(i, j, k, 7)
+                    = evaluation.diffusion_coefficients[1];
             }
         }
     }
+}
+
+void fill_two_equation_workspace_physical_ghosts(const StructuredBlock& block,
+                                                 Field<Real>& face_workspace)
+{
+    if (face_workspace.components() != two_equation_face_workspace_components
+        || face_workspace.ghost_width() < 1
+        || face_workspace.interior_extent() != block.cell_extent()) {
+        throw std::invalid_argument("two-equation face workspace is incompatible");
+    }
+    const auto extent = block.cell_extent();
+    for (const auto& patch : block.boundaries) {
+        const auto counts = patch.boundary_face_range.counts();
+        for (int ok = 0; ok < counts.nk; ++ok) {
+            for (int oj = 0; oj < counts.nj; ++oj) {
+                for (int oi = 0; oi < counts.ni; ++oi) {
+                    const auto face = patch.boundary_face_range.at({oi, oj, ok});
+                    for (int layer = 1; layer <= face_workspace.ghost_width(); ++layer) {
+                        const auto mirror = mirror_cell(face, patch.face, layer, extent);
+                        const auto ghost = ghost_cell(face, patch.face, layer, extent);
+                        for (int component = 0;
+                             component < two_equation_face_workspace_components;
+                             ++component) {
+                            face_workspace(ghost.i, ghost.j, ghost.k, component)
+                                = face_workspace(mirror.i, mirror.j, mirror.k, component);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void assemble_two_equation_flux_residual(Field<Real>& residual,
+                                         const Field<Real>& face_workspace,
+                                         const StructuredBlock& block,
+                                         const MetricField& metric,
+                                         const InviscidFaceFluxField& mean_flux,
+                                         const ITurbulenceModel& model)
+{
+    const auto descriptors = transported_fields(model);
+    if (descriptors.size() != 2 || residual.components() != 2
+        || face_workspace.components() != two_equation_face_workspace_components
+        || face_workspace.ghost_width() < 1
+        || residual.interior_extent() != block.cell_extent()
+        || face_workspace.interior_extent() != block.cell_extent()) {
+        throw std::invalid_argument("two-equation flux workspace is incompatible");
+    }
+    const auto extent = block.cell_extent();
 
     const auto face_flux = [&](Axis axis, Index3 face, int variable) {
         const int component = block.turbulence.component(
@@ -456,36 +510,20 @@ void compute_two_equation_residual_and_source(
             // Fall back locally to the upwind cell; the transported state itself is not clipped.
             advected = block.turbulence.storage()(donor.i, donor.j, donor.k, component);
         }
-        const auto left_context = make_context(block,
-                                               left_cell,
-                                               mean_gradients,
-                                               model_gradients,
-                                               descriptors,
-                                               transport,
-                                               gas,
-                                               reference);
-        const auto right_context = make_context(block,
-                                                right_cell,
-                                                mean_gradients,
-                                                model_gradients,
-                                                descriptors,
-                                                transport,
-                                                gas,
-                                                reference);
         const Real diffusion = 0.5
-            * (model.diffusion_coefficients(left_context)[static_cast<std::size_t>(variable)]
-               + model.diffusion_coefficients(right_context)[static_cast<std::size_t>(variable)]);
+            * (face_workspace(left.i, left.j, left.k, 6 + variable)
+               + face_workspace(face.i, face.j, face.k, 6 + variable));
         const auto area = area_vector(metric, axis, face);
         Real gradient_dot_area = 0.0;
         for (int direction = 0; direction < 3; ++direction) {
             gradient_dot_area += 0.5
-                * (model_gradients(left_cell.i,
-                                   left_cell.j,
-                                   left_cell.k,
+                * (face_workspace(left.i,
+                                   left.j,
+                                   left.k,
                                    3 * variable + direction)
-                   + model_gradients(right_cell.i,
-                                     right_cell.j,
-                                     right_cell.k,
+                   + face_workspace(face.i,
+                                     face.j,
+                                     face.k,
                                      3 * variable + direction))
                 * area[static_cast<std::size_t>(direction)];
         }

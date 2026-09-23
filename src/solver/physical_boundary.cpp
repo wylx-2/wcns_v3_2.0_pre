@@ -197,8 +197,12 @@ TemperaturePrimitiveState make_ghost(const TemperaturePrimitiveState& interior,
         if (!data.target_state) return interior;
         const auto interior_pressure
             = pressure_primitive(interior, gas, reference, floors, dimension);
-        const auto target_pressure
-            = pressure_primitive(*data.target_state, gas, reference, floors, dimension);
+        const auto target_pressure = pressure_primitive(
+            farfield_target_at(data, face_coordinates, dimension),
+            gas,
+            reference,
+            floors,
+            dimension);
         return temperature_primitive(
             characteristic_boundary_state(
                 interior_pressure, target_pressure, normal, gas, floors, dimension),
@@ -266,6 +270,44 @@ PressurePrimitiveState reflected_face_trace(PressurePrimitiveState state,
 
 } // namespace
 
+void FarfieldPointVortex::validate() const
+{
+    if (!finite(lift_coefficient) || !finite(center[0]) || !finite(center[1])
+        || !finite(chord) || chord <= 0.0) {
+        throw PhysicsConfigurationError("farfield point vortex parameters are invalid");
+    }
+}
+
+TemperaturePrimitiveState farfield_target_at(const BoundaryData& data,
+                                              std::array<Real, 3> face_coordinates,
+                                              int dimension)
+{
+    if (!data.target_state) {
+        throw PhysicsConfigurationError("farfield target state is missing");
+    }
+    auto target = *data.target_state;
+    if (!data.farfield_point_vortex) return target;
+    if (dimension != 2) {
+        throw PhysicsConfigurationError("farfield point vortex is available only in 2-D");
+    }
+    const auto& vortex = *data.farfield_point_vortex;
+    vortex.validate();
+    const Real dx = face_coordinates[0] - vortex.center[0];
+    const Real dy = face_coordinates[1] - vortex.center[1];
+    const Real radius_squared = dx * dx + dy * dy;
+    if (!finite(radius_squared) || radius_squared <= std::numeric_limits<Real>::epsilon()) {
+        throw PhysicsConfigurationError("farfield point vortex is singular at a boundary face");
+    }
+    const Real speed = std::hypot(target[temperature_velocity_x],
+                                  target[temperature_velocity_y]);
+    const Real circulation = 0.5 * vortex.lift_coefficient * speed * vortex.chord;
+    const Real factor = circulation / (2.0 * std::acos(-1.0) * radius_squared);
+    // Positive lift uses the aerodynamic (clockwise) circulation convention.
+    target[temperature_velocity_x] += factor * dy;
+    target[temperature_velocity_y] -= factor * dx;
+    return target;
+}
+
 void BoundaryData::validate(BoundaryType type, int dimension) const
 {
     if (dimension != 2 && dimension != 3) {
@@ -307,6 +349,16 @@ void BoundaryData::validate(BoundaryType type, int dimension) const
             throw PhysicsConfigurationError(
                 "double-Mach-reflection boundary requires a stationary wall");
         }
+    }
+    if (farfield_point_vortex) {
+        if (type != BoundaryType::Farfield) {
+            throw PhysicsConfigurationError(
+                "farfield point vortex is only valid on a farfield boundary");
+        }
+        if (dimension != 2) {
+            throw PhysicsConfigurationError("farfield point vortex is available only in 2-D");
+        }
+        farfield_point_vortex->validate();
     }
 }
 
@@ -444,7 +496,11 @@ apply_inviscid_boundary_face_state(const BoundaryPatch& patch,
         if (!data.target_state) return interior_trace;
         return characteristic_boundary_state(
             interior_trace,
-            pressure_primitive(*data.target_state, gas, reference, floors, dimension),
+            pressure_primitive(farfield_target_at(data, face_coordinates, dimension),
+                               gas,
+                               reference,
+                               floors,
+                               dimension),
             outward_unit_normal,
             gas,
             floors,

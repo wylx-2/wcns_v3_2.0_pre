@@ -261,6 +261,12 @@ if(WCNS_ENABLE_CGNS)
     target_link_libraries(
         wcns_convert_tmr_flatplate_p3d_to_cgns PRIVATE wcns::core wcns::cgns
     )
+
+    add_executable(
+        wcns_extract_rans_profile
+        tools/extract_rans_profile.cpp
+    )
+    target_link_libraries(wcns_extract_rans_profile PRIVATE wcns::core wcns::cgns)
 endif()
 
 if(WCNS_BUILD_TESTS)
@@ -275,6 +281,7 @@ if(WCNS_ENABLE_CGNS)
             wcns_generate_release_cgns
             wcns_validate_release_case
             wcns_compare_metric_profiles
+            wcns_extract_rans_profile
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 endif()
