@@ -176,6 +176,9 @@ add_library(wcns_solver STATIC
     src/solver/spatial_operator.cpp
     src/solver/time_integrator.cpp
     src/solver/implicit_time_integrator.cpp
+    src/solver/les_closure.cpp
+    src/solver/les_filter.cpp
+    src/solver/les_models.cpp
     src/solver/low_mach_preconditioner.cpp
     src/solver/two_equation_models.cpp
     src/solver/transport_model.cpp
@@ -203,6 +206,7 @@ add_library(wcns_runtime STATIC
     src/runtime/simulation_driver.cpp
     src/runtime/stop_controller.cpp
     src/runtime/structured_partition.cpp
+    src/runtime/weighted_statistics.cpp
 )
 add_library(wcns::runtime ALIAS wcns_runtime)
 target_link_libraries(wcns_runtime PUBLIC wcns::solver)

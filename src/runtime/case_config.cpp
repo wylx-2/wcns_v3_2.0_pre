@@ -166,6 +166,15 @@ WallTreatment parse_wall_treatment(const std::string& value)
     }
 }
 
+LesWallDamping parse_les_wall_damping(const std::string& value)
+{
+    try {
+        return les_wall_damping(value);
+    } catch (const std::invalid_argument&) {
+        throw CaseConfigurationError("unknown LES wall damping: " + value);
+    }
+}
+
 FieldOutputFormat parse_field_output_format(const std::string& value)
 {
     if (value == "cgns") return FieldOutputFormat::Cgns;
@@ -298,6 +307,19 @@ const std::set<std::string>& fixed_keys()
         "turbulence.two_equation.source_treatment",
         "turbulence.wall_function.y_plus_min",
         "turbulence.wall_function.y_plus_max",
+        "les.filter.type",
+        "les.filter.width_ratio",
+        "les.test_filter.ratio",
+        "les.smagorinsky.cs",
+        "les.smagorinsky.wall_damping",
+        "les.similarity.cb",
+        "les.dynamic.average",
+        "les.dynamic.clipping",
+        "les.dynamic.denominator_floor",
+        "les.dynamic.coefficient_minimum",
+        "les.dynamic.coefficient_maximum",
+        "les.wale.cw",
+        "les.sgs_prandtl",
         "time.integrator",
         "time.physical.scheme",
         "time.physical.step",
@@ -443,6 +465,11 @@ const std::set<std::string>& fixed_keys()
         "output.statistics.write_initial",
         "output.statistics.write_final",
         "output.statistics.quantities",
+        "statistics.time.enabled",
+        "statistics.time.start",
+        "statistics.time.end",
+        "statistics.time.every_steps",
+        "statistics.time.weight",
         "output.boundary.enabled",
         "output.boundary.format",
         "output.boundary.every_steps",
@@ -471,6 +498,10 @@ const std::set<std::string>& fixed_keys()
         "output.boundary.tangent_direction_x",
         "output.boundary.tangent_direction_y",
         "output.boundary.tangent_direction_z",
+        "output.boundary.span_direction_x",
+        "output.boundary.span_direction_y",
+        "output.boundary.span_direction_z",
+        "output.boundary.span_bin_edges",
         "output.statistics.xz_planes.enabled",
         "output.statistics.xz_planes.cell_j_indices",
         "output.statistics.yz_planes.enabled",
@@ -732,6 +763,7 @@ void InitialConditionConfig::validate(int dimension) const
         "poiseuille",
         "linear_conduction",
         "manufactured_periodic",
+        "taylor_green_vortex",
         "double_mach_reflection",
         "turbulent_channel",
     };
@@ -769,6 +801,12 @@ void InitialConditionConfig::validate(int dimension) const
                 "turbulent-channel initial data require 3D, y1>y0, positive "
                 "Re_tau/bulk scales/periods and perturbation amplitude in [0,0.5]");
         }
+    }
+    if (type == "taylor_green_vortex"
+        && (dimension != 3 || parameter("beta", 0.1) <= 0.0
+            || parameter("beta", 0.1) > 1.0)) {
+        throw CaseConfigurationError(
+            "Taylor-Green initial data require 3D and beta in (0,1]");
     }
     if (type == "couette" || type == "poiseuille" || type == "linear_conduction") {
         const Real y0 = parameter("y0", 0.0);
@@ -1048,6 +1086,7 @@ void BoundaryOutputConfig::validate(bool viscous) const
         "friction_velocity",
         "wall_y_plus",
         "wall_y_plus_class",
+        "mu_model_over_mu",
         "pressure_traction_x",
         "pressure_traction_y",
         "pressure_traction_z",
@@ -1065,6 +1104,7 @@ void BoundaryOutputConfig::validate(bool viscous) const
         "friction_velocity",
         "wall_y_plus",
         "wall_y_plus_class",
+        "mu_model_over_mu",
         "viscous_traction_x",
         "viscous_traction_y",
         "viscous_traction_z",
@@ -1107,6 +1147,28 @@ void BoundaryOutputConfig::validate(bool viscous) const
         || !unit(tangent_direction) || std::abs(dot(drag_direction, lift_direction)) > 1.0e-12) {
         throw CaseConfigurationError("boundary output reference data are invalid");
     }
+    if (!span_bin_edges.empty()) {
+        if (span_bin_edges.size() < 2 || !unit(span_direction)) {
+            throw CaseConfigurationError(
+                "boundary span bins require a unit span direction and at least two edges");
+        }
+        for (std::size_t edge = 0; edge < span_bin_edges.size(); ++edge) {
+            if (!std::isfinite(span_bin_edges[edge])
+                || (edge > 0 && span_bin_edges[edge] <= span_bin_edges[edge - 1])) {
+                throw CaseConfigurationError(
+                    "boundary span-bin edges must be finite and strictly increasing");
+            }
+        }
+        const std::array<Real, 3> right_handed {{
+            drag_direction[1] * lift_direction[2] - drag_direction[2] * lift_direction[1],
+            drag_direction[2] * lift_direction[0] - drag_direction[0] * lift_direction[2],
+            drag_direction[0] * lift_direction[1] - drag_direction[1] * lift_direction[0],
+        }};
+        if (dot(right_handed, span_direction) < 1.0 - 1.0e-12) {
+            throw CaseConfigurationError(
+                "boundary drag, lift and span directions must form a right-handed basis");
+        }
+    }
     const Real speed_squared = dot(reference_velocity, reference_velocity);
     if (!std::isfinite(speed_squared) || 0.5 * reference_density * speed_squared <= 1.0e-12) {
         throw CaseConfigurationError("boundary output reference dynamic pressure is too small");
@@ -1142,6 +1204,15 @@ std::string BoundaryOutputConfig::summary() const
     vector(lift_direction);
     result << ",tangent=";
     vector(tangent_direction);
+    if (!span_bin_edges.empty()) {
+        result << ",span=";
+        vector(span_direction);
+        result << ",span_bins=";
+        for (std::size_t edge = 0; edge < span_bin_edges.size(); ++edge) {
+            if (edge != 0) result << ':';
+            result << span_bin_edges[edge];
+        }
+    }
     result << ')';
     return result.str();
 }
@@ -1241,6 +1312,51 @@ std::string CheckpointOutputConfig::summary() const
 {
     return std::string("checkpoint(enabled=") + (enabled ? "true," : "false,") + schedule.summary()
         + ')';
+}
+
+void TimeStatisticsConfig::validate(RunMode mode,
+                                    bool instantaneous_statistics_enabled) const
+{
+    if (!enabled) return;
+    if (mode != RunMode::Unsteady) {
+        throw CaseConfigurationError("time statistics require run.mode=unsteady");
+    }
+    if (!instantaneous_statistics_enabled) {
+        throw CaseConfigurationError(
+            "time statistics require output.statistics.enabled=true");
+    }
+    if (!std::isfinite(start_time) || !std::isfinite(end_time) || start_time < 0.0
+        || end_time <= start_time || every_steps == 0) {
+        throw CaseConfigurationError(
+            "time statistics require 0 <= start < end and every_steps > 0");
+    }
+}
+
+std::string TimeStatisticsConfig::summary() const
+{
+    std::ostringstream result;
+    result << "time_statistics(enabled=" << (enabled ? "true" : "false");
+    if (enabled) {
+        result << std::setprecision(17) << ",start=" << start_time << ",end=" << end_time
+               << ",every_steps=" << every_steps << ",weight=accepted_dt";
+    }
+    result << ')';
+    return result.str();
+}
+
+std::string
+TimeStatisticsConfig::restart_signature(const std::vector<std::string>& quantities) const
+{
+    if (!enabled) return "time_statistics=disabled";
+    std::ostringstream result;
+    result << std::setprecision(17) << "time_statistics=v1,start=" << start_time
+           << ",end=" << end_time << ",every_steps=" << every_steps
+           << ",weight=accepted_dt,quantities=";
+    for (std::size_t index = 0; index < quantities.size(); ++index) {
+        if (index != 0) result << ':';
+        result << quantities[index];
+    }
+    return result.str();
 }
 
 void OutputConfig::validate(bool viscous) const
@@ -1371,7 +1487,7 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     result.schema_version = static_cast<int>(version);
-    const std::array<const char*, 25> v2_keys {{
+    const std::array<const char*, 43> v2_keys {{
         "turbulence.model",
         "turbulence.experimental",
         "turbulence.prandtl",
@@ -1384,6 +1500,19 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         "turbulence.two_equation.source_treatment",
         "turbulence.wall_function.y_plus_min",
         "turbulence.wall_function.y_plus_max",
+        "les.filter.type",
+        "les.filter.width_ratio",
+        "les.test_filter.ratio",
+        "les.smagorinsky.cs",
+        "les.smagorinsky.wall_damping",
+        "les.similarity.cb",
+        "les.dynamic.average",
+        "les.dynamic.clipping",
+        "les.dynamic.denominator_floor",
+        "les.dynamic.coefficient_minimum",
+        "les.dynamic.coefficient_maximum",
+        "les.wale.cw",
+        "les.sgs_prandtl",
         "time.integrator",
         "time.physical.scheme",
         "time.physical.step",
@@ -1397,6 +1526,11 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         "preconditioner.type",
         "preconditioner.mach_cutoff",
         "preconditioner.viscous_cutoff",
+        "statistics.time.enabled",
+        "statistics.time.start",
+        "statistics.time.end",
+        "statistics.time.every_steps",
+        "statistics.time.weight",
     }};
     if (version == 1) {
         for (const auto* key : v2_keys) {
@@ -1408,6 +1542,7 @@ CaseConfig CaseConfig::from_text(const std::string& text)
     } else {
         result.turbulence.kind
             = parse_turbulence_model(require(entries, "turbulence.model"));
+        const auto has_key = [&](const char* key) { return entries.find(key) != entries.end(); };
         const bool has_turbulence_prandtl = entries.find("turbulence.prandtl") != entries.end();
         const bool has_turbulence_experimental
             = entries.find("turbulence.experimental") != entries.end();
@@ -1426,13 +1561,33 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         const bool has_wall_function_range
             = entries.find("turbulence.wall_function.y_plus_min") != entries.end()
             || entries.find("turbulence.wall_function.y_plus_max") != entries.end();
+        const std::array<const char*, 13> les_keys {{
+            "les.filter.type",
+            "les.filter.width_ratio",
+            "les.test_filter.ratio",
+            "les.smagorinsky.cs",
+            "les.smagorinsky.wall_damping",
+            "les.similarity.cb",
+            "les.dynamic.average",
+            "les.dynamic.clipping",
+            "les.dynamic.denominator_floor",
+            "les.dynamic.coefficient_minimum",
+            "les.dynamic.coefficient_maximum",
+            "les.wale.cw",
+            "les.sgs_prandtl",
+        }};
+        const bool has_les_key = std::any_of(les_keys.begin(), les_keys.end(), [&](const char* key) {
+            return has_key(key);
+        });
         const bool two_equation = result.turbulence.kind == TurbulenceModelKind::KOmegaSst
             || result.turbulence.kind == TurbulenceModelKind::KEpsilon;
+        const bool les = turbulence_model_family(result.turbulence.kind)
+            == TurbulenceModelFamily::LesAlgebraic;
         if (result.turbulence.kind == TurbulenceModelKind::None
             && (has_turbulence_prandtl || has_turbulence_experimental
                 || has_wall_treatment || has_sa_farfield
                 || has_sa_source || has_two_equation_freestream || has_model_floor
-                || has_two_equation_source || has_wall_function_range)) {
+                || has_two_equation_source || has_wall_function_range || has_les_key)) {
             throw CaseConfigurationError(
                 "turbulence.model=none does not accept model-specific turbulence keys");
         }
@@ -1453,6 +1608,90 @@ CaseConfig CaseConfig::from_text(const std::string& text)
                 || has_wall_function_range)) {
             throw CaseConfigurationError(
                 "two-equation turbulence keys require k_omega_sst or k_epsilon");
+        }
+        if (!les && has_les_key) {
+            throw CaseConfigurationError("les.* keys require an LES turbulence model");
+        }
+        if (les) {
+            if (has_turbulence_prandtl || has_turbulence_experimental || has_wall_treatment
+                || has_sa_farfield || has_sa_source || has_two_equation_freestream
+                || has_model_floor || has_two_equation_source || has_wall_function_range) {
+                throw CaseConfigurationError(
+                    "LES does not accept RANS-specific turbulence keys");
+            }
+            if (require(entries, "les.filter.type") != "box3_tensor") {
+                throw CaseConfigurationError("LES filter type must be box3_tensor");
+            }
+            result.turbulence.les_filter_width_ratio = parse_real(
+                require(entries, "les.filter.width_ratio"), "les.filter.width_ratio");
+            result.turbulence.les_sgs_prandtl
+                = parse_real(require(entries, "les.sgs_prandtl"), "les.sgs_prandtl");
+            const bool similarity = result.turbulence.kind == TurbulenceModelKind::ScaleSimilarity
+                || result.turbulence.kind
+                    == TurbulenceModelKind::MixedSmagorinskySimilarity;
+            const bool smag = result.turbulence.kind == TurbulenceModelKind::Smagorinsky
+                || result.turbulence.kind
+                    == TurbulenceModelKind::MixedSmagorinskySimilarity;
+            const bool dynamic
+                = result.turbulence.kind == TurbulenceModelKind::DynamicSmagorinsky;
+            const bool uses_test_filter = similarity || dynamic;
+            if (uses_test_filter) {
+                result.turbulence.les_test_filter_ratio = parse_real(
+                    require(entries, "les.test_filter.ratio"), "les.test_filter.ratio");
+                if (result.turbulence.les_test_filter_ratio != 2.0) {
+                    throw CaseConfigurationError(
+                        "stage Z fixes les.test_filter.ratio at 2");
+                }
+            } else if (has_key("les.test_filter.ratio")) {
+                throw CaseConfigurationError(
+                    "les.test_filter.ratio requires a similarity or dynamic model");
+            }
+            if (smag) {
+                result.turbulence.les_smagorinsky_coefficient = parse_real(
+                    require(entries, "les.smagorinsky.cs"), "les.smagorinsky.cs");
+                result.turbulence.les_wall_damping = parse_les_wall_damping(
+                    require(entries, "les.smagorinsky.wall_damping"));
+            } else if (has_key("les.smagorinsky.cs")
+                       || has_key("les.smagorinsky.wall_damping")) {
+                throw CaseConfigurationError(
+                    "les.smagorinsky.* requires smagorinsky or mixed model");
+            }
+            if (similarity) {
+                result.turbulence.les_similarity_coefficient = parse_real(
+                    require(entries, "les.similarity.cb"), "les.similarity.cb");
+            } else if (has_key("les.similarity.cb")) {
+                throw CaseConfigurationError(
+                    "les.similarity.cb requires scale_similarity or mixed model");
+            }
+            if (dynamic) {
+                if (require(entries, "les.dynamic.average") != "local_box3_tensor") {
+                    throw CaseConfigurationError(
+                        "LES dynamic average must be local_box3_tensor");
+                }
+                if (require(entries, "les.dynamic.clipping") != "bounded") {
+                    throw CaseConfigurationError("LES dynamic clipping must be bounded");
+                }
+                result.turbulence.les_dynamic_denominator_floor = parse_real(
+                    require(entries, "les.dynamic.denominator_floor"),
+                    "les.dynamic.denominator_floor");
+                result.turbulence.les_dynamic_coefficient_minimum = parse_real(
+                    require(entries, "les.dynamic.coefficient_minimum"),
+                    "les.dynamic.coefficient_minimum");
+                result.turbulence.les_dynamic_coefficient_maximum = parse_real(
+                    require(entries, "les.dynamic.coefficient_maximum"),
+                    "les.dynamic.coefficient_maximum");
+            } else if (has_key("les.dynamic.average") || has_key("les.dynamic.clipping")
+                       || has_key("les.dynamic.denominator_floor")
+                       || has_key("les.dynamic.coefficient_minimum")
+                       || has_key("les.dynamic.coefficient_maximum")) {
+                throw CaseConfigurationError("les.dynamic.* requires dynamic_smagorinsky");
+            }
+            if (result.turbulence.kind == TurbulenceModelKind::Wale) {
+                result.turbulence.les_wale_coefficient
+                    = parse_real(require(entries, "les.wale.cw"), "les.wale.cw");
+            } else if (has_key("les.wale.cw")) {
+                throw CaseConfigurationError("les.wale.cw requires turbulence.model=wale");
+            }
         }
         result.turbulence.turbulent_prandtl = optional_real(
             entries, "turbulence.prandtl", result.turbulence.turbulent_prandtl);
@@ -1824,6 +2063,19 @@ CaseConfig CaseConfig::from_text(const std::string& text)
     result.output.statistics.schedule = parse_schedule(entries, "output.statistics", true);
     result.output.statistics.quantities
         = optional_string_list(entries, "output.statistics.quantities");
+    result.time_statistics.enabled
+        = optional_bool(entries, "statistics.time.enabled", false);
+    result.time_statistics.start_time
+        = optional_real(entries, "statistics.time.start", 0.0);
+    result.time_statistics.end_time
+        = optional_real(entries, "statistics.time.end", result.run.end_time);
+    result.time_statistics.every_steps
+        = optional_size(entries, "statistics.time.every_steps", 1);
+    if (const auto iterator = entries.find("statistics.time.weight");
+        iterator != entries.end() && iterator->second != "accepted_dt") {
+        throw CaseConfigurationError(
+            "statistics.time.weight must be accepted_dt");
+    }
     result.output.boundary.enabled = optional_bool(entries, "output.boundary.enabled", false);
     if (const auto iterator = entries.find("output.boundary.format"); iterator != entries.end()) {
         result.output.boundary.format = parse_series_output_format(iterator->second);
@@ -1882,6 +2134,19 @@ CaseConfig CaseConfig::from_text(const std::string& text)
                       "output.boundary.tangent_direction_z",
                       result.output.boundary.tangent_direction[2]),
     }};
+    result.output.boundary.span_direction = {{
+        optional_real(entries,
+                      "output.boundary.span_direction_x",
+                      result.output.boundary.span_direction[0]),
+        optional_real(entries,
+                      "output.boundary.span_direction_y",
+                      result.output.boundary.span_direction[1]),
+        optional_real(entries,
+                      "output.boundary.span_direction_z",
+                      result.output.boundary.span_direction[2]),
+    }};
+    result.output.boundary.span_bin_edges
+        = optional_real_list(entries, "output.boundary.span_bin_edges");
     result.output.xz_planes.enabled
         = optional_bool(entries, "output.statistics.xz_planes.enabled", false);
     result.output.xz_planes.cell_j_indices
@@ -1959,14 +2224,8 @@ void CaseConfig::validate() const
         throw CaseConfigurationError(error.what());
     }
     if (schema_version == 2) {
-        if (turbulence.kind != TurbulenceModelKind::None
-            && turbulence.kind != TurbulenceModelKind::SaNegative
-            && turbulence.kind != TurbulenceModelKind::KOmegaSst
-            && turbulence.kind != TurbulenceModelKind::KEpsilon) {
-            throw CaseConfigurationError(
-                std::string("turbulence model is reserved but not implemented: ")
-                + turbulence_model_name(turbulence.kind));
-        }
+        const bool les = turbulence_model_family(turbulence.kind)
+            == TurbulenceModelFamily::LesAlgebraic;
         if (turbulence.kind == TurbulenceModelKind::SaNegative) {
             if (!run.viscous) {
                 throw CaseConfigurationError("SA-neg requires run.viscous=true");
@@ -1987,6 +2246,30 @@ void CaseConfig::validate() const
             if (robustness.enabled) {
                 throw CaseConfigurationError(
                     "two-equation RANS does not support mean-flow step retry transactions");
+            }
+        }
+        if (les) {
+            if (!run.viscous) {
+                throw CaseConfigurationError("LES requires run.viscous=true");
+            }
+            if (run.mode != RunMode::Unsteady) {
+                throw CaseConfigurationError("LES requires run.mode=unsteady");
+            }
+            if (time_algorithm.integrator != TimeIntegratorKind::LuSgs) {
+                throw CaseConfigurationError("LES requires time.integrator=lu_sgs");
+            }
+            if (time_algorithm.physical_time_step <= 0.0) {
+                throw CaseConfigurationError(
+                    "LES requires BDF2 and a positive physical time step");
+            }
+            if (robustness.enabled) {
+                throw CaseConfigurationError(
+                    "LES does not support explicit robustness retries");
+            }
+            if (turbulence.les_wall_damping == LesWallDamping::VanDriest) {
+                throw CaseConfigurationError(
+                    "LES van-Driest damping requires a production wall-y+ field; "
+                    "the current stage Z runtime cannot provide it");
             }
         }
         if (time_algorithm.integrator == TimeIntegratorKind::LuSgs) {
@@ -2018,20 +2301,27 @@ void CaseConfig::validate() const
     initial.validate();
     run.validate();
     output.validate(run.viscous);
-    const std::set<std::string> rans_wall_quantities {
+    time_statistics.validate(run.mode, output.statistics.enabled);
+    if (time_statistics.enabled && output.statistics.quantities.empty()) {
+        throw CaseConfigurationError(
+            "time statistics require at least one output.statistics quantity");
+    }
+    const std::set<std::string> modeled_wall_quantities {
         "wall_distance", "friction_velocity", "wall_y_plus", "wall_y_plus_class"};
     const bool rans_transport = turbulence.kind == TurbulenceModelKind::SaNegative
         || turbulence.kind == TurbulenceModelKind::KOmegaSst
         || turbulence.kind == TurbulenceModelKind::KEpsilon;
-    if (!rans_transport
+    const bool les = turbulence_model_family(turbulence.kind)
+        == TurbulenceModelFamily::LesAlgebraic;
+    if (!rans_transport && !les
         && std::any_of(output.boundary.quantities.begin(),
                        output.boundary.quantities.end(),
                        [&](const std::string& quantity) {
-                           return rans_wall_quantities.find(quantity)
-                               != rans_wall_quantities.end();
+                           return modeled_wall_quantities.find(quantity)
+                               != modeled_wall_quantities.end();
                        })) {
         throw CaseConfigurationError(
-            "RANS wall-unit boundary output requires an active RANS turbulence model");
+            "wall-unit boundary output requires an active RANS or LES model");
     }
     if (output.channel_walls.enabled && !run.viscous) {
         throw CaseConfigurationError("channel-wall friction monitoring requires run.viscous=true");
@@ -2181,6 +2471,7 @@ std::string CaseConfig::summary() const
                << preconditioner.summary();
     }
     result << ',' << source_terms.summary() << ',' << run.summary() << ',' << output.summary()
+           << ',' << time_statistics.summary()
            << ",restart.path=" << (restart_path.empty() ? "<none>" : restart_path) << ",digest=0x"
            << std::hex << digest_ << ')';
     return result.str();
@@ -2245,8 +2536,16 @@ std::string CaseConfig::restart_signature() const
                              << metric_options.maximum_reference_relative_difference;
             result += metric_signature.str();
         }
+        if (time_statistics.enabled) {
+            result += ";" + time_statistics_identity();
+        }
     }
     return result;
+}
+
+std::string CaseConfig::time_statistics_identity() const
+{
+    return time_statistics.restart_signature(output.statistics.quantities);
 }
 
 } // namespace wcns

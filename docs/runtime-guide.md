@@ -1,7 +1,7 @@
 # WCNS 运行、配置、输出与重启指南
 
-本文以 WCNS `1.1.0` 已发布能力为主，并记录 v2.0.0 阶段 X 分支已实现、
-但尚未通过完整物理验收的 `schema_version = 2` 能力；正式入口仍为
+本文以 WCNS `1.1.0` 已发布能力为主，并记录 v2.0.0 阶段 Z 分支已实现、
+但仍受候选与服务器物理验证边界约束的 `schema_version = 2` 能力；正式入口仍为
 `wcns_run`，定位为简明速查。
 逐步用户手册见 [`user-manual.md`](user-manual.md)，源码扩展指南见
 [`developer-guide.md`](developer-guide.md)，完整配置模板见
@@ -76,7 +76,7 @@ time.integrator = ssprk3
 preconditioner.type = none
 ```
 
-阶段 X 分支可选 SA-neg：
+schema 2 可选 SA-neg：
 
 ```text
 turbulence.model = sa_neg
@@ -89,14 +89,15 @@ preconditioner.type = none
 ```
 
 `sa_neg` 要求 `run.viscous=true`、至少一个 resolved no-slip wall，远场比限定在
-`[3,5]`；当前不允许与整步稳健化事务同时开启。`local_implicit` 仅对 SA 局部源项作
-对角更新，它不是局部伪时间步或 LU-SGS。SST、k--epsilon、LES、`lu_sgs` 和
-`weiss_smith` 仍会在启动前明确拒绝。schema 1 不接受这些 v2 键，其摘要和旧检查点
-身份保持不变。SA-neg 当前是阶段 X 验证中功能，不应用于对外生产结论。完整迁移边界见
+`[3,5]`。SST-2003m、显式实验级标准 k-epsilon、定常/非定常 LU-SGS 和 Roe/
+Weiss--Smith 也已实现。阶段 Z 另支持五种三维非定常 LES：`smagorinsky`、
+`scale_similarity`、`mixed_smagorinsky_similarity`、`dynamic_smagorinsky`、`wale`；LES
+强制黏性、BDF2 双时间 LU-SGS、`preconditioner.type=none`。模型专属必填键与限制见
 [`v2.0.0/config-schema-2-draft.md`](v2.0.0/config-schema-2-draft.md)。
 
-低 Mach 预处理尚未实现。无粘界面通量只走所选
-Riemann 求解器；发生非法中间状态时按冻结的确定性回退链处理并计数。稳健化开启后按
+Weiss--Smith 首版只支持 Roe+LU-SGS，并只作用于定常伪时间或非定常双时间内迭代；物理
+BDF2 导数保持守恒。无粘界面发生非法中间状态时按冻结的确定性回退链处理并计数。SSPRK3
+稳健化开启后按
 “原方案、同重构 primitive、linear5/primitive、zero_order/conservative+Rusanov”的有效去重
 梯子升级真实残差直接支持及一层转置支持保护面；候选始终在独立缓冲区验证，失败整步不推进时间。详细数学定义见
 [`../算法补充.md`](../算法补充.md) 11.2.3。
@@ -271,6 +272,11 @@ FlowSolution；Tecplot ASCII 按原 zone 写 cell-center ordered zone。支持�
 | `mu_t_over_mu` | SA 涡黏度/分子黏度 |
 | `sa_production,sa_destruction` | SA 产生项和破坏项诊断 |
 | `wall_distance,sa_negative_branch` | 壁距离和 SA-neg 负分支标识 |
+| `k,omega,epsilon` | 活动两方程 RANS 模型变量 |
+| `mu_sgs,mu_sgs_over_mu` | LES SGS 黏度和相对分子黏度比 |
+| `sgs_stress_xx/yy/zz/xy/xz/yz` | LES SGS 偏应力六分量 |
+| `sgs_energy_transfer,les_dynamic_coefficient` | SGS 能量传递和动态系数 |
+| `les_filter_width,les_grid_anisotropy` | LES 滤宽及网格各向异性诊断 |
 | `jacobian` | `partial(x,y,z)/partial(xi,eta,zeta)`；二维为面积尺度、三维为体积尺度 |
 
 `output.dimensional = true` 时按参考量恢复量纲；否则输出内部无量纲值。需要 ghost 坐标/度量
@@ -291,6 +297,10 @@ FlowSolution；Tecplot ASCII 按原 zone 写 cell-center ordered zone。支持�
 `<case>.loads.r<ranks>.txt`。二维头记录 `force_per_unit_span=true`。这些配置进入摘要、digest
 和 manifest，但不改变数值 restart signature。完整公式和符号见《算法补充》11.4。
 
+三维可再给 `output.boundary.span_direction_x/y/z` 与严格递增的
+`output.boundary.span_bin_edges`；方向须与 drag/lift 构成右手系。每次事件生成
+`.spanwise_loads...txt`，按面心投影把每个真实面完整归入一箱，各箱载荷和必须回收到整体值。
+
 ### 5.3 残差历史、统计和 manifest
 
 `output.history.format = txt | tecplot`。历史列固定，包含 step/time/dt/CFL/wall time、总残差、
@@ -301,7 +311,10 @@ owner 面数、troubled-cell/局部重算/整步 retry、proposed/accepted dt、
 Tecplot 写数值 `stop_reason_code` 并在 `AUXDATA STOP_REASON_CODES` 中给出映射。
 
 `output.statistics.format = txt | tecplot`。当前内建可选量为 `total_mass`、
-`total_momentum_x/y/z`、`total_energy`，采用与残差一致的原 zone 守恒积分权重。
+`total_momentum_x/y/z`、`total_energy`，采用与残差一致的原 zone 守恒积分权重。schema 2
+非定常计算可用 `statistics.time.enabled/start/end/every_steps` 和固定
+`weight=accepted_dt` 对已选量作加权 mean/RMS/Favre/covariance。只统计接受物理步，累加器随
+checkpoint 保存并支持合法异 rank 重启。
 
 每次运行的 `<case>.manifest.r<ranks>.txt` 记录版本、Git 提交、编译器、构建类型、MPI 数、配置/分区
 摘要、网格和重启签名、最终 step/time/dt/wall time、停止原因及成功提交的输出文件。流场、
@@ -310,8 +323,9 @@ Tecplot 写数值 `stop_reason_code` 并在 `AUXDATA STOP_REASON_CODES` 中给�
 ## 6. 检查点和不同 rank 重启
 
 检查点只能是项目内部 CGNS 布局，始终无损保存原 zone 上五个无量纲守恒场；
-SA-neg 活动时使用 checkpoint schema 2 并额外保存 `NuTilde`、模型描述符、模型残差参考和
-连续计数，`none` 仍保持 schema 1。所有检查点另含格式版本、step/time/dt、网格签名和
+活动 RANS 模型使用 checkpoint schema 2 并保存模型场、描述符、模型残差参考和连续计数；
+LU-SGS/BDF2 保存历史层，启用时间统计时保存加权矩、协方差和最后接受事件。代数 LES 场从
+接受态确定性重算，不冗余保存。`none` 的兼容路径仍保持原 schema。所有检查点另含格式版本、step/time/dt、网格签名和
 数值重启签名。除带 step/time 的文件外，
 还更新 `<case>.checkpoint.latest.cgns`。`latest` 是本次运行拥有的滚动别名，因此即使
 `output.allow_existing=false`，后续检查点事件也会安全替换它；运行前既有输出目录以及带

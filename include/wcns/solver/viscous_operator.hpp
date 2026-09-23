@@ -1,5 +1,6 @@
 #pragma once
 
+#include <wcns/solver/les_closure.hpp>
 #include <wcns/solver/turbulence_model.hpp>
 #include <wcns/solver/viscous_boundary.hpp>
 #include <wcns/solver/viscous_halo.hpp>
@@ -105,7 +106,8 @@ private:
     Axis axis,
     Index3 face,
     const BoundaryPatch* physical_boundary,
-    const ITurbulenceModel* turbulence_model);
+    const ITurbulenceModel* turbulence_model,
+    const Field<Real>* les_closure = nullptr);
 
 [[nodiscard]] ViscousFaceFluxField
 compute_viscous_face_fluxes(const StructuredBlock& block,
@@ -118,7 +120,8 @@ compute_viscous_face_fluxes(const StructuredBlock& block,
                             const ReferenceScales& reference,
                             const NumericalFloors& floors,
                             std::uint64_t version,
-                            const ITurbulenceModel* turbulence_model = nullptr);
+                            const ITurbulenceModel* turbulence_model = nullptr,
+                            const Field<Real>* les_closure = nullptr);
 
 void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                       const StructuredBlock& block,
@@ -131,7 +134,8 @@ void compute_viscous_face_fluxes_into(ViscousFaceFluxField& result,
                                       const ReferenceScales& reference,
                                       const NumericalFloors& floors,
                                       std::uint64_t version,
-                                      const ITurbulenceModel* turbulence_model = nullptr);
+                                      const ITurbulenceModel* turbulence_model = nullptr,
+                                      const Field<Real>* les_closure = nullptr);
 
 void add_wcns_viscous_residual(StructuredBlock& block,
                                const MetricField& metric,

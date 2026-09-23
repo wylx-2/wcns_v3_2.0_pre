@@ -37,6 +37,7 @@ add_executable(wcns_unit_tests
     test_boundary_output.cpp
     test_quantity_registry.cpp
     test_turbulence_infrastructure.cpp
+    test_stage_z_les.cpp
 )
 
 target_link_libraries(
@@ -134,6 +135,92 @@ if(WCNS_ENABLE_CGNS)
         ${CMAKE_CURRENT_BINARY_DIR}/implicit_checkpoint_restart.wcns
         @ONLY
     )
+    foreach(les_model IN ITEMS
+            smagorinsky
+            scale_similarity
+            mixed_smagorinsky_similarity
+            dynamic_smagorinsky
+            wale)
+        set(WCNS_LES_MODEL ${les_model})
+        if(les_model STREQUAL "smagorinsky")
+            set(WCNS_LES_MODEL_LINES
+                "les.smagorinsky.cs = 0.17\nles.smagorinsky.wall_damping = none")
+        elseif(les_model STREQUAL "scale_similarity")
+            set(WCNS_LES_MODEL_LINES
+                "les.test_filter.ratio = 2\nles.similarity.cb = 1")
+        elseif(les_model STREQUAL "mixed_smagorinsky_similarity")
+            set(WCNS_LES_MODEL_LINES
+                "les.test_filter.ratio = 2\nles.smagorinsky.cs = 0.17\nles.smagorinsky.wall_damping = none\nles.similarity.cb = 1")
+        elseif(les_model STREQUAL "dynamic_smagorinsky")
+            set(WCNS_LES_MODEL_LINES
+                "les.test_filter.ratio = 2\nles.dynamic.average = local_box3_tensor\nles.dynamic.clipping = bounded\nles.dynamic.denominator_floor = 1e-20\nles.dynamic.coefficient_minimum = -0.05\nles.dynamic.coefficient_maximum = 0.09")
+        else()
+            set(WCNS_LES_MODEL_LINES "les.wale.cw = 0.325")
+        endif()
+        foreach(les_rank_label IN ITEMS serial mpi2 mpi4)
+            set(WCNS_LES_RANK_LABEL ${les_rank_label})
+            configure_file(
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/les_freestream_case.wcns.in
+                ${CMAKE_CURRENT_BINARY_DIR}/les_${les_model}_${les_rank_label}.wcns
+                @ONLY
+            )
+            configure_file(
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/les_implicit_convergence_case.wcns.in
+                ${CMAKE_CURRENT_BINARY_DIR}/les_implicit_${les_model}_${les_rank_label}.wcns
+                @ONLY
+            )
+        endforeach()
+    endforeach()
+    set(WCNS_LES_ZERO_CASE les-zero-none)
+    set(WCNS_LES_ZERO_OUTPUT les-zero-none)
+    set(WCNS_LES_ZERO_MODEL "turbulence.model = none")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/les_zero_equivalence_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/les_zero_none.wcns
+        @ONLY
+    )
+    set(WCNS_LES_ZERO_CASE les-zero-smagorinsky)
+    set(WCNS_LES_ZERO_OUTPUT les-zero-smagorinsky)
+    set(WCNS_LES_ZERO_MODEL
+        "turbulence.model = smagorinsky\nles.filter.type = box3_tensor\nles.filter.width_ratio = 1\nles.sgs_prandtl = 0.9\nles.smagorinsky.cs = 0\nles.smagorinsky.wall_damping = none")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/les_zero_equivalence_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/les_zero_smagorinsky.wcns
+        @ONLY
+    )
+    set(WCNS_LES_STATS_CASE les-statistics-source)
+    set(WCNS_LES_STATS_MAX_STEPS 1)
+    set(WCNS_LES_STATS_END_TIME 0.001)
+    set(WCNS_LES_STATS_OUTPUT les-statistics-source)
+    set(WCNS_LES_STATS_CHECKPOINT true)
+    set(WCNS_LES_STATS_RESTART "# fresh statistics run")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/les_statistics_restart_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_source.wcns
+        @ONLY
+    )
+    foreach(les_stats_rank_label IN ITEMS serial mpi2 mpi4)
+        set(WCNS_LES_STATS_CASE les-statistics-continuous-${les_stats_rank_label})
+        set(WCNS_LES_STATS_MAX_STEPS 2)
+        set(WCNS_LES_STATS_END_TIME 0.002)
+        set(WCNS_LES_STATS_OUTPUT les-statistics-continuous-${les_stats_rank_label})
+        set(WCNS_LES_STATS_CHECKPOINT false)
+        set(WCNS_LES_STATS_RESTART "# fresh statistics run")
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/les_statistics_restart_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_continuous_${les_stats_rank_label}.wcns
+            @ONLY
+        )
+        set(WCNS_LES_STATS_CASE les-statistics-restart-${les_stats_rank_label})
+        set(WCNS_LES_STATS_OUTPUT les-statistics-restart-${les_stats_rank_label})
+        set(WCNS_LES_STATS_RESTART
+            "restart.path = ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-source/les-statistics-source.checkpoint.latest.cgns")
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/les_statistics_restart_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_restart_${les_stats_rank_label}.wcns
+            @ONLY
+        )
+    endforeach()
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_sa_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/implicit_sa_steady.wcns
@@ -330,6 +417,14 @@ if(WCNS_ENABLE_CGNS)
         ${CMAKE_CURRENT_BINARY_DIR}/xz_plane_statistics_case.wcns
         @ONLY
     )
+    foreach(les_boundary_rank IN ITEMS serial mpi2 mpi4)
+        set(WCNS_LES_BOUNDARY_RANK ${les_boundary_rank})
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/les_boundary_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_${les_boundary_rank}.wcns
+            @ONLY
+        )
+    endforeach()
     if(WCNS_ENABLE_MPI)
         set(WCNS_XZ_CASE_NAME xz-plane-statistics-smoke-mpi)
         set(WCNS_XZ_OUTPUT_DIRECTORY xz-plane-statistics-smoke-mpi)
@@ -543,6 +638,110 @@ if(WCNS_ENABLE_CGNS)
             PROPERTIES FIXTURES_REQUIRED cgns_files
         )
     endforeach()
+    foreach(les_model IN ITEMS
+            smagorinsky
+            scale_similarity
+            mixed_smagorinsky_similarity
+            dynamic_smagorinsky
+            wale)
+        add_test(
+            NAME wcns.run.les_${les_model}.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_${les_model}_serial.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_${les_model}.serial
+            PROPERTIES
+                FIXTURES_REQUIRED cgns_files
+                FIXTURES_SETUP les_${les_model}_serial
+        )
+        add_test(
+            NAME wcns.run.les_implicit_${les_model}.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_implicit_${les_model}_serial.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_implicit_${les_model}.serial
+            PROPERTIES FIXTURES_REQUIRED cgns_files
+        )
+    endforeach()
+    add_test(
+        NAME wcns.run.les_zero.none.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_zero_none.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_zero.none.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_zero_none
+    )
+    add_test(
+        NAME wcns.run.les_zero.smagorinsky.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_zero_smagorinsky.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_zero.smagorinsky.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_zero_smagorinsky
+    )
+    add_test(
+        NAME wcns.check.les_zero_equivalence.serial
+        COMMAND wcns_cgns_field_compare
+            ${CMAKE_CURRENT_BINARY_DIR}/les-zero-none/les-zero-none.field.step00000001.time1p000000000eM05.cgns
+            ${CMAKE_CURRENT_BINARY_DIR}/les-zero-smagorinsky/les-zero-smagorinsky.field.step00000001.time1p000000000eM05.cgns
+            0
+    )
+    set_tests_properties(
+        wcns.check.les_zero_equivalence.serial
+        PROPERTIES FIXTURES_REQUIRED "les_zero_none;les_zero_smagorinsky"
+    )
+    add_test(
+        NAME wcns.run.les_statistics.source.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_source.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_statistics.source.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_statistics_source
+    )
+    add_test(
+        NAME wcns.run.les_statistics.continuous.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_continuous_serial.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_statistics.continuous.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_statistics_continuous_serial
+    )
+    add_test(
+        NAME wcns.run.les_statistics.restart.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_restart_serial.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_statistics.restart.serial
+        PROPERTIES
+            FIXTURES_REQUIRED les_statistics_source
+            FIXTURES_SETUP les_statistics_restart_serial
+    )
+    add_test(
+        NAME wcns.check.les_statistics.restart.serial
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/check_les_time_statistics.py
+            ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-continuous-serial/les-statistics-continuous-serial.time_statistics.r1.txt
+            ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-restart-serial/les-statistics-restart-serial.time_statistics.r1.txt
+    )
+    set_tests_properties(
+        wcns.check.les_statistics.restart.serial
+        PROPERTIES FIXTURES_REQUIRED "les_statistics_continuous_serial;les_statistics_restart_serial"
+    )
     add_test(
         NAME wcns.run.implicit_sa.steady.serial
         COMMAND wcns_run
@@ -796,6 +995,28 @@ if(WCNS_ENABLE_CGNS)
     set_tests_properties(
         wcns.check.boundary_3d.serial
         PROPERTIES FIXTURES_REQUIRED xz_plane_statistics_output
+    )
+    add_test(
+        NAME wcns.run.les_boundary.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_serial.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_boundary.serial
+        PROPERTIES
+            FIXTURES_REQUIRED xz_plane_statistics_mesh
+            FIXTURES_SETUP les_boundary_serial
+            RESOURCE_LOCK les_boundary_output
+    )
+    add_test(
+        NAME wcns.check.les_boundary.serial
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/check_les_boundary.py
+            ${CMAKE_CURRENT_BINARY_DIR}/les-boundary-equivalence
+    )
+    set_tests_properties(
+        wcns.check.les_boundary.serial
+        PROPERTIES FIXTURES_REQUIRED les_boundary_serial
     )
     set_tests_properties(
         wcns.run.freestream.serial
@@ -1456,6 +1677,42 @@ if(WCNS_ENABLE_CGNS)
             PROPERTIES FIXTURES_REQUIRED xz_plane_statistics_output_mpi
         )
         add_test(
+            NAME wcns.run.les_boundary.2
+            COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 2
+                $<TARGET_FILE:wcns_run>
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_mpi2.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_boundary.2
+            PROPERTIES
+                FIXTURES_REQUIRED les_boundary_serial
+                FIXTURES_SETUP les_boundary_2
+                RESOURCE_LOCK les_boundary_output
+        )
+        add_test(
+            NAME wcns.run.les_boundary.4
+            COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 4
+                $<TARGET_FILE:wcns_run>
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_mpi4.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_boundary.4
+            PROPERTIES
+                FIXTURES_REQUIRED les_boundary_2
+                FIXTURES_SETUP les_boundary_4
+                RESOURCE_LOCK les_boundary_output
+        )
+        add_test(
+            NAME wcns.check.les_boundary.mpi_equivalence
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/check_boundary_rank_equivalence.py
+                ${CMAKE_CURRENT_BINARY_DIR}/les-boundary-equivalence
+        )
+        set_tests_properties(
+            wcns.check.les_boundary.mpi_equivalence
+            PROPERTIES FIXTURES_REQUIRED les_boundary_4
+        )
+        add_test(
             NAME wcns.run.freestream.2
             COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 2
                 $<TARGET_FILE:wcns_run>
@@ -1478,6 +1735,95 @@ if(WCNS_ENABLE_CGNS)
                     PROPERTIES FIXTURES_REQUIRED cgns_files
                 )
             endforeach()
+            foreach(les_model IN ITEMS
+                    smagorinsky
+                    scale_similarity
+                    mixed_smagorinsky_similarity
+                    dynamic_smagorinsky
+                    wale)
+                add_test(
+                    NAME wcns.run.les_${les_model}.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/les_${les_model}_mpi${rank_count}.wcns
+                )
+                set_tests_properties(
+                    wcns.run.les_${les_model}.${rank_count}
+                    PROPERTIES
+                        FIXTURES_REQUIRED cgns_files
+                        FIXTURES_SETUP les_${les_model}_${rank_count}
+                )
+                add_test(
+                    NAME wcns.check.les_${les_model}.${rank_count}
+                    COMMAND wcns_cgns_field_compare
+                        ${CMAKE_CURRENT_BINARY_DIR}/les-${les_model}-rserial/les-${les_model}.field.step00000001.time1p000000000eM03.cgns
+                        ${CMAKE_CURRENT_BINARY_DIR}/les-${les_model}-rmpi${rank_count}/les-${les_model}.field.step00000001.time1p000000000eM03.cgns
+                        2e-12
+                        mu_sgs
+                        mu_sgs_over_mu
+                        sgs_energy_transfer
+                        sgs_stress_xx
+                        sgs_stress_yy
+                        sgs_stress_zz
+                        sgs_stress_xy
+                        sgs_stress_xz
+                        sgs_stress_yz
+                        les_dynamic_coefficient
+                        les_filter_width
+                        les_grid_anisotropy
+                )
+                set_tests_properties(
+                    wcns.check.les_${les_model}.${rank_count}
+                    PROPERTIES
+                        FIXTURES_REQUIRED "les_${les_model}_serial;les_${les_model}_${rank_count}"
+                )
+                add_test(
+                    NAME wcns.run.les_implicit_${les_model}.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/les_implicit_${les_model}_mpi${rank_count}.wcns
+                )
+                set_tests_properties(
+                    wcns.run.les_implicit_${les_model}.${rank_count}
+                    PROPERTIES FIXTURES_REQUIRED cgns_files
+                )
+            endforeach()
+            add_test(
+                NAME wcns.run.les_statistics.continuous.${rank_count}
+                COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                    $<TARGET_FILE:wcns_run>
+                    --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_continuous_mpi${rank_count}.wcns
+            )
+            set_tests_properties(
+                wcns.run.les_statistics.continuous.${rank_count}
+                PROPERTIES
+                    FIXTURES_REQUIRED cgns_files
+                    FIXTURES_SETUP les_statistics_continuous_${rank_count}
+            )
+            add_test(
+                NAME wcns.run.les_statistics.restart.${rank_count}
+                COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                    $<TARGET_FILE:wcns_run>
+                    --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_restart_mpi${rank_count}.wcns
+            )
+            set_tests_properties(
+                wcns.run.les_statistics.restart.${rank_count}
+                PROPERTIES
+                    FIXTURES_REQUIRED les_statistics_source
+                    FIXTURES_SETUP les_statistics_restart_${rank_count}
+            )
+            add_test(
+                NAME wcns.check.les_statistics.restart.${rank_count}
+                COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/check_les_time_statistics.py
+                    ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-continuous-serial/les-statistics-continuous-serial.time_statistics.r1.txt
+                    ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-continuous-mpi${rank_count}/les-statistics-continuous-mpi${rank_count}.time_statistics.r${rank_count}.txt
+                    ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-restart-mpi${rank_count}/les-statistics-restart-mpi${rank_count}.time_statistics.r${rank_count}.txt
+            )
+            set_tests_properties(
+                wcns.check.les_statistics.restart.${rank_count}
+                PROPERTIES FIXTURES_REQUIRED "les_statistics_continuous_serial;les_statistics_continuous_${rank_count};les_statistics_restart_${rank_count}"
+            )
             add_test(
                 NAME wcns.run.implicit_sa.steady.${rank_count}
                 COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}

@@ -197,6 +197,10 @@ struct BoundaryOutputConfig {
     std::array<Real, 3> tangent_direction {{std::numeric_limits<Real>::quiet_NaN(),
                                             std::numeric_limits<Real>::quiet_NaN(),
                                             std::numeric_limits<Real>::quiet_NaN()}};
+    std::array<Real, 3> span_direction {{std::numeric_limits<Real>::quiet_NaN(),
+                                         std::numeric_limits<Real>::quiet_NaN(),
+                                         std::numeric_limits<Real>::quiet_NaN()}};
+    std::vector<Real> span_bin_edges;
 
     void validate(bool viscous) const;
     [[nodiscard]] std::string summary() const;
@@ -236,6 +240,17 @@ struct CheckpointOutputConfig {
 
     void validate() const;
     [[nodiscard]] std::string summary() const;
+};
+
+struct TimeStatisticsConfig {
+    bool enabled = false;
+    Real start_time = 0.0;
+    Real end_time = 0.0;
+    std::size_t every_steps = 1;
+
+    void validate(RunMode mode, bool instantaneous_statistics_enabled) const;
+    [[nodiscard]] std::string summary() const;
+    [[nodiscard]] std::string restart_signature(const std::vector<std::string>& quantities) const;
 };
 
 struct OutputConfig {
@@ -296,6 +311,7 @@ struct CaseConfig {
     SourceTermConfig source_terms;
     CaseRunConfig run;
     OutputConfig output;
+    TimeStatisticsConfig time_statistics;
     std::string restart_path;
 
     [[nodiscard]] static CaseConfig from_text(const std::string& text);
@@ -310,6 +326,7 @@ struct CaseConfig {
     [[nodiscard]] std::string summary() const;
     [[nodiscard]] std::string restart_signature() const;
     [[nodiscard]] std::string legacy_v1_restart_signature() const;
+    [[nodiscard]] std::string time_statistics_identity() const;
     [[nodiscard]] std::uint64_t digest() const noexcept { return digest_; }
 
 private:

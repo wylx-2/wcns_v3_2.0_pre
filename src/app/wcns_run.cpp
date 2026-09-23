@@ -409,6 +409,17 @@ int main(int argc, char** argv)
         const auto mesh_name = resolve_mesh_path(command.config_path, config.mesh_path);
         wcns::CgnsReader reader;
         const auto metadata = reader.read_metadata(mesh_name);
+        if (wcns::turbulence_model_family(config.turbulence.kind)
+            == wcns::TurbulenceModelFamily::LesAlgebraic) {
+            const bool all_three_dimensional
+                = std::all_of(metadata.zones.begin(), metadata.zones.end(), [](const auto& zone) {
+                      return zone.cell_dimension == 3 && zone.physical_dimension == 3;
+                  });
+            if (!all_three_dimensional) {
+                throw wcns::CaseConfigurationError(
+                    "LES requires a fully three-dimensional mesh");
+            }
+        }
         const auto plan = wcns::StructuredPartitionPlan::build(
             partition_zones(metadata), mpi.size(), config.partition);
         if (config.output.xz_planes.enabled) {
@@ -446,6 +457,14 @@ int main(int argc, char** argv)
         } else if (config.turbulence.kind == wcns::TurbulenceModelKind::KOmegaSst
                    || config.turbulence.kind == wcns::TurbulenceModelKind::KEpsilon) {
             wcns::initialize_two_equation_fields(mpi, local_blocks, config.turbulence);
+        } else if (turbulence_model->family()
+                   == wcns::TurbulenceModelFamily::LesAlgebraic) {
+            for (auto& block : local_blocks.blocks()) {
+                block.turbulence.reset(block.cell_extent(),
+                                       block.ghost_width(),
+                                       turbulence_model->fields());
+                block.turbulence.fill(0.0);
+            }
         }
 
         wcns::QuantityContext quantity_context {
@@ -457,8 +476,20 @@ int main(int argc, char** argv)
         };
         const auto conservation_weights
             = wcns::GlobalConservationWeights::build(partitioned.global_mesh, profile);
+        std::unique_ptr<wcns::AcceptedTimeStatistics> time_statistics;
+        if (config.time_statistics.enabled) {
+            time_statistics = std::make_unique<wcns::AcceptedTimeStatistics>(
+                config.time_statistics_identity(), config.output.statistics.quantities.size());
+        }
         wcns::CheckpointService checkpoint(
-            mpi, config, plan, local_blocks, metrics, quantity_context, mesh_name);
+            mpi,
+            config,
+            plan,
+            local_blocks,
+            metrics,
+            quantity_context,
+            mesh_name,
+            time_statistics.get());
         wcns::SimulationInitialState simulation_initial;
         if (config.restart_path.empty()) {
             wcns::FlowInitializer::initialize_local_blocks(
@@ -570,7 +601,8 @@ int main(int argc, char** argv)
                 }
                 return {};
             },
-            std::move(statistic_registry));
+            std::move(statistic_registry),
+            time_statistics.get());
         wcns::CompositeSimulationObserver observer;
         observer.add(console);
         observer.add(output);

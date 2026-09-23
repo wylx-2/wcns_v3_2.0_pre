@@ -1,7 +1,7 @@
 # WCNS 用户手册
 
 本文面向第一次接触本程序的算例使用者，以 WCNS `1.1.0` 已发布功能为主，并记录 v2.0.0
-阶段 X 分支已实现、但尚未完成物理验收的 `schema_version = 2` 与 SA-neg；生产入口仍为
+阶段 Z 分支已经实现、但仍受候选/服务器验证边界约束的 `schema_version = 2` 能力；生产入口仍为
 `wcns_run`。按本文顺序操作，可以从源码构建程序、准备
 CGNS 网格、填写配置、完成串行或 MPI 计算、识别停止状态、读取输出并从检查点续算。
 
@@ -13,7 +13,8 @@ CGNS 网格、填写配置、完成串行或 MPI 计算、识别停止状态、�
 2. 输入网格坐标、初场、边界数据、源项、计算时间全部使用程序的**内部无量纲量**。只有 `gas.*` 和 `reference.*` 是用于定义量纲的有量纲参考输入。
 3. 二维状态仍保存五个 Euler 分量 `(rho,rho*u,rho*v,rho*w,rho*E)`，但二维的 `w` 及 z 动量必须为零。
 4. `algorithm.profile = phenglei_wcns` 与 `scmm6_wcns` 是两套独立的度量、线性插值、通量导数和物理边界闭合组合；不能从两套 profile 中交叉抽取部件。
-5. 时间推进固定为显式 SSPRK3。定常计算使用伪时间和残差停止；非定常计算按无量纲物理时间停止。`run.max_steps` 对两者始终是硬上限。
+5. schema 1 时间推进固定为显式 SSPRK3；schema 2 还支持定常 LU-SGS 以及非定常 BDF2/BDF1
+   双时间 LU-SGS。`run.max_steps` 对两者始终是硬上限，未收敛内迭代不能接受物理时间层。
 6. 配置解析是严格的：键区分大小写，未知键、重复键、缺失必填键、空值、`NaN/Inf`、非法枚举和逗号列表空项都会在计算前失败。
 7. 建议每次计算使用新的输出目录，并保留最终 manifest。退出码为 0 才表示正常达到定常收敛或非定常目标时间；最大步数、墙钟和信号停止返回 2，不能当作“计算成功收敛”。
 
@@ -389,7 +390,7 @@ time.integrator = ssprk3
 preconditioner.type = none
 ```
 
-阶段 X 分支可将模型段改为：
+schema 2 可将模型段改为：
 
 ```text
 turbulence.model = sa_neg
@@ -403,13 +404,19 @@ SA-neg 必须与 `run.viscous = true`和至少一个 no-slip wall 同时使用�
 `explicit`。当前 `local_implicit` 只是模型源项的局部对角更新，不是 LU-SGS。模型活动后，
 定常停止判定会同时要求五个平均流残差和 `nu_tilde` 残差通过，checkpoint 会保存
 `NuTilde` 及其参考残差。可输出 `nu_tilde,mu_t_over_mu,sa_production,sa_destruction,`
-`wall_distance,sa_negative_branch`。该模型尚处于 X 验收中，不能将 smoke 结果当作定量验证。
-SST-2003m、实验级标准 k-epsilon 与 LU-SGS 已进入阶段 Y 候选实现。阶段 Y 的真实 RANS
+`wall_distance,sa_negative_branch`。SA-neg、SST-2003m 与实验级标准 k-epsilon 已实现；短
+smoke 不能当作定量物理验证。阶段 Y 的真实 RANS
 验收固定使用 TMR 平板、发展槽道和 no-plenum hump；资产散列、三级网格、阈值和命令见
 [`cases/validation/sst_tmr`](../cases/validation/sst_tmr/README.md)，阶段状态以
 [`stage-y-acceptance.md`](v2.0.0/stage-y-acceptance.md) 为准。可用
 `wcns_extract_rans_profile <field.cgns> <target-x> <output.txt>` 从真实 CGNS 顶点壁面位置抽取
-二维 RANS 剖面。LES 仍是后续阶段保留值。
+二维 RANS 剖面。
+
+阶段 Z 候选支持三维非定常 `smagorinsky|scale_similarity|mixed_smagorinsky_similarity|`
+`dynamic_smagorinsky|wale`。LES 强制 `run.viscous=true`、`time.integrator=lu_sgs`、BDF2
+双时间和 `preconditioner.type=none`；二维、steady、SSPRK3 与无黏组合在启动前拒绝。完整且
+可复制的模型专属键见 [`config-schema-2-draft.md`](v2.0.0/config-schema-2-draft.md)。其中测试
+滤波比固定为 2，van-Driest 名称虽可识别，但在生产 wall-$y^+$ 场接入残差前明确拒绝。
 schema 1 继续使用原配置，不应添加上述键。
 
 ### 8.2 算法选择
@@ -970,6 +977,21 @@ output.statistics.quantities = total_mass,total_momentum_x,total_energy
 
 可选 `total_mass,total_momentum_x,total_momentum_y,total_momentum_z,total_energy`。这些值使用原 zone 守恒积分权重、正 Jacobian 和 MPI 全局归约，避免人工切分接口重复计数。`output.dimensional=true` 时还乘相应场尺度和 `L_ref^dimension`；二维结果表示单位出平面厚度下的积分，应按二维模型解释。
 
+schema 2 的非定常计算可对上述已选量启用接受步时间累计：
+
+```text
+statistics.time.enabled = true
+statistics.time.start = 1.0
+statistics.time.end = 5.0
+statistics.time.every_steps = 1
+statistics.time.weight = accepted_dt
+```
+
+统计区间端点按物理步与区间的实际重叠时间裁剪；LU-SGS 内迭代、失败尝试和同一
+`(step,time)` 重放不采样。最终 `.time_statistics.r<ranks>.txt` 保存每个量的加权 mean/RMS、
+Favre mean/RMS 以及所有唯一量对的 Reynolds/Favre covariance。累计器 v2 状态随 checkpoint
+保存，允许改变合法 rank 数后连续累计。
+
 三维 Poiseuille/槽道流还可打开多个 x-z 层监测：
 
 ```text
@@ -1041,6 +1063,15 @@ output.boundary.tangent_direction_y = 0.0
 output.boundary.tangent_direction_z = 0.0
 ```
 
+三维算例可再给出与 drag/lift 构成右手系的单位展向方向和严格递增的面心分箱边界：
+
+```text
+output.boundary.span_direction_x = 0
+output.boundary.span_direction_y = 0
+output.boundary.span_direction_z = 1
+output.boundary.span_bin_edges = 0,0.5,1
+```
+
 `patches` 和 `quantities` 均为禁止重复的逗号列表。逐面内建量还包括
 `pressure_traction_x/y/z`、`viscous_traction_x/y/z` 和 `traction_x/y/z`。RANS 无滑移壁还可输出
 `wall_distance,friction_velocity,wall_y_plus,wall_y_plus_class`；最后一项依次用 0/1/2/3 表示
@@ -1058,7 +1089,10 @@ $y^+\le5$、$5<y^+<30$、$30\le y^+\le300$、$y^+>300$。这些量只作诊断�
 确定性排序和查重。逐面文件名为 `<case>.boundary.r<ranks>.step....txt|dat`，几何列固定包含
 原 patch/zone 索引、全局面索引、面心、面积和流体域外法向。固定载荷历史
 `<case>.loads.r<ranks>.txt` 保存压力、黏性、总力/力矩以及 `Cd/Cl/Cm`。二维力按单位展向长度
-解释并在文件头写 `force_per_unit_span=true`。`output.dimensional=true` 时坐标、面积、牵引、
+解释并在文件头写 `force_per_unit_span=true`；启用展向分箱后，每次事件另写
+`<case>.spanwise_loads.r<ranks>.step....txt`。面按面心
+投影完整归入一个半开区间（末箱含右端点），分箱压力/黏性/总载荷之和应回收到整体载荷。
+`output.dimensional=true` 时坐标、面积、牵引、
 力和力矩分别按 `L_ref`、`L_ref^(d-1)`、`rho_ref U_ref^2`、
 `rho_ref U_ref^2 L_ref^(d-1)` 和 `rho_ref U_ref^2 L_ref^d` 恢复量纲；`wall_distance` 与
 `friction_velocity` 分别按 $L_{ref}$、$U_{ref}$ 恢复，$y^+$ 和分类保持无量纲，其余系数不变。
@@ -1249,10 +1283,10 @@ wcns_compare_metric_profiles mesh.cgns
 ## 16. 当前功能边界
 
 当前开发分支可运行单组分热完全理想气体、层流常比热、常黏度/Sutherland 输运、显式
-SSPRK3、LU-SGS、BDF2 双时间接口、Weiss--Smith 低 Mach 预处理、结构共形网格和内建源项。
-SA-neg 已进入 X-B 定量验收；SST-2003m 和实验级标准 k-epsilon 已进入 Y 候选实现。只有对应
-阶段自动报告通过后，相关功能才可称为已验证。LES、化学反应、通用表达式源项、动态插件和
-涡量/Q 等体派生输出仍未实现。
+SSPRK3、LU-SGS、BDF2 双时间、Weiss--Smith 低 Mach 预处理、结构共形网格和内建源项。
+SA-neg、SST-2003m、实验级标准 k-epsilon 及五种三维 LES 已实现；阶段 Z 的本机证据仅是公式、
+解析/微型场、重启和并行离散卡口，完整 HIT/槽道/能谱和长时间统计仍待服务器验证。化学反应、
+通用表达式源项、动态插件和涡量/Q 等体派生输出仍未实现。
 默认输运为 `Pr=0.72` 和 `mu/mu_ref=1` 的常黏度。
 
 这些限制不能通过写一个未知配置键绕过。需要扩展时按开发手册同时修改数据结构、严格 parser、验证、摘要/重启签名、生产装配、测试、模板和文档。

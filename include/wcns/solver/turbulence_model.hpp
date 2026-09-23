@@ -7,6 +7,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -41,6 +42,11 @@ enum class TurbulenceSourceTreatment {
     LocalImplicit,
 };
 
+enum class LesWallDamping {
+    None,
+    VanDriest,
+};
+
 struct TurbulenceModelConfig {
     TurbulenceModelKind kind = TurbulenceModelKind::None;
     WallTreatment wall_treatment = WallTreatment::Resolved;
@@ -53,6 +59,16 @@ struct TurbulenceModelConfig {
     Real wall_function_y_plus_min = 30.0;
     Real wall_function_y_plus_max = 300.0;
     TurbulenceSourceTreatment source_treatment = TurbulenceSourceTreatment::Explicit;
+    Real les_filter_width_ratio = 1.0;
+    Real les_test_filter_ratio = 2.0;
+    Real les_smagorinsky_coefficient = 0.17;
+    LesWallDamping les_wall_damping = LesWallDamping::None;
+    Real les_similarity_coefficient = 1.0;
+    Real les_dynamic_denominator_floor = 1.0e-20;
+    Real les_dynamic_coefficient_minimum = -0.05;
+    Real les_dynamic_coefficient_maximum = 0.09;
+    Real les_wale_coefficient = 0.325;
+    Real les_sgs_prandtl = 0.9;
 
     void validate() const;
     [[nodiscard]] std::string summary() const;
@@ -74,6 +90,8 @@ struct TurbulenceViscousContribution {
     SymmetricStress stress;
     std::array<Real, 3> energy_heat_flux {{0.0, 0.0, 0.0}};
     Real eddy_viscosity = 0.0;
+    Real sgs_energy_transfer = 0.0;
+    bool backscatter_allowed = false;
 
     void validate(int dimension) const;
 };
@@ -94,6 +112,11 @@ struct TurbulenceCellContext {
     Real molecular_kinematic_viscosity = 0.0;
     Real wall_distance = 0.0;
     Real filter_width = 0.0;
+    Real wall_y_plus = std::numeric_limits<Real>::quiet_NaN();
+    SymmetricStress leonard_stress {};
+    Real dynamic_coefficient = std::numeric_limits<Real>::quiet_NaN();
+    bool has_leonard_stress = false;
+    bool has_dynamic_coefficient = false;
     Real reference_reynolds = 0.0;
     Real reference_mach = 0.0;
     Real heat_capacity_ratio = 0.0;
@@ -185,5 +208,7 @@ private:
 [[nodiscard]] const char* wall_treatment_name(WallTreatment treatment);
 [[nodiscard]] TurbulenceSourceTreatment turbulence_source_treatment(const std::string& name);
 [[nodiscard]] const char* turbulence_source_treatment_name(TurbulenceSourceTreatment treatment);
+[[nodiscard]] LesWallDamping les_wall_damping(const std::string& name);
+[[nodiscard]] const char* les_wall_damping_name(LesWallDamping damping);
 
 } // namespace wcns

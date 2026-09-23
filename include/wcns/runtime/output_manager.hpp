@@ -2,6 +2,7 @@
 
 #include <wcns/runtime/quantity_registry.hpp>
 #include <wcns/runtime/simulation_driver.hpp>
+#include <wcns/runtime/weighted_statistics.hpp>
 
 #include <fstream>
 #include <functional>
@@ -46,7 +47,8 @@ public:
                          const StatisticContext* statistic_context = nullptr,
                          EventWriter event_writer = {},
                          StatisticRegistry statistic_registry
-                         = StatisticRegistry::create_builtin());
+                         = StatisticRegistry::create_builtin(),
+                         AcceptedTimeStatistics* time_statistics = nullptr);
     ~RuntimeOutputManager() override;
 
     [[nodiscard]] Real next_time_event(const SimulationState& state) const override;
@@ -68,7 +70,9 @@ private:
     void write_history(const SimulationState& state, bool residual_checked);
     void finish_history();
     void write_statistics(const SimulationState& state);
+    void sample_time_statistics(const SimulationState& state);
     void finish_statistics();
+    void finish_time_statistics();
     void write_manifest(const SimulationState& state);
 
     const MpiRuntime& mpi_;
@@ -77,6 +81,7 @@ private:
     std::string mesh_signature_;
     const StatisticContext* statistic_context_ = nullptr;
     StatisticRegistry statistic_registry_;
+    AcceptedTimeStatistics* time_statistics_ = nullptr;
     EventWriter event_writer_;
     OutputSchedule field_schedule_;
     OutputSchedule history_schedule_;
@@ -92,6 +97,8 @@ private:
     std::string statistics_temporary_path_;
     std::string statistics_final_path_;
     std::ofstream statistics_stream_;
+    std::string time_statistics_temporary_path_;
+    std::string time_statistics_final_path_;
     std::vector<std::string> files_;
     std::vector<std::size_t> turbulence_floor_repairs_total_;
     std::size_t last_diagnostic_step_ = 0;

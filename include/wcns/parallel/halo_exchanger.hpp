@@ -37,6 +37,12 @@ public:
 
     void exchange(const BlockFieldRegistry& fields) const;
 
+    // Propagate already-filled face ghosts into connected edge/corner ghosts.
+    // LES tensor filters call this after the ordinary face exchange and
+    // physical-boundary extension.
+    void exchange_tangential_ghosts(const BlockFieldRegistry& fields,
+                                    int tangential_width) const;
+
 private:
     void prepare_buffers(int components) const;
 

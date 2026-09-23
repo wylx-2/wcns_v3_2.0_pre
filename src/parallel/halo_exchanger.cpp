@@ -1,9 +1,12 @@
 #include <wcns/parallel/halo_exchanger.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace wcns {
@@ -73,6 +76,144 @@ void unpack_receive(const HaloMessageBuffer& pending, const BlockFieldRegistry& 
     validate_field_for_exchange(receiver, *pending.exchange, true);
     std::size_t input = 0;
     for (const auto& pair : pending.exchange->halo.cell_pairs) {
+        for (int component = 0; component < fields.components(); ++component) {
+            receiver(pair.receiver_ghost.i, pair.receiver_ghost.j, pair.receiver_ghost.k, component)
+                = pending.values[input++];
+        }
+    }
+}
+
+bool stored(Index3 index, Extent3 extent, int ghost, int dimension)
+{
+    for (int axis = 0; axis < dimension; ++axis) {
+        const auto direction = static_cast<std::size_t>(axis);
+        if (index[direction] < -ghost || index[direction] >= extent[direction] + ghost) {
+            return false;
+        }
+    }
+    return dimension == 3 || index.k == 0;
+}
+
+std::vector<HaloCellPair> tangential_pairs(const HaloExchangePlan& plan, int width)
+{
+    if (width <= 0 || plan.dimension < 2 || plan.dimension > 3
+        || !plan.transform.valid(plan.dimension)) {
+        throw std::invalid_argument("tangential halo metadata are invalid");
+    }
+    std::vector<HaloCellPair> result;
+    for (const auto& base : plan.cell_pairs) {
+        int receiver_normal = -1;
+        for (int axis = 0; axis < plan.dimension; ++axis) {
+            const auto direction = static_cast<std::size_t>(axis);
+            if (base.receiver_ghost[direction] < 0
+                || base.receiver_ghost[direction] >= plan.receiver_extent[direction]) {
+                receiver_normal = axis;
+                break;
+            }
+        }
+        if (receiver_normal < 0) {
+            throw std::logic_error("halo pair has no receiver-normal ghost coordinate");
+        }
+        for (int dk = plan.dimension == 3 ? -width : 0;
+             dk <= (plan.dimension == 3 ? width : 0);
+             ++dk) {
+            for (int dj = -width; dj <= width; ++dj) {
+                for (int di = -width; di <= width; ++di) {
+                    const std::array<int, 3> offset {{di, dj, dk}};
+                    if (offset[static_cast<std::size_t>(receiver_normal)] != 0) continue;
+                    bool tangential_ghost = false;
+                    Index3 receiver = base.receiver_ghost;
+                    Index3 donor = base.donor_interior;
+                    for (int receiver_axis = 0; receiver_axis < plan.dimension;
+                         ++receiver_axis) {
+                        const auto receiver_direction
+                            = static_cast<std::size_t>(receiver_axis);
+                        const int delta = offset[receiver_direction];
+                        receiver[receiver_direction] += delta;
+                        const int entry
+                            = plan.transform.receiver_to_donor[receiver_direction];
+                        const auto donor_direction
+                            = static_cast<std::size_t>(std::abs(entry) - 1);
+                        donor[donor_direction] += (entry < 0 ? -delta : delta);
+                        if (receiver_axis != receiver_normal
+                            && (receiver[receiver_direction] < 0
+                                || receiver[receiver_direction]
+                                    >= plan.receiver_extent[receiver_direction])) {
+                            tangential_ghost = true;
+                        }
+                    }
+                    if (!tangential_ghost
+                        || !stored(receiver, plan.receiver_extent, width, plan.dimension)
+                        || !stored(donor, plan.donor_extent, width, plan.dimension)) {
+                        continue;
+                    }
+                    result.push_back({receiver, donor});
+                }
+            }
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto& lhs, const auto& rhs) {
+        return std::tie(lhs.receiver_ghost.i,
+                        lhs.receiver_ghost.j,
+                        lhs.receiver_ghost.k,
+                        lhs.donor_interior.i,
+                        lhs.donor_interior.j,
+                        lhs.donor_interior.k)
+            < std::tie(rhs.receiver_ghost.i,
+                       rhs.receiver_ghost.j,
+                       rhs.receiver_ghost.k,
+                       rhs.donor_interior.i,
+                       rhs.donor_interior.j,
+                       rhs.donor_interior.k);
+    });
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
+struct TangentialBuffer {
+    const DirectedExchange* exchange = nullptr;
+    std::vector<HaloCellPair> pairs;
+    std::vector<Real> values;
+};
+
+void copy_tangential(const TangentialBuffer& pending, const BlockFieldRegistry& fields)
+{
+    auto& receiver = fields.field(pending.exchange->halo.receiver_block);
+    const auto& donor = fields.field(pending.exchange->halo.donor_block);
+    for (const auto& pair : pending.pairs) {
+        for (int component = 0; component < fields.components(); ++component) {
+            const Real value = donor(
+                pair.donor_interior.i, pair.donor_interior.j, pair.donor_interior.k, component);
+            if (!std::isfinite(value)) {
+                throw std::invalid_argument("tangential halo donor value is non-finite");
+            }
+            receiver(pair.receiver_ghost.i, pair.receiver_ghost.j, pair.receiver_ghost.k, component)
+                = value;
+        }
+    }
+}
+
+void pack_tangential(TangentialBuffer& pending, const BlockFieldRegistry& fields)
+{
+    const auto& donor = fields.field(pending.exchange->halo.donor_block);
+    std::size_t output = 0;
+    for (const auto& pair : pending.pairs) {
+        for (int component = 0; component < fields.components(); ++component) {
+            const Real value = donor(
+                pair.donor_interior.i, pair.donor_interior.j, pair.donor_interior.k, component);
+            if (!std::isfinite(value)) {
+                throw std::invalid_argument("tangential halo donor value is non-finite");
+            }
+            pending.values[output++] = value;
+        }
+    }
+}
+
+void unpack_tangential(const TangentialBuffer& pending, const BlockFieldRegistry& fields)
+{
+    auto& receiver = fields.field(pending.exchange->halo.receiver_block);
+    std::size_t input = 0;
+    for (const auto& pair : pending.pairs) {
         for (int component = 0; component < fields.components(); ++component) {
             receiver(pair.receiver_ghost.i, pair.receiver_ghost.j, pair.receiver_ghost.k, component)
                 = pending.values[input++];
@@ -239,6 +380,64 @@ void HaloExchanger::exchange(const BlockFieldRegistry& fields) const
     for (const auto& pending : receive_buffers_) {
         unpack_receive(pending, fields);
     }
+}
+
+void HaloExchanger::exchange_tangential_ghosts(const BlockFieldRegistry& fields,
+                                               int tangential_width) const
+{
+    if (tangential_width <= 0) {
+        throw std::invalid_argument("tangential halo width must be positive");
+    }
+    auto make_buffer = [&](const DirectedExchange* exchange) {
+        auto pairs = tangential_pairs(exchange->halo, tangential_width);
+        const auto count = pairs.size() * static_cast<std::size_t>(fields.components());
+        return TangentialBuffer {exchange, std::move(pairs), std::vector<Real>(count)};
+    };
+    for (const auto* exchange : local_) {
+        auto pending = make_buffer(exchange);
+        copy_tangential(pending, fields);
+    }
+    std::vector<TangentialBuffer> receives;
+    std::vector<TangentialBuffer> sends;
+    receives.reserve(receive_descriptors_.size());
+    sends.reserve(send_descriptors_.size());
+    for (const auto* exchange : receive_descriptors_) receives.push_back(make_buffer(exchange));
+    for (const auto* exchange : send_descriptors_) sends.push_back(make_buffer(exchange));
+    for (auto& pending : sends) pack_tangential(pending, fields);
+#if WCNS_HAS_MPI
+    std::vector<MPI_Request> requests(receives.size() + sends.size(), MPI_REQUEST_NULL);
+    std::size_t request = 0;
+    for (auto& pending : receives) {
+        check_mpi(MPI_Irecv(pending.values.data(),
+                            mpi_count(pending.values.size()),
+                            MPI_DOUBLE,
+                            pending.exchange->donor_rank,
+                            pending.exchange->message_tag(),
+                            mpi_.communicator(),
+                            &requests[request++]),
+                  "MPI_Irecv tangential halo");
+    }
+    for (auto& pending : sends) {
+        check_mpi(MPI_Isend(pending.values.data(),
+                            mpi_count(pending.values.size()),
+                            MPI_DOUBLE,
+                            pending.exchange->receiver_rank,
+                            pending.exchange->message_tag(),
+                            mpi_.communicator(),
+                            &requests[request++]),
+                  "MPI_Isend tangential halo");
+    }
+    if (!requests.empty()) {
+        check_mpi(MPI_Waitall(
+                      static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE),
+                  "MPI_Waitall tangential halo");
+    }
+#else
+    if (!receives.empty() || !sends.empty()) {
+        throw MpiError("remote tangential halo exchange requires WCNS_ENABLE_MPI");
+    }
+#endif
+    for (const auto& pending : receives) unpack_tangential(pending, fields);
 }
 
 } // namespace wcns

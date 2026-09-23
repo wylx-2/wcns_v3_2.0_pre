@@ -21,6 +21,7 @@ enum class TurbulenceFieldScale {
     VelocitySquared,
     KinematicViscosity,
     DynamicViscosity,
+    Pressure,
     InverseTime,
     Dissipation,
     Length,

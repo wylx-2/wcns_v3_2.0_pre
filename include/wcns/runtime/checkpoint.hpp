@@ -1,6 +1,7 @@
 #pragma once
 
 #include <wcns/runtime/field_output.hpp>
+#include <wcns/runtime/weighted_statistics.hpp>
 
 #include <string>
 #include <vector>
@@ -20,7 +21,8 @@ public:
                       LocalBlockSet& local_blocks,
                       const BlockMetricMap& metrics,
                       QuantityContext quantity_context,
-                      std::string mesh_path);
+                      std::string mesh_path,
+                      AcceptedTimeStatistics* time_statistics = nullptr);
 
     [[nodiscard]] std::vector<std::string> write(const SimulationState& state) const;
     [[nodiscard]] CheckpointRestoreResult restore(const std::string& path) const;
@@ -36,6 +38,7 @@ private:
     std::string mesh_path_;
     std::string mesh_signature_;
     FieldQuantityRegistry registry_;
+    AcceptedTimeStatistics* time_statistics_ = nullptr;
 };
 
 } // namespace wcns

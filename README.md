@@ -18,14 +18,13 @@ Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.m
 物理容许性、局部通量降阶、壁面载荷/热流、输运和性能公式见
 [`算法补充.md`](算法补充.md) 第 11 节；各阶段实现状态以对应设计和验收报告为准。
 
-v2.0.0 已进入分阶段开发：V、W 已通过自动与人工验收，当前 `stage/v2.0.0-x`
-已完成 SA-neg 的实现、公式/MMS、重启、MPI 与规范网格 smoke；TMR 平板与 NACA0012
-定量收敛卡口尚未关闭，因此 SA-neg 还不得标记为生产验证通过，也尚无 X 候选标签。
-项目负责人已批准将 AA 前置，执行顺序改为 `X-A → AA → X-B → Y → Z`，并授权
-`AA → X-B → Y` 连续推进；人工卡口位于 Y 候选之后。前置 AA 先验收层流/SA 的定常/非定常 LU-SGS 与
-Roe/Weiss--Smith 低 Mach，SST 和 LES 的专属隐式耦合仍分别在 Y/Z 关闭。后续计划还包括
-k--omega SST、标准 k--epsilon、原始 Smagorinsky、尺度相似、混合/动态 Smagorinsky、WALE，最终依次完成
-二维 Case06 NACA0012 及用户后续提供的三维翼型/机翼算例。详细阶段 V--AE、
+v2.0.0 已进入分阶段开发：V、W、X、AA、Y、Z 已通过相应自动/人工卡口并合入
+`release/v2.0.0`。Z 已实现五种三维 LES、SGS 诊断、可重启接受步时间统计、展向载荷分箱，
+以及 BDF2 双时间 LU-SGS 耦合。完整 HIT、槽道、能谱与长时间统计仍属于服务器 S 级
+`pending`，短 smoke 不作为物理湍流验证。当前进入阶段 AB，首先处理 Case06 O 网格同一块面上
+壁面段与尾迹自连接段并存的守恒权重支持；在工况冻结和服务器预算批准前不启动大型计算。
+后续依次进入三维通用能力和用户提供的三维翼型/机翼目标算例。
+详细阶段 V--AE、
 自动卡口、人工放行和 Git 规则见
 [`docs/v2.0.0-development-plan.md`](docs/v2.0.0-development-plan.md)，计划算法见
 [`算法补充.md`](算法补充.md) 第 12 节，Case06 只读登记见
@@ -36,7 +35,15 @@ k--omega SST、标准 k--epsilon、原始 Smagorinsky、尺度相似、混合/�
 `tools/package_release.py` 从版本提交直接生成，并包含版本验收所需的 Case07；NACA0012 不在
 本版本范围内。历史上的独立 `wcns_v3_release` 精简仓库不再作为版本来源真值。
 
-当前程序具备 CGNS 结构多块网格读取、两套独立高阶几何 profile、单 zone 受约束二次剖分、同 rank/MPI 非阻塞 halo 交换、六种界面重构（含保持六点调用契约的 `zero_order`）、Rusanov/HLLC/Roe、WCNS-Euler 空间离散、层流 Navier--Stokes 黏性通量、显式源项和 SSPRK3 推进。v1.1 新增默认关闭的 SSPRK 候选态物理容许性检查、troubled-cell 离散支持传播、逐面受控降阶和整步缩步重试；关闭时保持 v1.0 数值路径。严格配置现完整支持常黏度/Sutherland/Prandtl，边界面 `p_w/T_w/mu_w/Cp/Cf/q_wall/traction` 和积分力、力矩、`Cd/Cl/Cm`。阶段 X 分支另已接入待完成物理验收的 SA-neg 输运和湍流黏性闭合，并支持 `nu_tilde`、`mu_t_over_mu`、源项诊断与壁距离输出。正式入口还支持可配置 MDCD 色散/耗散系数、定常/非定常停止、MPI 全局残差、精确时间事件、CGNS/Tecplot 流场、TXT/Tecplot 历史与统计、多截面 x-z/y-z 监测、manifest，以及可改变 rank 数和叶块划分的 CGNS 检查点重启；二维经典双马赫反射已有专用初场和时变边界。逐步使用说明见 [`docs/user-manual.md`](docs/user-manual.md)，源码二次开发见 [`docs/developer-guide.md`](docs/developer-guide.md)，可复制的完整配置见 [`examples/full_case_template.wcns`](examples/full_case_template.wcns)；简明运行速查仍见 [`docs/runtime-guide.md`](docs/runtime-guide.md)，发布算例的生成、独立重读和矩阵入口见 [`docs/release-validation.md`](docs/release-validation.md)。
+当前程序具备 CGNS 结构多块网格读取、两套独立高阶几何 profile、确定性运行时剖分与 MPI halo、
+六种界面重构、Rusanov/HLLC/Roe、层流 Navier--Stokes、SSPRK3、定常/非定常 LU-SGS、Roe/
+Weiss--Smith、SA-neg、SST-2003m、实验级标准 k-epsilon 及阶段 Z 的五种 LES 候选实现。边界输出
+覆盖壁面量、压力/黏性分载荷和三维展向分箱；接受步时间统计覆盖 mean/RMS/covariance/Favre，
+并随可改变 rank 数的 CGNS checkpoint 连续恢复。v1.1 的 SSPRK 稳健化路径继续保留且默认关闭。
+逐步使用说明见 [`docs/user-manual.md`](docs/user-manual.md)，源码二次开发见
+[`docs/developer-guide.md`](docs/developer-guide.md)，可复制的完整配置见
+[`examples/full_case_template.wcns`](examples/full_case_template.wcns)；简明运行速查见
+[`docs/runtime-guide.md`](docs/runtime-guide.md)。
 
 新增的 `turbulent_channel` 初场、y-z 截面监测和专用槽道壁摩擦/`Re_tau` 统计已用于
 [`case05`](cases/manual/case05_3d_turbulent_channel/README.md) 的 4-rank、5 步 Linux 迁移前可行性卡口；

@@ -24,6 +24,10 @@ struct HaloExchangePlan {
     BlockId receiver_block = invalid_block_id;
     BlockId donor_block = invalid_block_id;
     RankId donor_rank = invalid_rank_id;
+    Extent3 receiver_extent {};
+    Extent3 donor_extent {};
+    int dimension = 0;
+    IndexTransform transform {};
     std::vector<HaloCellPair> cell_pairs;
 };
 
