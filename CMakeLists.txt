@@ -253,6 +253,12 @@ if(WCNS_ENABLE_CGNS)
     target_link_libraries(wcns_compare_metric_profiles PRIVATE wcns::io)
 
     add_executable(
+        wcns_inspect_structured_mesh
+        tools/inspect_structured_mesh.cpp
+    )
+    target_link_libraries(wcns_inspect_structured_mesh PRIVATE wcns::io)
+
+    add_executable(
         wcns_convert_tmr_p2d_to_cgns
         tools/convert_tmr_p2d_to_cgns.cpp
     )
@@ -285,6 +291,7 @@ if(WCNS_ENABLE_CGNS)
             wcns_generate_release_cgns
             wcns_validate_release_case
             wcns_compare_metric_profiles
+            wcns_inspect_structured_mesh
             wcns_extract_rans_profile
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
