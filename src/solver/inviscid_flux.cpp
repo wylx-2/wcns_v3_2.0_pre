@@ -307,9 +307,11 @@ StencilRow inviscid_residual_stencil(const StructuredBlock& block,
     upper_face[static_cast<std::size_t>(axis)] = count;
     const bool lower_connection = connection_covers(block, axis, Side::Lower, lower_face);
     const bool upper_connection = connection_covers(block, axis, Side::Upper, upper_face);
+    const bool lower_complete = connection_side_is_fully_covered(block, axis, Side::Lower);
+    const bool upper_complete = connection_side_is_fully_covered(block, axis, Side::Upper);
     const int boundary_width = profile.kind() == AlgorithmProfileKind::PhengleiWcns ? 1 : 2;
-    if ((lower_connection && normal < boundary_width)
-        || (upper_connection && normal >= count - boundary_width)) {
+    if ((lower_complete && lower_connection && normal < boundary_width)
+        || (upper_complete && upper_connection && normal >= count - boundary_width)) {
         StencilRow result;
         if (profile.kind() == AlgorithmProfileKind::PhengleiWcns) {
             constexpr std::array<int, 4> offsets {{-1, 0, 1, 2}};
@@ -862,6 +864,8 @@ void compute_wcns_inviscid_residual(StructuredBlock& block,
         const int count = cells[static_cast<std::size_t>(axis)];
         const auto& rows = cached_line_operators(profile, count).derivative_rows();
         const int boundary_width = profile.kind() == AlgorithmProfileKind::PhengleiWcns ? 1 : 2;
+        const bool lower_complete = connection_side_is_fully_covered(block, axis, Side::Lower);
+        const bool upper_complete = connection_side_is_fully_covered(block, axis, Side::Upper);
         constexpr std::array<int, 4> ph_offsets {{-1, 0, 1, 2}};
         constexpr std::array<Real, 4> ph_coefficients {
             {1.0 / 24.0, -27.0 / 24.0, 27.0 / 24.0, -1.0 / 24.0}};
@@ -882,9 +886,9 @@ void compute_wcns_inviscid_residual(StructuredBlock& block,
                     Index3 upper_face = cell;
                     upper_face[static_cast<std::size_t>(axis)] = count;
                     const bool use_centered_connection_stencil
-                        = (normal < boundary_width
+                        = (lower_complete && normal < boundary_width
                            && connection_covers(block, axis, Side::Lower, lower_face))
-                        || (normal >= count - boundary_width
+                        || (upper_complete && normal >= count - boundary_width
                             && connection_covers(block, axis, Side::Upper, upper_face));
                     for (int component = 0; component < euler_components; ++component) {
                         Real derivative = 0.0;

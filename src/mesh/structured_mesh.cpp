@@ -53,6 +53,19 @@ bool coordinates_match(Real receiver, Real donor, bool cgns_periodic_transform)
         <= std::max(Real {256} * std::numeric_limits<Real>::epsilon() * scale, transform_tolerance);
 }
 
+bool ranges_overlap(const IndexRange3& lhs, const IndexRange3& rhs)
+{
+    for (int axis = 0; axis < 3; ++axis) {
+        const auto a = static_cast<std::size_t>(axis);
+        const int lhs_lower = std::min(lhs.begin[a], lhs.end[a]);
+        const int lhs_upper = std::max(lhs.begin[a], lhs.end[a]);
+        const int rhs_lower = std::min(rhs.begin[a], rhs.end[a]);
+        const int rhs_upper = std::max(rhs.begin[a], rhs.end[a]);
+        if (lhs_upper < rhs_lower || rhs_upper < lhs_lower) return false;
+    }
+    return true;
+}
+
 void validate_interface_coordinates(const StructuredBlock& receiver,
                                     const StructuredBlock& donor,
                                     const ConnectivityPatch& connection)
@@ -181,6 +194,33 @@ void StructuredMesh::validate_connectivities(bool validate_coordinates) const
             }
         }
     }
+}
+
+bool connection_side_is_fully_covered(const StructuredBlock& block, Axis axis, Side side)
+{
+    const auto cells = block.cell_extent();
+    const auto normal = static_cast<std::size_t>(axis);
+    std::size_t expected = 1;
+    for (int logical = 0; logical < block.cell_dimension(); ++logical) {
+        if (static_cast<std::size_t>(logical) != normal) {
+            expected *= static_cast<std::size_t>(cells[static_cast<std::size_t>(logical)]);
+        }
+    }
+
+    std::size_t covered = 0;
+    std::vector<IndexRange3> ranges;
+    for (const auto& connection : block.connectivities) {
+        if (connection.receiver_face.axis != axis || connection.receiver_face.side != side) {
+            continue;
+        }
+        const auto range = connection.shared_face_range.untyped();
+        for (const auto& existing : ranges) {
+            if (ranges_overlap(existing, range)) return false;
+        }
+        covered += range.size();
+        ranges.push_back(range);
+    }
+    return !ranges.empty() && covered == expected;
 }
 
 } // namespace wcns

@@ -29,4 +29,10 @@ private:
     std::unordered_map<BlockId, std::size_t> block_index_;
 };
 
+// True only when disjoint connectivity patches cover every cell face on the
+// requested logical side. Mixed physical/connected sides intentionally return
+// false so conservative flux divergences use their bounded closure there.
+[[nodiscard]] bool
+connection_side_is_fully_covered(const StructuredBlock& block, Axis axis, Side side);
+
 } // namespace wcns

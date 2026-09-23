@@ -156,21 +156,9 @@ Array3D<Real>& boundary_field(BlockConservationWeights& block, Axis axis)
     throw ConservationWeightError("invalid boundary-weight face axis");
 }
 
-bool range_contains(const IndexRange3& range, Index3 index)
-{
-    for (int axis = 0; axis < 3; ++axis) {
-        const auto a = static_cast<std::size_t>(axis);
-        const int lower = std::min(range.begin[a], range.end[a]);
-        const int upper = std::max(range.begin[a], range.end[a]);
-        if (index[a] < lower || index[a] > upper) return false;
-    }
-    return true;
-}
-
 std::vector<const ConnectivityPatch*>
 side_connections(const StructuredBlock& block, Axis axis, Side side)
 {
-    const auto cells = block.cell_extent();
     std::vector<const ConnectivityPatch*> result;
     for (const auto& connection : block.connectivities) {
         if (connection.receiver_face.axis == axis && connection.receiver_face.side == side) {
@@ -178,29 +166,10 @@ side_connections(const StructuredBlock& block, Axis axis, Side side)
         }
     }
     if (result.empty()) return result;
-    // A side that mixes physical boundary segments and connectivity segments
-    // cannot share one tensor-product normal-line continuation. Treat its
-    // normal direction as locally bounded; paired connection fluxes still
-    // cancel through the independently checked tangential weights below.
-    const int normal = side == Side::Lower ? 0 : cells[static_cast<std::size_t>(axis)];
-    for (int k = 0; k < cells.nk; ++k) {
-        for (int j = 0; j < cells.nj; ++j) {
-            for (int i = 0; i < cells.ni; ++i) {
-                Index3 face {i, j, k};
-                face[static_cast<std::size_t>(axis)] = normal;
-                bool connected = false;
-                for (const auto* connection : result) {
-                    if (range_contains(connection->shared_face_range.untyped(), face)) {
-                        connected = true;
-                        break;
-                    }
-                }
-                if (!connected) {
-                    return {};
-                }
-            }
-        }
-    }
+    // Mixed sides use the same bounded normal closure as their tensor-product
+    // conservation weights. Reciprocal shared-face fluxes then cancel through
+    // the independently checked tangential weights.
+    if (!connection_side_is_fully_covered(block, axis, side)) return {};
     return result;
 }
 

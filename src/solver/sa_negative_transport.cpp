@@ -514,6 +514,8 @@ void assemble_sa_negative_residual(Field<Real>& residual,
         const auto& rows = cached_line_operators(profile, count).derivative_rows();
         const auto& values = flux.field(axis);
         const int boundary_width = profile.kind() == AlgorithmProfileKind::PhengleiWcns ? 1 : 2;
+        const bool lower_complete = connection_side_is_fully_covered(block, axis, Side::Lower);
+        const bool upper_complete = connection_side_is_fully_covered(block, axis, Side::Upper);
         for (int k = 0; k < cells.nk; ++k) {
             for (int j = 0; j < cells.nj; ++j) {
                 for (int i = 0; i < cells.ni; ++i) {
@@ -524,9 +526,9 @@ void assemble_sa_negative_residual(Field<Real>& residual,
                     Index3 upper = cell;
                     upper[static_cast<std::size_t>(axis)] = count;
                     Real derivative = 0.0;
-                    if ((normal < boundary_width
+                    if ((lower_complete && normal < boundary_width
                          && connection_covers(block, axis, Side::Lower, lower))
-                        || (normal >= count - boundary_width
+                        || (upper_complete && normal >= count - boundary_width
                             && connection_covers(block, axis, Side::Upper, upper))) {
                         derivative = centered_face_derivative(values, axis, cell, profile.kind());
                     } else {
