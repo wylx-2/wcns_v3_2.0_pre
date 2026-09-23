@@ -1,9 +1,10 @@
-# WCNS schema 2 配置草案（阶段 V 冻结输入）
+# WCNS schema 2 配置草案（阶段 Z 候选）
 
-状态：**AA 已实现 LU-SGS、BDF2 双时间和 Weiss--Smith；阶段 Y 候选已实现 SST-2003m、
-实验性标准 k-epsilon 与两方程隐式耦合，正在执行定量算例卡口。** 当前可运行选择为
-`none|sa_neg|k_omega_sst|k_epsilon`；LES 键仍由 Z 实现，尚未实现的键必须明确拒绝而不是
-静默降级。每次扩展必须同步合法/非法配置测试、summary、manifest 和 restart signature。
+状态：**AA 已实现 LU-SGS、BDF2 双时间和 Weiss--Smith；阶段 Y 已通过人工验收；阶段 Z 已
+实现五种 LES、可重启时间统计和展向载荷分箱，候选级自动验收已通过并等待人工核验。** 当前可运行选择为
+`none|sa_neg|k_omega_sst|k_epsilon|smagorinsky|scale_similarity|`
+`mixed_smagorinsky_similarity|dynamic_smagorinsky|wale`。每次扩展必须同步合法/非法配置测试、
+summary、manifest 和 restart signature。
 
 ## 1. 兼容迁移
 
@@ -47,8 +48,9 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | `turbulence.sa.source_treatment` | `explicit|local_implicit` | 是 | 仅 `sa_neg`；只处理局部源 Jacobian |
 | `les.filter.type` | `box3_tensor` | 是 | LES 必需 |
 | `les.filter.width_ratio` | positive real | 是 | 基线 1 |
-| `les.test_filter.ratio` | real > 1 | 是 | 动态/相似模型必需，基线 2 |
+| `les.test_filter.ratio` | fixed real `2` | 是 | 动态/相似模型必需；其他值拒绝 |
 | `les.smagorinsky.cs` | `[0,0.3]` | 是 | Smag/混合，基线 0.17 |
+| `les.smagorinsky.wall_damping` | `none` | 是 | `van_driest` 已识别但因无生产 wall-y+ 场而明确拒绝 |
 | `les.similarity.cb` | finite real | 是 | 相似/混合，基线 1 |
 | `les.dynamic.*` | average/clipping/floor | 是 | 仅动态模型 |
 | `les.wale.cw` | positive real | 是 | WALE，基线 0.325 |
@@ -73,6 +75,8 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | `geometry.metric.fallback` | `strict|phenglei_finite_volume` | 是 | 默认 strict；后者仅 PH profile 合法且必须报告计数 |
 | `geometry.metric.maximum_reference_relative_difference` | non-negative real | 是 | 默认 0.20；Family II 尖尾缘冻结 0.35 |
 | `statistics.time.*` | start/end/every/weight | 否；累加器身份单列 | 只累计接受物理步 |
+| `output.boundary.span_direction_x/y/z` | unit vector | 输出摘要 | 使用展向分箱时必填并与 drag/lift 构成右手系 |
+| `output.boundary.span_bin_edges` | strictly increasing real list | 输出摘要 | 至少两个边界；面心分箱 |
 
 ## 3. 合法草案
 
@@ -156,12 +160,22 @@ les.wale.cw = 0.325
 les.sgs_prandtl = 0.9
 time.integrator = lu_sgs
 time.physical.scheme = bdf2
-time.dual_time.enabled = true
+time.physical.step = 1e-3
 time.dual_time.max_iterations = 100
-time.dual_time.l2_relative = 1e-8
+time.dual_time.absolute_tolerance = 1e-10
+time.dual_time.relative_tolerance = 1e-8
+time.dual_time.cfl = 5
+lu_sgs.jacobian = scalar_spectral
+lu_sgs.sweeps = 1
+lu_sgs.relaxation = 1
 preconditioner.type = none
 run.mode = unsteady
 ```
+
+Smagorinsky 与混合模型还必须显式给出
+`les.smagorinsky.cs` 和 `les.smagorinsky.wall_damping=none`；相似/混合/动态模型必须给出固定的
+`les.test_filter.ratio=2`，纯相似/混合还需 `les.similarity.cb`，动态模型需完整的
+`les.dynamic.average=local_box3_tensor`、`clipping=bounded`、分母保护和上下限键。
 
 ## 4. 必须拒绝的草案
 
@@ -178,17 +192,39 @@ run.mode = unsteady
 | 非 k-epsilon + `turbulence.experimental` | 实验声明不能污染其他模型身份 |
 | `none` + 任意 RANS/LES 专属键 | 模型无关参数污染签名 |
 | dynamic model 缺 test filter | Germano 恒等式不完整 |
+| `les.test_filter.ratio != 2` | 阶段 Z 固定离散支持被改变 |
+| `les.smagorinsky.wall_damping=van_driest` | 当前残差求值没有生产逐单元 wall-y+ 场，禁止静默退化 |
 | 非动态模型出现 `les.dynamic.*` | 无效/误导参数 |
 | 输出统计累计伪迭代 | 非物理采样 |
 
 ## 5. 输出和重启
 
-字段候选包括 wall distance、`nu_tilde/k/omega/epsilon`、`mu_model/mu`、SGS 应力六分量、
-`Pi_sgs`、动态系数和模型源/耗散。checkpoint 保存模型 descriptor、BDF 历史层、物理/伪迭代、
-动态平均状态及统计累加器。任何缺字段、变体/常数/滤波/积分器签名不同必须在推进前拒绝。
+字段包括 wall distance、`nu_tilde/k/omega/epsilon`、`mu_model/mu`、`mu_sgs`、
+`mu_sgs_over_mu`、SGS 应力六分量、`sgs_energy_transfer`、动态系数、滤宽、网格各向异性和模型
+源/耗散。checkpoint 保存模型 descriptor、BDF 历史层、物理/伪迭代以及统计累加器；代数 LES
+闭合由接受态确定性重算，不保存冗余逐单元动态场。任何缺字段、变体/常数/滤波/积分器签名不同
+必须在推进前拒绝。
+
+`statistics.time.enabled=true` 要求同时启用普通 `output.statistics` 并选择至少一个 quantity。
+只按采样区间与接受物理步的实际重叠 `accepted_dt` 加权，输出每个量的 mean/RMS/Favre
+mean/Favre RMS，以及所有唯一量对的 Reynolds/Favre covariance。累加器 v2 状态进入 checkpoint，
+同一 `(step,time)` 重放不重复采样。
 
 RANS 无滑移壁的 `output.boundary.quantities` 允许
 `wall_distance,friction_velocity,wall_y_plus,wall_y_plus_class`。解析壁面由权威切向黏性牵引
 重构 $u_\tau$ 和 $y^+$；壁面函数路径输出模型实际使用的 $y^+$。分类字段固定为 0（$y^+\le5$）、
 1（$5<y^+<30$）、2（$30\le y^+\le300$）、3（$y^+>300$）。无活动 RANS 模型、无黏性运行
 或非无滑移 patch 请求上述量必须拒绝；分类只供后处理，不允许触发模型自动切换。
+
+三维边界可选展向载荷分箱。例如右手系 `drag=x,lift=y,span=z`、单位翼展两箱：
+
+```text
+output.boundary.span_direction_x = 0
+output.boundary.span_direction_y = 0
+output.boundary.span_direction_z = 1
+output.boundary.span_bin_edges = 0,0.5,1
+```
+
+普通箱使用 `[lower,upper)`，最后一箱包含右端点；按真实物理面面心投影归属，不切割跨箱面。
+每次边界事件写 `<case>.spanwise_loads.r<ranks>.step....txt`，各箱压力、黏性和总载荷之和必须
+与同一事件的整体 load history 一致。
