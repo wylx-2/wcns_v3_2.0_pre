@@ -244,6 +244,22 @@ void test_case_config()
         missing.erase(missing.find(required), required.size());
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(missing));
+        auto wrong_test_ratio = valid_les_config("dynamic_smagorinsky");
+        const auto ratio = wrong_test_ratio.find("les.test_filter.ratio = 2");
+        wrong_test_ratio.replace(
+            ratio, std::string("les.test_filter.ratio = 2").size(),
+            "les.test_filter.ratio = 3");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(wrong_test_ratio));
+        auto unavailable_damping = valid_les_config("smagorinsky");
+        const auto damping = unavailable_damping.find(
+            "les.smagorinsky.wall_damping = none");
+        unavailable_damping.replace(
+            damping,
+            std::string("les.smagorinsky.wall_damping = none").size(),
+            "les.smagorinsky.wall_damping = van_driest");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(unavailable_damping));
 
         auto time_statistics = valid_les_config("wale");
         const auto statistics_enabled
@@ -677,12 +693,18 @@ output.boundary.lift_direction_z = 0
 output.boundary.tangent_direction_x = 1
 output.boundary.tangent_direction_y = 0
 output.boundary.tangent_direction_z = 0
+output.boundary.span_direction_x = 0
+output.boundary.span_direction_y = 0
+output.boundary.span_direction_z = 1
+output.boundary.span_bin_edges = 0,0.5,1
 )";
         const auto config = wcns::CaseConfig::from_text(boundary);
         WCNS_REQUIRE(config.output.boundary.enabled);
         WCNS_REQUIRE(config.output.boundary.patches == std::vector<std::string>({"wall"}));
         WCNS_REQUIRE_NEAR(config.output.boundary.reference_pressure, 0.02, 1.0e-15);
         WCNS_REQUIRE(config.output.boundary.summary().find("A_ref=1") != std::string::npos);
+        WCNS_REQUIRE(config.output.boundary.span_bin_edges
+                     == std::vector<wcns::Real>({0.0, 0.5, 1.0}));
         WCNS_REQUIRE(config.restart_signature().find("output.boundary") == std::string::npos);
 
         auto wall_units_without_rans = boundary;
@@ -705,6 +727,23 @@ output.boundary.tangent_direction_z = 0
                           std::string("output.boundary.patches = wall").size(),
                           "output.boundary.patches = wall,wall");
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError, wcns::CaseConfig::from_text(duplicate));
+
+        auto left_handed = boundary;
+        const auto span_z = left_handed.find("output.boundary.span_direction_z = 1");
+        left_handed.replace(span_z,
+                            std::string("output.boundary.span_direction_z = 1").size(),
+                            "output.boundary.span_direction_z = -1");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(left_handed));
+
+        auto unordered_bins = boundary;
+        const auto bin_edges
+            = unordered_bins.find("output.boundary.span_bin_edges = 0,0.5,1");
+        unordered_bins.replace(bin_edges,
+                               std::string("output.boundary.span_bin_edges = 0,0.5,1").size(),
+                               "output.boundary.span_bin_edges = 0,0.5,0.5");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(unordered_bins));
     }
     {
         const auto legacy = wcns::CaseConfig::from_text(valid_config());

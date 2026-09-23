@@ -197,6 +197,10 @@ struct BoundaryOutputConfig {
     std::array<Real, 3> tangent_direction {{std::numeric_limits<Real>::quiet_NaN(),
                                             std::numeric_limits<Real>::quiet_NaN(),
                                             std::numeric_limits<Real>::quiet_NaN()}};
+    std::array<Real, 3> span_direction {{std::numeric_limits<Real>::quiet_NaN(),
+                                         std::numeric_limits<Real>::quiet_NaN(),
+                                         std::numeric_limits<Real>::quiet_NaN()}};
+    std::vector<Real> span_bin_edges;
 
     void validate(bool viscous) const;
     [[nodiscard]] std::string summary() const;

@@ -17,6 +17,11 @@ bool same_time(Real lhs, Real rhs)
     return std::abs(lhs - rhs) <= tolerance;
 }
 
+std::size_t covariance_count(std::size_t variable_count)
+{
+    return variable_count * (variable_count - 1) / 2;
+}
+
 } // namespace
 
 void WeightedMomentState::validate() const
@@ -154,20 +159,36 @@ AcceptedTimeStatistics::AcceptedTimeStatistics(std::string identity,
     state_.identity = std::move(identity);
     state_.reynolds.resize(variable_count);
     state_.favre.resize(variable_count);
+    state_.reynolds_covariances.resize(covariance_count(variable_count));
+    state_.favre_covariances.resize(covariance_count(variable_count));
 }
 
 AcceptedTimeStatistics::AcceptedTimeStatistics(AcceptedStatisticsState state)
     : state_(std::move(state))
 {
+    const auto pairs = covariance_count(state_.reynolds.size());
     if (state_.identity.empty() || state_.reynolds.empty()
-        || state_.reynolds.size() != state_.favre.size()) {
+        || state_.reynolds.size() != state_.favre.size()
+        || state_.reynolds_covariances.size() != pairs
+        || state_.favre_covariances.size() != pairs) {
         throw std::invalid_argument("restored accepted statistics identity is invalid");
     }
     for (const auto& entry : state_.reynolds) entry.validate();
     for (const auto& entry : state_.favre) entry.validate();
+    for (const auto& entry : state_.reynolds_covariances) entry.validate();
+    for (const auto& entry : state_.favre_covariances) entry.validate();
     if (state_.accepted_events != state_.reynolds.front().sample_count
         || state_.accepted_events != state_.favre.front().sample_count) {
         throw std::invalid_argument("restored accepted statistics sample counts differ");
+    }
+    const auto covariance_count_matches = [&](const auto& entries) {
+        return std::all_of(entries.begin(), entries.end(), [&](const auto& entry) {
+            return entry.sample_count == state_.accepted_events;
+        });
+    };
+    if (!covariance_count_matches(state_.reynolds_covariances)
+        || !covariance_count_matches(state_.favre_covariances)) {
+        throw std::invalid_argument("restored accepted covariance sample counts differ");
     }
 }
 
@@ -197,6 +218,16 @@ bool AcceptedTimeStatistics::sample(std::size_t step,
         state_.reynolds[variable].add(values[variable], physical_time_step);
         state_.favre[variable].add(values[variable], density * physical_time_step);
     }
+    std::size_t pair = 0;
+    for (std::size_t first = 0; first < values.size(); ++first) {
+        for (std::size_t second = first + 1; second < values.size(); ++second) {
+            state_.reynolds_covariances[pair].add(
+                values[first], values[second], physical_time_step);
+            state_.favre_covariances[pair].add(
+                values[first], values[second], density * physical_time_step);
+            ++pair;
+        }
+    }
     if (state_.accepted_events == 0) {
         state_.first_step = step;
         state_.first_time = time;
@@ -210,16 +241,23 @@ bool AcceptedTimeStatistics::sample(std::size_t step,
 std::string AcceptedTimeStatistics::serialize() const
 {
     std::ostringstream output;
-    output << "wcns_weighted_statistics_v1\n" << std::quoted(state_.identity) << '\n'
+    output << "wcns_weighted_statistics_v2\n" << std::quoted(state_.identity) << '\n'
            << state_.accepted_events << ' ' << state_.first_step << ' ' << state_.last_step << ' '
            << std::setprecision(17) << state_.first_time << ' ' << state_.last_time << ' '
-           << state_.reynolds.size() << '\n';
+           << state_.reynolds.size() << ' ' << state_.reynolds_covariances.size() << '\n';
     for (std::size_t variable = 0; variable < state_.reynolds.size(); ++variable) {
         const auto& r = state_.reynolds[variable];
         const auto& f = state_.favre[variable];
         output << r.sample_count << ' ' << r.weight << ' ' << r.mean << ' '
                << r.second_central << ' ' << f.sample_count << ' ' << f.weight << ' '
                << f.mean << ' ' << f.second_central << '\n';
+    }
+    for (std::size_t pair = 0; pair < state_.reynolds_covariances.size(); ++pair) {
+        const auto& r = state_.reynolds_covariances[pair];
+        const auto& f = state_.favre_covariances[pair];
+        output << r.sample_count << ' ' << r.weight << ' ' << r.mean_x << ' ' << r.mean_y << ' '
+               << r.co_moment << ' ' << f.sample_count << ' ' << f.weight << ' ' << f.mean_x
+               << ' ' << f.mean_y << ' ' << f.co_moment << '\n';
     }
     return output.str();
 }
@@ -229,24 +267,35 @@ AcceptedTimeStatistics AcceptedTimeStatistics::deserialize(const std::string& te
     std::istringstream input(text);
     std::string version;
     std::getline(input, version);
-    if (version != "wcns_weighted_statistics_v1") {
+    if (version != "wcns_weighted_statistics_v2") {
         throw std::invalid_argument("unsupported weighted statistics state version");
     }
     AcceptedStatisticsState state;
     std::size_t variables = 0;
+    std::size_t pairs = 0;
     if (!(input >> std::quoted(state.identity) >> state.accepted_events >> state.first_step
-          >> state.last_step >> state.first_time >> state.last_time >> variables)
-        || variables == 0) {
+          >> state.last_step >> state.first_time >> state.last_time >> variables >> pairs)
+        || variables == 0 || pairs != covariance_count(variables)) {
         throw std::invalid_argument("weighted statistics state header is invalid");
     }
     state.reynolds.resize(variables);
     state.favre.resize(variables);
+    state.reynolds_covariances.resize(pairs);
+    state.favre_covariances.resize(pairs);
     for (std::size_t variable = 0; variable < variables; ++variable) {
         auto& r = state.reynolds[variable];
         auto& f = state.favre[variable];
         if (!(input >> r.sample_count >> r.weight >> r.mean >> r.second_central
               >> f.sample_count >> f.weight >> f.mean >> f.second_central)) {
             throw std::invalid_argument("weighted statistics state is truncated");
+        }
+    }
+    for (std::size_t pair = 0; pair < pairs; ++pair) {
+        auto& r = state.reynolds_covariances[pair];
+        auto& f = state.favre_covariances[pair];
+        if (!(input >> r.sample_count >> r.weight >> r.mean_x >> r.mean_y >> r.co_moment
+              >> f.sample_count >> f.weight >> f.mean_x >> f.mean_y >> f.co_moment)) {
+            throw std::invalid_argument("weighted covariance state is truncated");
         }
     }
     std::string trailing;

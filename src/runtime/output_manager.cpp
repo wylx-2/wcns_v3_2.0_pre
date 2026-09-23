@@ -717,7 +717,7 @@ void RuntimeOutputManager::finish_time_statistics()
             "cannot open time-statistics temporary file: " + time_statistics_temporary_path_);
     }
     const auto& state = time_statistics_->state();
-    output << "# wcns_time_statistics_v1\n"
+    output << "# wcns_time_statistics_v2\n"
            << "# identity " << state.identity << '\n'
            << "# accepted_events " << state.accepted_events << '\n'
            << std::setprecision(17) << "# first_step " << state.first_step << " first_time "
@@ -731,6 +731,21 @@ void RuntimeOutputManager::finish_time_statistics()
                << reynolds.sample_count << ' ' << reynolds.weight << ' ' << reynolds.mean << ' '
                << reynolds.rms() << ' ' << favre.weight << ' ' << favre.mean << ' '
                << favre.rms() << '\n';
+    }
+    output << "# covariance quantity_x quantity_y samples weight covariance favre_weight "
+              "favre_covariance\n";
+    std::size_t pair = 0;
+    for (std::size_t first = 0; first < state.reynolds.size(); ++first) {
+        for (std::size_t second = first + 1; second < state.reynolds.size(); ++second) {
+            const auto& reynolds = state.reynolds_covariances[pair];
+            const auto& favre = state.favre_covariances[pair];
+            output << "covariance " << config_.output.statistics.quantities[first] << ' '
+                   << config_.output.statistics.quantities[second] << ' '
+                   << reynolds.sample_count << ' ' << reynolds.weight << ' '
+                   << reynolds.covariance() << ' ' << favre.weight << ' '
+                   << favre.covariance() << '\n';
+            ++pair;
+        }
     }
     output.close();
     if (!output) {

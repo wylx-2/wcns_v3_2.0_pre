@@ -259,12 +259,20 @@ void test_statistics()
     WCNS_REQUIRE(statistics.state().accepted_events == 2);
     WCNS_REQUIRE_NEAR(statistics.state().reynolds[0].mean, 7.0 / 3.0, 1.0e-15);
     WCNS_REQUIRE_NEAR(statistics.state().favre[0].mean, 13.0 / 5.0, 1.0e-15);
+    WCNS_REQUIRE(statistics.state().reynolds_covariances.size() == 1);
+    WCNS_REQUIRE_NEAR(
+        statistics.state().reynolds_covariances[0].covariance(), 16.0 / 9.0, 1.0e-15);
+    WCNS_REQUIRE_NEAR(
+        statistics.state().favre_covariances[0].covariance(), 1.28, 1.0e-15);
 
     auto restored = AcceptedTimeStatistics::deserialize(statistics.serialize());
     WCNS_REQUIRE(restored.state().identity == "stage-z-test");
     WCNS_REQUIRE(restored.state().accepted_events == 2);
     WCNS_REQUIRE_NEAR(restored.state().favre[1].mean,
                       statistics.state().favre[1].mean,
+                      1.0e-15);
+    WCNS_REQUIRE_NEAR(restored.state().reynolds_covariances[0].covariance(),
+                      statistics.state().reynolds_covariances[0].covariance(),
                       1.0e-15);
     WCNS_REQUIRE(restored.sample(3, 0.4, 0.1, {5.0, 12.0}, 1.0, true));
     WCNS_REQUIRE_THROWS(std::invalid_argument,

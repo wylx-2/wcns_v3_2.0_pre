@@ -498,6 +498,10 @@ const std::set<std::string>& fixed_keys()
         "output.boundary.tangent_direction_x",
         "output.boundary.tangent_direction_y",
         "output.boundary.tangent_direction_z",
+        "output.boundary.span_direction_x",
+        "output.boundary.span_direction_y",
+        "output.boundary.span_direction_z",
+        "output.boundary.span_bin_edges",
         "output.statistics.xz_planes.enabled",
         "output.statistics.xz_planes.cell_j_indices",
         "output.statistics.yz_planes.enabled",
@@ -1143,6 +1147,28 @@ void BoundaryOutputConfig::validate(bool viscous) const
         || !unit(tangent_direction) || std::abs(dot(drag_direction, lift_direction)) > 1.0e-12) {
         throw CaseConfigurationError("boundary output reference data are invalid");
     }
+    if (!span_bin_edges.empty()) {
+        if (span_bin_edges.size() < 2 || !unit(span_direction)) {
+            throw CaseConfigurationError(
+                "boundary span bins require a unit span direction and at least two edges");
+        }
+        for (std::size_t edge = 0; edge < span_bin_edges.size(); ++edge) {
+            if (!std::isfinite(span_bin_edges[edge])
+                || (edge > 0 && span_bin_edges[edge] <= span_bin_edges[edge - 1])) {
+                throw CaseConfigurationError(
+                    "boundary span-bin edges must be finite and strictly increasing");
+            }
+        }
+        const std::array<Real, 3> right_handed {{
+            drag_direction[1] * lift_direction[2] - drag_direction[2] * lift_direction[1],
+            drag_direction[2] * lift_direction[0] - drag_direction[0] * lift_direction[2],
+            drag_direction[0] * lift_direction[1] - drag_direction[1] * lift_direction[0],
+        }};
+        if (dot(right_handed, span_direction) < 1.0 - 1.0e-12) {
+            throw CaseConfigurationError(
+                "boundary drag, lift and span directions must form a right-handed basis");
+        }
+    }
     const Real speed_squared = dot(reference_velocity, reference_velocity);
     if (!std::isfinite(speed_squared) || 0.5 * reference_density * speed_squared <= 1.0e-12) {
         throw CaseConfigurationError("boundary output reference dynamic pressure is too small");
@@ -1178,6 +1204,15 @@ std::string BoundaryOutputConfig::summary() const
     vector(lift_direction);
     result << ",tangent=";
     vector(tangent_direction);
+    if (!span_bin_edges.empty()) {
+        result << ",span=";
+        vector(span_direction);
+        result << ",span_bins=";
+        for (std::size_t edge = 0; edge < span_bin_edges.size(); ++edge) {
+            if (edge != 0) result << ':';
+            result << span_bin_edges[edge];
+        }
+    }
     result << ')';
     return result.str();
 }
@@ -1603,6 +1638,10 @@ CaseConfig CaseConfig::from_text(const std::string& text)
             if (uses_test_filter) {
                 result.turbulence.les_test_filter_ratio = parse_real(
                     require(entries, "les.test_filter.ratio"), "les.test_filter.ratio");
+                if (result.turbulence.les_test_filter_ratio != 2.0) {
+                    throw CaseConfigurationError(
+                        "stage Z fixes les.test_filter.ratio at 2");
+                }
             } else if (has_key("les.test_filter.ratio")) {
                 throw CaseConfigurationError(
                     "les.test_filter.ratio requires a similarity or dynamic model");
@@ -2095,6 +2134,19 @@ CaseConfig CaseConfig::from_text(const std::string& text)
                       "output.boundary.tangent_direction_z",
                       result.output.boundary.tangent_direction[2]),
     }};
+    result.output.boundary.span_direction = {{
+        optional_real(entries,
+                      "output.boundary.span_direction_x",
+                      result.output.boundary.span_direction[0]),
+        optional_real(entries,
+                      "output.boundary.span_direction_y",
+                      result.output.boundary.span_direction[1]),
+        optional_real(entries,
+                      "output.boundary.span_direction_z",
+                      result.output.boundary.span_direction[2]),
+    }};
+    result.output.boundary.span_bin_edges
+        = optional_real_list(entries, "output.boundary.span_bin_edges");
     result.output.xz_planes.enabled
         = optional_bool(entries, "output.statistics.xz_planes.enabled", false);
     result.output.xz_planes.cell_j_indices

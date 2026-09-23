@@ -164,6 +164,11 @@ if(WCNS_ENABLE_CGNS)
                 ${CMAKE_CURRENT_BINARY_DIR}/les_${les_model}_${les_rank_label}.wcns
                 @ONLY
             )
+            configure_file(
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/les_implicit_convergence_case.wcns.in
+                ${CMAKE_CURRENT_BINARY_DIR}/les_implicit_${les_model}_${les_rank_label}.wcns
+                @ONLY
+            )
         endforeach()
     endforeach()
     set(WCNS_LES_ZERO_CASE les-zero-none)
@@ -649,6 +654,15 @@ if(WCNS_ENABLE_CGNS)
             PROPERTIES
                 FIXTURES_REQUIRED cgns_files
                 FIXTURES_SETUP les_${les_model}_serial
+        )
+        add_test(
+            NAME wcns.run.les_implicit_${les_model}.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_implicit_${les_model}_serial.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_implicit_${les_model}.serial
+            PROPERTIES FIXTURES_REQUIRED cgns_files
         )
     endforeach()
     add_test(
@@ -1762,6 +1776,16 @@ if(WCNS_ENABLE_CGNS)
                     wcns.check.les_${les_model}.${rank_count}
                     PROPERTIES
                         FIXTURES_REQUIRED "les_${les_model}_serial;les_${les_model}_${rank_count}"
+                )
+                add_test(
+                    NAME wcns.run.les_implicit_${les_model}.${rank_count}
+                    COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                        $<TARGET_FILE:wcns_run>
+                        --config ${CMAKE_CURRENT_BINARY_DIR}/les_implicit_${les_model}_mpi${rank_count}.wcns
+                )
+                set_tests_properties(
+                    wcns.run.les_implicit_${les_model}.${rank_count}
+                    PROPERTIES FIXTURES_REQUIRED cgns_files
                 )
             endforeach()
             add_test(

@@ -428,7 +428,8 @@ struct Loads {
 std::vector<Real> load_row(const std::vector<Sample>& samples,
                            const CaseConfig& config,
                            const QuantityContext& quantities,
-                           const SimulationState& state)
+                           const SimulationState& state,
+                           int dimension)
 {
     Loads loads;
     for (const auto& sample : samples) {
@@ -447,7 +448,6 @@ std::vector<Real> load_row(const std::vector<Sample>& samples,
         * dot(boundary.reference_velocity, boundary.reference_velocity);
     const Real force_denominator = qref * boundary.reference_area;
     const Real moment_denominator = force_denominator * boundary.reference_length;
-    const int dimension = samples.front().dimension;
     const auto scales = boundary_output_scales(quantities, dimension);
     std::vector<Real> result {
         static_cast<Real>(state.step),
@@ -1104,7 +1104,8 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
     }
     atomic_replace(temporary, face_path, config_.output.allow_existing);
 
-    load_history_.push_back(load_row(samples, config_, quantities_, state));
+    load_history_.push_back(
+        load_row(samples, config_, quantities_, state, samples.front().dimension));
     const auto load_path = join_path(config_.output.directory,
                                      basename + ".loads.r" + std::to_string(mpi_.size()) + ".txt");
     const auto load_temporary = load_path + ".tmp";
@@ -1129,10 +1130,61 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
     if (!loads) throw std::runtime_error("failed to write load history");
     atomic_replace(
         load_temporary, load_path, config_.output.allow_existing || load_history_created_);
+
+    std::string span_path;
+    if (!config_.output.boundary.span_bin_edges.empty()) {
+        const auto& boundary = config_.output.boundary;
+        const auto& edges = boundary.span_bin_edges;
+        std::vector<std::vector<Sample>> bins(edges.size() - 1);
+        for (const auto& sample : samples) {
+            const Real coordinate = dot(sample.center, boundary.span_direction);
+            if (coordinate < edges.front() || coordinate > edges.back()) {
+                throw PhysicsConfigurationError(
+                    "boundary face centre lies outside configured span-bin edges");
+            }
+            auto upper = std::upper_bound(edges.begin(), edges.end(), coordinate);
+            std::size_t bin = upper == edges.end()
+                ? bins.size() - 1
+                : static_cast<std::size_t>(upper - edges.begin() - 1);
+            bins[bin].push_back(sample);
+        }
+        span_path = join_path(
+            config_.output.directory,
+            basename + ".spanwise_loads.r" + std::to_string(mpi_.size()) + ".step"
+                + step_token(state.step) + ".time" + time_token(state.time) + ".txt");
+        const auto span_temporary = span_path + ".tmp";
+        std::ofstream span(span_temporary, std::ios::out | std::ios::trunc);
+        if (!span) {
+            throw std::runtime_error(
+                "cannot open spanwise-load temporary file: " + span_temporary);
+        }
+        span << std::setprecision(17);
+        write_metadata(span, config_, state, samples.front().dimension, "#");
+        span << "# span_direction=" << boundary.span_direction[0] << ','
+             << boundary.span_direction[1] << ',' << boundary.span_direction[2] << '\n'
+             << "# bin_rule=[lower,upper), final_bin_includes_upper\n"
+             << "# bin_index span_lower span_upper";
+        for (const auto* column : load_columns)
+            span << ' ' << column;
+        span << '\n';
+        for (std::size_t bin = 0; bin < bins.size(); ++bin) {
+            const auto row = load_row(
+                bins[bin], config_, quantities_, state, samples.front().dimension);
+            span << bin << ' ' << edges[bin] << ' ' << edges[bin + 1];
+            for (const Real value : row)
+                span << ' ' << value;
+            span << '\n';
+        }
+        span.close();
+        if (!span) throw std::runtime_error("failed to write spanwise loads");
+        atomic_replace(span_temporary, span_path, config_.output.allow_existing);
+    }
     const bool first_load = !load_history_created_;
     load_history_created_ = true;
-    return first_load ? std::vector<std::string> {face_path, load_path}
-                      : std::vector<std::string> {face_path};
+    std::vector<std::string> written {face_path};
+    if (first_load) written.push_back(load_path);
+    if (!span_path.empty()) written.push_back(span_path);
+    return written;
 }
 
 } // namespace wcns

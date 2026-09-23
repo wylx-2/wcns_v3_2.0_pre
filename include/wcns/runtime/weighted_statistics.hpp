@@ -43,6 +43,10 @@ struct AcceptedStatisticsState {
     Real last_time = 0.0;
     std::vector<WeightedMomentState> reynolds;
     std::vector<WeightedMomentState> favre;
+    // Unique quantity pairs in lexicographic (first, second) order with
+    // first < second.  This keeps checkpoint and text-output ordering stable.
+    std::vector<WeightedCovarianceState> reynolds_covariances;
+    std::vector<WeightedCovarianceState> favre_covariances;
 };
 
 class AcceptedTimeStatistics {
