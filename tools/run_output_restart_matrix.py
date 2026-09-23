@@ -86,8 +86,11 @@ def one_file(directory: Path, pattern: str) -> Path:
 
 def require_maximum_stop(log: Path, expected_step: int) -> None:
     text = log.read_text(encoding="utf-8")
-    match = re.search(r"reason=maximum_steps step=(\d+) time=([^\s]+)\s*$", text)
-    if match is None or int(match.group(1)) != expected_step:
+    matches = re.findall(
+        r"WCNS run stopped: reason=maximum_steps step=(\d+) time=([^\s]+)",
+        text,
+    )
+    if not any(int(step) == expected_step for step, _ in matches):
         raise RuntimeError(f"run did not stop at maximum step {expected_step}: {log}")
 
 

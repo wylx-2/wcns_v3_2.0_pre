@@ -171,8 +171,11 @@ def main() -> int:
         log = root / f"run-r{rank_count}.log"
         records.append(run(command, log))
         text = log.read_text(encoding="utf-8")
-        match = re.search(r"reason=([a-z_]+) step=(\d+) time=([^\s]+)\s*$", text)
-        if match is None or match.group(1) != "steady_converged":
+        matches = re.findall(
+            r"WCNS run stopped: reason=([a-z_]+) step=(\d+) time=([^\s]+)",
+            text,
+        )
+        if not any(reason == "steady_converged" for reason, _, _ in matches):
             raise RuntimeError(f"viscous run did not stop by steady convergence: {log}")
         fields[rank_count] = one_field(output)
         records.append(

@@ -98,11 +98,11 @@ def main() -> int:
             command = [str(args.mpi_exec), "-n", str(rank_count)] + command
         log = root / f"run-r{rank_count}.log"
         records.append(run(command, log))
-        match = re.search(
-            r"reason=physical_time_reached step=(\d+) time=([^\s]+)\s*$",
+        matches = re.findall(
+            r"WCNS run stopped: reason=physical_time_reached step=(\d+) time=([^\s]+)",
             log.read_text(encoding="utf-8"),
         )
-        if match is None or int(match.group(1)) < args.minimum_steps:
+        if not any(int(step) >= args.minimum_steps for step, _ in matches):
             raise RuntimeError(f"manufactured run did not complete enough steps: {log}")
         fields[rank_count] = one_field(output)
         records.append(
