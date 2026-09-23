@@ -1,12 +1,13 @@
 # v2.0.0 阶段 X 设计：SA-neg
 
-状态：**2026-09-13 设计已冻结；实现与非长算自动卡口已通过。项目负责人已批准把 AA
-前置，X 定量物理验收将在 AA 自动卡口通过后按连续授权恢复。** 阶段 W 已经人工验收；X-A 只实现首个
+状态：**2026-09-14 按本机资源约束修订；实现与非长算自动卡口已通过。AA 已前置并通过，X-B
+改以本机 L 级分析/小算例关闭，细网格定量物理验证转服务器 S 级。** 阶段 W 已经人工验收；X-A 只实现首个
 RANS 模型 `sa_neg`，没有在 X 代码提交中混入 SST、LES、LU-SGS 或低 Mach 预处理。
 
 阶段 X 只有一个候选，但分两个执行窗口：X-A 是当前已完成的实现/MMS/restart/MPI/smoke；
-前置 AA 在独立分支实现并验收层流/SA 的 LU-SGS 和低 Mach；AA 自动通过并回合后，X-B 才运行完整
-TMR 平板/NACA 定量收敛。X-A 不是可发布的 SA-neg 完成状态。
+前置 AA 在独立分支实现并验收层流/SA 的 LU-SGS 和低 Mach；AA 自动通过并回合后，X-B 执行
+本机轻量卡口。完整 TMR 平板/NACA 定量收敛作为服务器证据独立跟踪。X-A 不是可发布的
+SA-neg 完成状态，L 级候选也不得冒充细网格物理验证通过。
 
 ## 1. 模型身份
 
@@ -35,6 +36,17 @@ turbulence.prandtl = 0.9
 turbulence.wall_treatment = resolved
 turbulence.sa.farfield_nu_tilde_ratio = 3
 turbulence.sa.source_treatment = explicit | local_implicit
+
+# 仅用于 NACA numerical-analysis 的独立带 PV 对照
+boundary.point_vortex.enabled = true
+boundary.point_vortex.lift_coefficient = 1.09125
+boundary.point_vortex.center_x = 0.25
+boundary.point_vortex.center_y = 0
+boundary.point_vortex.chord = 1
+
+# Family II 尖尾缘三层网格专用；仍保持 strict 且禁止 FV fallback
+geometry.metric.fallback = strict
+geometry.metric.maximum_reference_relative_difference = 0.35
 ```
 
 远场比必须在 `[3,5]`。SA-neg 要求黏性方程和至少一个 resolved no-slip wall；阶段 X 不支持
@@ -80,15 +92,22 @@ checkpoint 版本在活动 SA 模型时升级为 2，保存模型 descriptor sig
    $L_1/L_2/L_\infty$ 和观测阶；这是代码验证，不是物理模型验证。
 2. **TMR finite flat plate（独立物理验证）**：$M=0.2$、$Re=5\times10^6$、$Pr=0.72$、
    $Pr_t=0.9$、Sutherland、绝热壁、$\widetilde\nu_\infty/\nu_\infty=3$。只使用 TMR 生成器
-   产生的嵌套网格；level 8 仅 smoke，至少 level 6/5/4 构成趋势，比较 $C_f(x=0.8697742)$、
-   总阻力、速度/工作变量剖面和 $y^+$。
+   产生的嵌套网格；本机只运行不超过 32,768 cells 的小层级，level 6/5/4 趋势、
+   $C_f(x=0.8697742)$、总阻力、速度/工作变量剖面和 $y^+$ 的严格物理比较转服务器。
 3. **TMR NACA0012 validation family（独立物理验证）**：原始公开结构 C-grid，$M=0.15$、
    $Re_c=6\times10^6$、$\alpha=0,10,15^\circ$、远场约 $500c$、绝热壁、完全湍流。
-   113x33 只做导入/有限性 smoke；225x65、449x129、897x257 检查系统网格趋势，并只和同一
-   工况的 TMR `CL/CD/Cp/Cf` 数据比较。
+   113x33 只做导入/有限性 smoke，225x65 作为本机小算例；449x129、897x257 的系统网格趋势在
+   服务器检查，并只和同一工况的 TMR `CL/CD/Cp/Cf` 数据比较。
 4. **TMR NACA0012 numerical family II（离散敏感性）**：$\alpha=10^\circ$，使用修正后的闭合
    尖尾缘 Family II 和明确的“有/无 point-vortex”远场分支，检查 `CM` 及积分量渐近区间。
    Family II 与 validation family 几何不同，禁止混用结果或用一种网格的参考值验收另一种。
+   TMR 的 $x$--$z$ 平面 `CMy` 与程序 $x$--$y$ 平面的右手系输出固定映射为
+   `CMy=-Cm_z`；报告必须同时保留原始 `Cm_z`，禁止用绝对值掩盖符号约定。
+   no-PV 是主分支；带 PV 对照使用《算法补充》12.11 的给定 $C_{L,pv}$ 顺时针点涡速度修正，
+   逐远场面中心生成局部特征目标状态，不能用旋转全场初值或事后载荷修正冒充。
+   Family II 尖尾缘使粗层高阶 Jacobian 与有限体积参考体积最大相对差为 `0.349915`，并随
+   449/897 层降至 `0.264342/0.165909`；因此只对该族冻结 strict 上限 `0.35`，全部 Jacobian
+   仍须有限且为正，`fallback_cells=0`。默认 `0.20` 和其余算例不变。
 
 用户 `cases/manual/case06_2d_naca0012` 明确排除在 X 的模型验收之外：它属于阶段 AB 的项目算例，
 既不能替代 TMR 独立网格，也不会在 X 修改。结构多块曲面 smoke 使用仓库生成网格，只验证接口、
@@ -102,24 +121,27 @@ X 候选必须同时满足：
 - 公式常数和正/负分支与冻结字面量在 `5e-13` 相对/绝对容差内，解析源 Jacobian与中心差分在
   `2e-6` 相对容差内；SA MMS 三范数观测阶均不低于 1.90；
 - 1/2/4 rank 的模型场、残差、负分支计数及 restart 连续结果在冻结舍入容差内一致；
-- TMR 平板至少三个非 smoke 网格呈系统收敛，level 4 的 $C_f$ 与三代码公开包络一致，积分阻力、
-  剖面和 $y^+$ 通过 manifest 阈值；
-- NACA validation family 的三层非 smoke 网格完成，897x257 的 `CL/CD/Cp/Cf` 通过阈值；
-  numerical Family II 的 `CM` 与选择的 point-vortex 分支渐近区间一致；
+- 本机小平板和 NACA 225 通过预冻结的有限性、单位、载荷方向、残差趋势及模型诊断检查；单次
+  不超过 1,800 s、2,000 accepted steps，阶段 CFD 累计不超过 7,200 s；残差峰值/初值不超过
+  2.0，终值/初值不超过 1.5；
+- 平板三级网格、NACA 449/897、897 的 `CL/CD/Cp/Cf` 严限及 Family II 渐近区间作为 S 级状态
+  单列；未完成时不得宣称系统网格或细网格物理验证通过；
 - 均匀远场、壁面零值、显式/局部隐式对照、负分支和 checkpoint/restart 都无非有限值、隐藏
   floor、未登记回退或部分输出；
 - 自动报告必须列出命令、输入散列、rank、运行时间、迭代/残差、积分量、曲线误差和失败原因。
 
-任一 TMR 网格没有被当前结构 CGNS/PLOT3D 入口忠实读取、工况/边界未冻结、或计算尚未收敛，
-阶段状态只能是“进行中/未通过”，不能用较宽容差、最粗网格或 Case06 生成候选标签。
+任一 L 级入口未忠实读取、工况/边界未冻结或轻量判别量失败，阶段状态只能是“进行中/未通过”。
+S 级尚未收敛时可以形成标明 `S=pending` 的算法候选，但不能用较宽容差、最粗网格或 Case06
+升级其物理支持声明。
 
 ## 6. Git 与人工判断
 
 X-A 工作留在 `stage/v2.0.0-x`，生产实现锚点为 `d32010a`。计划人工审查通过后，从该 X
 文档批准点创建 `stage/v2.0.0-aa`；AA 自动通过后按连续授权只回合到 X 分支，不单独进入 release。
-随后 X-B 从已批准的 LU-SGS 运行全部定量卡口，才允许创建不可移动的
-`v2.0.0-x-candidate.1`。人工查看源项/破坏项分布、负分支占比、平板对数层与摩擦、NACA
-`Cp/Cf` 曲线和网格外推；接受后以一次 `--no-ff` 合并把 X+AA 纳入 `release/v2.0.0`，再开始 Y。
+随后 X-B 从已批准的 LU-SGS 运行全部 L 级卡口，才允许创建不可移动的
+`v2.0.0-x-candidate.1`。按项目负责人最新授权，X 自动卡口通过后不设置人工停点，以一次
+`--no-ff` 合并把 X+AA 纳入 `release/v2.0.0` 并继续 Y；源项/破坏项分布、负分支占比、平板
+对数层与摩擦、NACA `Cp/Cf` 曲线和网格外推统一进入 Y 候选后的人工验收材料。
 
 权威输入：NASA TMR SA equations、Finite Flat Plate Numerical Analysis、NACA0012 Validation、
 NACA0012 Numerical Analysis 及其各自 grid/results 页面。抓取脚本固定 URL 与 SHA-256；网页内容

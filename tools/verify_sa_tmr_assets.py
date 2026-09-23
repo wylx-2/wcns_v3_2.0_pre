@@ -21,27 +21,35 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--cache", type=Path, required=True)
+    parser.add_argument("--include-derived", action="store_true")
     args = parser.parse_args()
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     failures: list[str] = []
-    for asset in manifest["assets"]:
-        path = args.cache / asset["path"]
+    entries = [("asset", asset) for asset in manifest["assets"]]
+    if args.include_derived:
+        entries.extend(
+            ("derived grid", grid) for grid in manifest.get("derived_grids", [])
+        )
+    for kind, entry in entries:
+        path = args.cache / entry["path"]
         if not path.is_file():
-            failures.append(f"missing: {path}")
+            failures.append(f"missing {kind}: {path}")
             continue
         actual = digest(path)
-        expected = asset["sha256"].lower()
+        expected = entry["sha256"].lower()
         if actual != expected:
-            failures.append(f"sha256 mismatch: {path} expected={expected} actual={actual}")
+            failures.append(
+                f"sha256 mismatch: {path} expected={expected} actual={actual}"
+            )
         else:
-            print(f"verified {asset['path']} {actual}")
+            print(f"verified {kind} {entry['path']} {actual}")
 
     if failures:
         for failure in failures:
             print(f"ERROR {failure}")
         return 1
-    print(f"verified {len(manifest['assets'])} immutable TMR assets")
+    print(f"verified {len(entries)} immutable TMR inputs")
     return 0
 
 
