@@ -395,6 +395,14 @@ if(WCNS_ENABLE_CGNS)
         ${CMAKE_CURRENT_BINARY_DIR}/xz_plane_statistics_case.wcns
         @ONLY
     )
+    foreach(les_boundary_rank IN ITEMS serial mpi2 mpi4)
+        set(WCNS_LES_BOUNDARY_RANK ${les_boundary_rank})
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/les_boundary_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_${les_boundary_rank}.wcns
+            @ONLY
+        )
+    endforeach()
     if(WCNS_ENABLE_MPI)
         set(WCNS_XZ_CASE_NAME xz-plane-statistics-smoke-mpi)
         set(WCNS_XZ_OUTPUT_DIRECTORY xz-plane-statistics-smoke-mpi)
@@ -921,6 +929,28 @@ if(WCNS_ENABLE_CGNS)
     set_tests_properties(
         wcns.check.boundary_3d.serial
         PROPERTIES FIXTURES_REQUIRED xz_plane_statistics_output
+    )
+    add_test(
+        NAME wcns.run.les_boundary.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_serial.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_boundary.serial
+        PROPERTIES
+            FIXTURES_REQUIRED xz_plane_statistics_mesh
+            FIXTURES_SETUP les_boundary_serial
+            RESOURCE_LOCK les_boundary_output
+    )
+    add_test(
+        NAME wcns.check.les_boundary.serial
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/check_les_boundary.py
+            ${CMAKE_CURRENT_BINARY_DIR}/les-boundary-equivalence
+    )
+    set_tests_properties(
+        wcns.check.les_boundary.serial
+        PROPERTIES FIXTURES_REQUIRED les_boundary_serial
     )
     set_tests_properties(
         wcns.run.freestream.serial
@@ -1579,6 +1609,42 @@ if(WCNS_ENABLE_CGNS)
         set_tests_properties(
             wcns.check.boundary_3d.2
             PROPERTIES FIXTURES_REQUIRED xz_plane_statistics_output_mpi
+        )
+        add_test(
+            NAME wcns.run.les_boundary.2
+            COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 2
+                $<TARGET_FILE:wcns_run>
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_mpi2.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_boundary.2
+            PROPERTIES
+                FIXTURES_REQUIRED les_boundary_serial
+                FIXTURES_SETUP les_boundary_2
+                RESOURCE_LOCK les_boundary_output
+        )
+        add_test(
+            NAME wcns.run.les_boundary.4
+            COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n 4
+                $<TARGET_FILE:wcns_run>
+                --config ${CMAKE_CURRENT_BINARY_DIR}/les_boundary_mpi4.wcns
+        )
+        set_tests_properties(
+            wcns.run.les_boundary.4
+            PROPERTIES
+                FIXTURES_REQUIRED les_boundary_2
+                FIXTURES_SETUP les_boundary_4
+                RESOURCE_LOCK les_boundary_output
+        )
+        add_test(
+            NAME wcns.check.les_boundary.mpi_equivalence
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/check_boundary_rank_equivalence.py
+                ${CMAKE_CURRENT_BINARY_DIR}/les-boundary-equivalence
+        )
+        set_tests_properties(
+            wcns.check.les_boundary.mpi_equivalence
+            PROPERTIES FIXTURES_REQUIRED les_boundary_4
         )
         add_test(
             NAME wcns.run.freestream.2

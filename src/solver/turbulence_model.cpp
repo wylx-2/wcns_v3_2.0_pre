@@ -375,7 +375,36 @@ public:
     {
         return TurbulenceModelFamily::LesAlgebraic;
     }
-    std::vector<TurbulenceFieldDescriptor> fields() const override { return {}; }
+    std::vector<TurbulenceFieldDescriptor> fields() const override
+    {
+        const Real unbounded = -std::numeric_limits<Real>::max();
+        return {
+            {"mu_sgs", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::DynamicViscosity, false, unbounded},
+            {"mu_sgs_over_mu", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless, false, unbounded},
+            {"sgs_energy_transfer", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dissipation, false, unbounded},
+            {"sgs_stress_xx", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Pressure, false, unbounded},
+            {"sgs_stress_yy", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Pressure, false, unbounded},
+            {"sgs_stress_zz", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Pressure, false, unbounded},
+            {"sgs_stress_xy", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Pressure, false, unbounded},
+            {"sgs_stress_xz", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Pressure, false, unbounded},
+            {"sgs_stress_yz", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Pressure, false, unbounded},
+            {"les_dynamic_coefficient", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless, false, unbounded},
+            {"les_filter_width", TurbulenceFieldRole::Auxiliary,
+             TurbulenceFieldScale::Length, true, 0.0},
+            {"les_grid_anisotropy", TurbulenceFieldRole::Diagnostic,
+             TurbulenceFieldScale::Dimensionless, true, 0.0},
+        };
+    }
 
     TurbulenceViscousContribution
     viscous_contribution(const TurbulenceCellContext& context) const override
@@ -385,6 +414,8 @@ public:
             || !std::isfinite(context.mean_state[temperature_density])
             || context.mean_state[temperature_density] <= 0.0
             || !std::isfinite(context.reference_mach) || context.reference_mach <= 0.0
+            || !std::isfinite(context.reference_reynolds)
+            || context.reference_reynolds <= 0.0
             || !std::isfinite(context.heat_capacity_ratio)
             || context.heat_capacity_ratio <= 1.0) {
             throw std::invalid_argument("LES viscous context is invalid");
@@ -447,19 +478,23 @@ public:
         }
 
         TurbulenceViscousContribution result;
-        result.stress = {-evaluation.physical_sgs_stress.xx,
-                         -evaluation.physical_sgs_stress.yy,
-                         -evaluation.physical_sgs_stress.zz,
-                         -evaluation.physical_sgs_stress.xy,
-                         -evaluation.physical_sgs_stress.xz,
-                         -evaluation.physical_sgs_stress.yz};
-        result.eddy_viscosity = evaluation.eddy_viscosity;
+        // The common viscous residual applies 1/Re to molecular and model
+        // fluxes together.  LES stresses are Reynolds-number independent, so
+        // convert them to that shared pre-1/Re convention here.
+        const Real flux_scale = context.reference_reynolds;
+        result.stress = {-flux_scale * evaluation.physical_sgs_stress.xx,
+                         -flux_scale * evaluation.physical_sgs_stress.yy,
+                         -flux_scale * evaluation.physical_sgs_stress.zz,
+                         -flux_scale * evaluation.physical_sgs_stress.xy,
+                         -flux_scale * evaluation.physical_sgs_stress.xz,
+                         -flux_scale * evaluation.physical_sgs_stress.yz};
+        result.eddy_viscosity = flux_scale * evaluation.eddy_viscosity;
         result.sgs_energy_transfer = evaluation.energy_transfer;
         result.backscatter_allowed
             = config_.kind == TurbulenceModelKind::ScaleSimilarity
             || config_.kind == TurbulenceModelKind::MixedSmagorinskySimilarity
             || config_.kind == TurbulenceModelKind::DynamicSmagorinsky;
-        const Real heat = evaluation.eddy_viscosity
+        const Real heat = result.eddy_viscosity
             / ((context.heat_capacity_ratio - 1.0) * context.reference_mach
                * context.reference_mach * config_.les_sgs_prandtl);
         for (int direction = 0; direction < 3; ++direction) {

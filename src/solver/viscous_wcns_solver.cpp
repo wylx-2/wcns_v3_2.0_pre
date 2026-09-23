@@ -435,6 +435,105 @@ void ViscousWcnsSolver::update_les_closure_fields()
         static_cast<void>(block);
         complete_les_fixed_stencil_ghosts(field);
     }
+    for (auto& block : local_blocks_.blocks()) {
+        const auto& gradients = gradient_workspace_.at(block.id());
+        const auto& closure = les_closure_workspace_.at(block.id());
+        const auto& metric = metrics_.at(block.id());
+        const auto extent = block.cell_extent();
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    const Index3 cell {i, j, k};
+                    TurbulenceCellContext context;
+                    for (int variable = 0; variable < fluid_components; ++variable) {
+                        context.mean_state[static_cast<std::size_t>(variable)]
+                            = block.flow.temperature_primitive(i, j, k, variable);
+                    }
+                    for (int variable = 0; variable < viscous_primitive_components; ++variable) {
+                        for (int direction = 0; direction < 3; ++direction) {
+                            context.primitive_gradients[static_cast<std::size_t>(variable)]
+                                                       [static_cast<std::size_t>(direction)]
+                                = gradients(cell,
+                                            static_cast<ViscousPrimitive>(variable),
+                                            direction);
+                        }
+                    }
+                    context.filter_width = closure(i, j, k, les_filter_width);
+                    context.reference_reynolds = reference_.reynolds();
+                    context.reference_mach = reference_.mach();
+                    context.heat_capacity_ratio = gas_.gamma();
+                    context.dimension = 3;
+                    if (config_.turbulence.kind == TurbulenceModelKind::ScaleSimilarity
+                        || config_.turbulence.kind
+                            == TurbulenceModelKind::MixedSmagorinskySimilarity) {
+                        context.leonard_stress = {
+                            closure(i, j, k, les_leonard_xx),
+                            closure(i, j, k, les_leonard_yy),
+                            closure(i, j, k, les_leonard_zz),
+                            closure(i, j, k, les_leonard_xy),
+                            closure(i, j, k, les_leonard_xz),
+                            closure(i, j, k, les_leonard_yz),
+                        };
+                        context.has_leonard_stress = true;
+                    }
+                    if (config_.turbulence.kind
+                        == TurbulenceModelKind::DynamicSmagorinsky) {
+                        context.dynamic_coefficient
+                            = closure(i, j, k, les_dynamic_coefficient);
+                        context.has_dynamic_coefficient = true;
+                    }
+                    const auto contribution
+                        = turbulence_model_->viscous_contribution(context);
+                    const Real molecular_viscosity = transport_.viscosity(
+                        context.mean_state[temperature_value]);
+                    const Real inverse_reynolds = 1.0 / reference_.reynolds();
+                    block.turbulence.at(cell, "mu_sgs")
+                        = contribution.eddy_viscosity * inverse_reynolds;
+                    block.turbulence.at(cell, "mu_sgs_over_mu")
+                        = contribution.eddy_viscosity / molecular_viscosity;
+                    block.turbulence.at(cell, "sgs_energy_transfer")
+                        = contribution.sgs_energy_transfer;
+                    block.turbulence.at(cell, "sgs_stress_xx")
+                        = -contribution.stress.xx * inverse_reynolds;
+                    block.turbulence.at(cell, "sgs_stress_yy")
+                        = -contribution.stress.yy * inverse_reynolds;
+                    block.turbulence.at(cell, "sgs_stress_zz")
+                        = -contribution.stress.zz * inverse_reynolds;
+                    block.turbulence.at(cell, "sgs_stress_xy")
+                        = -contribution.stress.xy * inverse_reynolds;
+                    block.turbulence.at(cell, "sgs_stress_xz")
+                        = -contribution.stress.xz * inverse_reynolds;
+                    block.turbulence.at(cell, "sgs_stress_yz")
+                        = -contribution.stress.yz * inverse_reynolds;
+                    block.turbulence.at(cell, "les_dynamic_coefficient")
+                        = closure(i, j, k, les_dynamic_coefficient);
+                    block.turbulence.at(cell, "les_filter_width") = context.filter_width;
+
+                    const Real volume = metric.jacobian()(i, j, k);
+                    std::array<Real, 3> lengths {};
+                    for (int direction = 0; direction < 3; ++direction) {
+                        const auto axis = static_cast<Axis>(direction);
+                        auto upper = cell;
+                        ++upper[static_cast<std::size_t>(axis)];
+                        const auto& face_area = faces(metric, axis);
+                        const Real mean_area
+                            = 0.5 * (face_area.area(i, j, k)
+                                     + face_area.area(upper.i, upper.j, upper.k));
+                        lengths[static_cast<std::size_t>(direction)] = volume / mean_area;
+                    }
+                    const auto [minimum, maximum]
+                        = std::minmax_element(lengths.begin(), lengths.end());
+                    if (!std::isfinite(*minimum) || *minimum <= 0.0
+                        || !std::isfinite(*maximum)) {
+                        throw PhysicsError("LES grid-anisotropy diagnostic is invalid");
+                    }
+                    block.turbulence.at(cell, "les_grid_anisotropy")
+                        = *maximum / *minimum;
+                }
+            }
+        }
+        block.turbulence.validate_interior();
+    }
 }
 
 void ViscousWcnsSolver::compute_residuals(Real stage_time, int rk_stage)

@@ -24,6 +24,7 @@ struct BoundaryFacePhysics {
     Real friction_velocity = std::numeric_limits<Real>::quiet_NaN();
     Real wall_y_plus = std::numeric_limits<Real>::quiet_NaN();
     Real wall_y_plus_class = std::numeric_limits<Real>::quiet_NaN();
+    Real model_viscosity_ratio = 0.0;
     std::array<Real, 3> pressure_traction {};
     std::array<Real, 3> viscous_traction {};
     std::array<Real, 3> total_traction {};

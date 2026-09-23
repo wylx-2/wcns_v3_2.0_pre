@@ -29,6 +29,7 @@ const char* scale_name(TurbulenceFieldScale scale)
     case TurbulenceFieldScale::VelocitySquared: return "velocity_squared";
     case TurbulenceFieldScale::KinematicViscosity: return "kinematic_viscosity";
     case TurbulenceFieldScale::DynamicViscosity: return "dynamic_viscosity";
+    case TurbulenceFieldScale::Pressure: return "pressure";
     case TurbulenceFieldScale::InverseTime: return "inverse_time";
     case TurbulenceFieldScale::Dissipation: return "dissipation";
     case TurbulenceFieldScale::Length: return "length";

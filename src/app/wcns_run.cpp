@@ -457,6 +457,14 @@ int main(int argc, char** argv)
         } else if (config.turbulence.kind == wcns::TurbulenceModelKind::KOmegaSst
                    || config.turbulence.kind == wcns::TurbulenceModelKind::KEpsilon) {
             wcns::initialize_two_equation_fields(mpi, local_blocks, config.turbulence);
+        } else if (turbulence_model->family()
+                   == wcns::TurbulenceModelFamily::LesAlgebraic) {
+            for (auto& block : local_blocks.blocks()) {
+                block.turbulence.reset(block.cell_extent(),
+                                       block.ghost_width(),
+                                       turbulence_model->fields());
+                block.turbulence.fill(0.0);
+            }
         }
 
         wcns::QuantityContext quantity_context {

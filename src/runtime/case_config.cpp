@@ -1075,6 +1075,7 @@ void BoundaryOutputConfig::validate(bool viscous) const
         "friction_velocity",
         "wall_y_plus",
         "wall_y_plus_class",
+        "mu_model_over_mu",
         "pressure_traction_x",
         "pressure_traction_y",
         "pressure_traction_z",
@@ -1092,6 +1093,7 @@ void BoundaryOutputConfig::validate(bool viscous) const
         "friction_velocity",
         "wall_y_plus",
         "wall_y_plus_class",
+        "mu_model_over_mu",
         "viscous_traction_x",
         "viscous_traction_y",
         "viscous_traction_z",
@@ -2205,6 +2207,11 @@ void CaseConfig::validate() const
                 throw CaseConfigurationError(
                     "LES does not support explicit robustness retries");
             }
+            if (turbulence.les_wall_damping == LesWallDamping::VanDriest) {
+                throw CaseConfigurationError(
+                    "LES van-Driest damping requires a production wall-y+ field; "
+                    "the current stage Z runtime cannot provide it");
+            }
         }
         if (time_algorithm.integrator == TimeIntegratorKind::LuSgs) {
             if (robustness.enabled) {
@@ -2240,20 +2247,22 @@ void CaseConfig::validate() const
         throw CaseConfigurationError(
             "time statistics require at least one output.statistics quantity");
     }
-    const std::set<std::string> rans_wall_quantities {
+    const std::set<std::string> modeled_wall_quantities {
         "wall_distance", "friction_velocity", "wall_y_plus", "wall_y_plus_class"};
     const bool rans_transport = turbulence.kind == TurbulenceModelKind::SaNegative
         || turbulence.kind == TurbulenceModelKind::KOmegaSst
         || turbulence.kind == TurbulenceModelKind::KEpsilon;
-    if (!rans_transport
+    const bool les = turbulence_model_family(turbulence.kind)
+        == TurbulenceModelFamily::LesAlgebraic;
+    if (!rans_transport && !les
         && std::any_of(output.boundary.quantities.begin(),
                        output.boundary.quantities.end(),
                        [&](const std::string& quantity) {
-                           return rans_wall_quantities.find(quantity)
-                               != rans_wall_quantities.end();
+                           return modeled_wall_quantities.find(quantity)
+                               != modeled_wall_quantities.end();
                        })) {
         throw CaseConfigurationError(
-            "RANS wall-unit boundary output requires an active RANS turbulence model");
+            "wall-unit boundary output requires an active RANS or LES model");
     }
     if (output.channel_walls.enabled && !run.viscous) {
         throw CaseConfigurationError("channel-wall friction monitoring requires run.viscous=true");

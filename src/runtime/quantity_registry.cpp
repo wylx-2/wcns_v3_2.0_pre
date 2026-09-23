@@ -496,6 +496,10 @@ void FieldQuantityRegistry::register_turbulence_field(
         descriptor.scale = QuantityScale::Viscosity;
         descriptor.dimensional_unit = "Pa s";
         break;
+    case TurbulenceFieldScale::Pressure:
+        descriptor.scale = QuantityScale::Pressure;
+        descriptor.dimensional_unit = "Pa";
+        break;
     case TurbulenceFieldScale::InverseTime:
         descriptor.scale = QuantityScale::InverseTime;
         descriptor.dimensional_unit = "1/s";

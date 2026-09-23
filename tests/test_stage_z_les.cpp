@@ -131,20 +131,22 @@ void test_models()
     config.kind = TurbulenceModelKind::Smagorinsky;
     const auto model = TurbulenceModelRegistry::create_builtin().create(config);
     WCNS_REQUIRE(model->family() == TurbulenceModelFamily::LesAlgebraic);
-    WCNS_REQUIRE(model->fields().empty());
+    WCNS_REQUIRE(model->fields().size() == 12);
+    WCNS_REQUIRE(model->fields().front().name == "mu_sgs");
     TurbulenceCellContext context;
     context.mean_state = {{2.0, 0.0, 0.0, 0.0, 1.0}};
     context.primitive_gradients[0] = strain[0];
     context.primitive_gradients[1] = strain[1];
     context.primitive_gradients[2] = strain[2];
     context.filter_width = 0.25;
+    context.reference_reynolds = 10.0;
     context.reference_mach = 0.2;
     context.heat_capacity_ratio = 1.4;
     context.dimension = 3;
     const auto contribution = model->viscous_contribution(context);
     const auto reference = evaluate_smagorinsky(2.0, 0.25, 0.17, strain);
     WCNS_REQUIRE_NEAR(contribution.stress.xx,
-                      -reference.physical_sgs_stress.xx,
+                      -10.0 * reference.physical_sgs_stress.xx,
                       1.0e-15);
     WCNS_REQUIRE_NEAR(contribution.sgs_energy_transfer,
                       reference.energy_transfer,

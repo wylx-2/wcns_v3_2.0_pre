@@ -2,6 +2,7 @@
 
 #include <wcns/solver/viscous_boundary.hpp>
 #include <wcns/solver/viscous_flux.hpp>
+#include <wcns/solver/les_closure.hpp>
 
 #include <algorithm>
 #include <array>
@@ -22,7 +23,7 @@
 namespace wcns {
 namespace {
 
-constexpr std::size_t sample_width = 38;
+constexpr std::size_t sample_width = 39;
 
 enum SampleOffset : std::size_t {
     sample_patch = 0,
@@ -60,6 +61,7 @@ enum SampleOffset : std::size_t {
     sample_friction_velocity,
     sample_wall_y_plus,
     sample_wall_y_plus_class,
+    sample_model_viscosity_ratio,
     sample_dimension,
     sample_local_ordinal,
     sample_reserved,
@@ -208,6 +210,7 @@ bool requests_viscous_quantity(const BoundaryOutputConfig& config)
         "friction_velocity",
         "wall_y_plus",
         "wall_y_plus_class",
+        "mu_model_over_mu",
         "viscous_traction_x",
         "viscous_traction_y",
         "viscous_traction_z",
@@ -298,6 +301,7 @@ Sample decode_sample(const std::vector<Real>& values, std::size_t begin)
     result.physics.friction_velocity = at(sample_friction_velocity);
     result.physics.wall_y_plus = at(sample_wall_y_plus);
     result.physics.wall_y_plus_class = at(sample_wall_y_plus_class);
+    result.physics.model_viscosity_ratio = at(sample_model_viscosity_ratio);
     result.dimension = exact_signed_index(at(sample_dimension), "dimension");
     result.local_ordinal = exact_index(at(sample_local_ordinal), "ordinal");
     return result;
@@ -336,6 +340,7 @@ void append_sample(std::vector<Real>& values, const Sample& sample)
     values.push_back(sample.physics.friction_velocity);
     values.push_back(sample.physics.wall_y_plus);
     values.push_back(sample.physics.wall_y_plus_class);
+    values.push_back(sample.physics.model_viscosity_ratio);
     values.push_back(static_cast<Real>(sample.dimension));
     values.push_back(static_cast<Real>(sample.local_ordinal));
     values.push_back(0.0);
@@ -356,6 +361,7 @@ Real selected_quantity(const Sample& sample, const std::string& name)
     if (name == "friction_velocity") return sample.physics.friction_velocity;
     if (name == "wall_y_plus") return sample.physics.wall_y_plus;
     if (name == "wall_y_plus_class") return sample.physics.wall_y_plus_class;
+    if (name == "mu_model_over_mu") return sample.physics.model_viscosity_ratio;
     const auto component = [&](const char* prefix, const Vector3& value) -> Real {
         const std::string base(prefix);
         if (name == base + "x") return value[0];
@@ -378,7 +384,8 @@ Real selected_quantity(const Sample& sample, const std::string& name)
 Real quantity_scale(const std::string& name, const QuantityContext& context)
 {
     if (!context.dimensional || name == "Cp" || name == "Cf"
-        || name == "wall_y_plus" || name == "wall_y_plus_class") {
+        || name == "wall_y_plus" || name == "wall_y_plus_class"
+        || name == "mu_model_over_mu") {
         return 1.0;
     }
     const auto scales = boundary_output_scales(context, 2);
@@ -622,6 +629,9 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
 
     std::unordered_map<BlockId, GradientOperandFaceField> operands;
     std::unordered_map<BlockId, PrimitiveGradientField> gradients;
+    std::unordered_map<BlockId, Field<Real>> les_resolved;
+    std::unordered_map<BlockId, Field<Real>> les_moments;
+    std::unordered_map<BlockId, Field<Real>> les_closures;
     if (config_.run.viscous) {
         GradientOperandFieldRegistry operand_registry;
         for (const auto& block : local_blocks_.blocks()) {
@@ -649,6 +659,77 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
         GradientHaloExchanger(mpi_,
                               GradientHaloPlan::build(global_mesh_, topology_, profile_, version_))
             .exchange(gradient_registry);
+
+        if (turbulence_model_family(config_.turbulence.kind)
+            == TurbulenceModelFamily::LesAlgebraic) {
+            BlockFieldRegistry resolved_registry(les_resolved_components);
+            BlockFieldRegistry moment_registry(les_dynamic_moment_components);
+            BlockFieldRegistry closure_registry(les_closure_components);
+            for (const auto& block : local_blocks_.blocks()) {
+                auto [resolved, resolved_inserted] = les_resolved.emplace(
+                    std::piecewise_construct,
+                    std::forward_as_tuple(block.id()),
+                    std::forward_as_tuple(block.cell_extent(),
+                                          les_resolved_components,
+                                          block.ghost_width(),
+                                          std::numeric_limits<Real>::quiet_NaN()));
+                auto [moments, moments_inserted] = les_moments.emplace(
+                    std::piecewise_construct,
+                    std::forward_as_tuple(block.id()),
+                    std::forward_as_tuple(block.cell_extent(),
+                                          les_dynamic_moment_components,
+                                          block.ghost_width(),
+                                          std::numeric_limits<Real>::quiet_NaN()));
+                auto [closure, closure_inserted] = les_closures.emplace(
+                    std::piecewise_construct,
+                    std::forward_as_tuple(block.id()),
+                    std::forward_as_tuple(block.cell_extent(),
+                                          les_closure_components,
+                                          block.ghost_width(),
+                                          std::numeric_limits<Real>::quiet_NaN()));
+                if (!resolved_inserted || !moments_inserted || !closure_inserted) {
+                    throw std::logic_error("duplicate LES boundary-output workspace block");
+                }
+                populate_les_resolved_field(resolved->second,
+                                            block,
+                                            metrics_.at(block.id()),
+                                            gradients.at(block.id()),
+                                            config_.turbulence);
+                resolved_registry.add(block.id(), resolved->second);
+                moment_registry.add(block.id(), moments->second);
+                closure_registry.add(block.id(), closure->second);
+            }
+            const int ranks = partition_.distribution().rank_count();
+            HaloExchanger(mpi_, topology_, ranks, les_resolved_components)
+                .exchange(resolved_registry);
+            for (auto& [block, field] : les_resolved) {
+                static_cast<void>(block);
+                complete_les_fixed_stencil_ghosts(field);
+            }
+            for (const auto& block : local_blocks_.blocks()) {
+                compute_les_dynamic_moments(les_moments.at(block.id()),
+                                            les_resolved.at(block.id()),
+                                            config_.turbulence);
+            }
+            HaloExchanger(mpi_, topology_, ranks, les_dynamic_moment_components)
+                .exchange(moment_registry);
+            for (auto& [block, field] : les_moments) {
+                static_cast<void>(block);
+                complete_les_fixed_stencil_ghosts(field);
+            }
+            for (const auto& block : local_blocks_.blocks()) {
+                compute_les_closure_field(les_closures.at(block.id()),
+                                          les_resolved.at(block.id()),
+                                          les_moments.at(block.id()),
+                                          config_.turbulence);
+            }
+            HaloExchanger(mpi_, topology_, ranks, les_closure_components)
+                .exchange(closure_registry);
+            for (auto& [block, field] : les_closures) {
+                static_cast<void>(block);
+                complete_les_fixed_stencil_ghosts(field);
+            }
+        }
     }
 
     const bool needs_viscous = requests_viscous_quantity(config_.output.boundary);
@@ -733,6 +814,7 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
                         Vector3 stress_normal {};
                         Vector3 temperature_gradient {};
                         Real thermal_coefficient = 1.0;
+                        Real model_viscosity_ratio = 0.0;
                         if (needs_thermal) {
                             Real high_order_temperature = std::numeric_limits<Real>::quiet_NaN();
                             try {
@@ -780,7 +862,10 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
                                 patch.face.axis,
                                 face,
                                 &patch,
-                                turbulence_model.get());
+                                turbulence_model.get(),
+                                les_closures.empty() ? nullptr
+                                                     : &les_closures.at(block.id()));
+                            model_viscosity_ratio = turbulence.eddy_viscosity / viscosity;
                             const auto cartesian = compute_viscous_cartesian_flux(
                                 trace,
                                 quantities_.transport,
@@ -829,15 +914,31 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
                                                              quantities_.reference.reynolds(),
                                                              config_.run.viscous,
                                                              config_.output.boundary);
+                        sample.physics.model_viscosity_ratio = model_viscosity_ratio;
                         const bool rans_transport
                             = config_.turbulence.kind == TurbulenceModelKind::SaNegative
                             || config_.turbulence.kind == TurbulenceModelKind::KOmegaSst
                             || config_.turbulence.kind == TurbulenceModelKind::KEpsilon;
-                        if (rans_transport && no_slip_wall(patch.type)) {
+                        const bool les = turbulence_model->family()
+                            == TurbulenceModelFamily::LesAlgebraic;
+                        if ((rans_transport || les) && no_slip_wall(patch.type)) {
                             const Real density = block.flow.temperature_primitive(
                                 nearest.i, nearest.j, nearest.k, temperature_density);
-                            const Real wall_distance
-                                = block.turbulence.at(nearest, "wall_distance");
+                            Real wall_distance = 0.0;
+                            if (rans_transport) {
+                                wall_distance = block.turbulence.at(nearest, "wall_distance");
+                            } else {
+                                const auto& centers = metric.cell_coordinates();
+                                const std::array<Real, 3> delta {{
+                                    centers.x(nearest.i, nearest.j, nearest.k)
+                                        - sample.center[0],
+                                    centers.y(nearest.i, nearest.j, nearest.k)
+                                        - sample.center[1],
+                                    centers.z(nearest.i, nearest.j, nearest.k)
+                                        - sample.center[2],
+                                }};
+                                wall_distance = -dot(delta, normal);
+                            }
                             std::optional<Real> prescribed_y_plus;
                             if (config_.turbulence.wall_treatment
                                 == WallTreatment::WallFunction) {
