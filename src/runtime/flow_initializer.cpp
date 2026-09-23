@@ -368,6 +368,41 @@ TemperaturePrimitiveState manufactured_state(const InitialConditionConfig& confi
                             dimension);
 }
 
+TemperaturePrimitiveState taylor_green_state(const InitialConditionConfig& config,
+                                              Real x,
+                                              Real y,
+                                              Real z,
+                                              const GasModel& gas,
+                                              const ReferenceScales& reference,
+                                              const NumericalFloors& floors,
+                                              int dimension)
+{
+    if (dimension != 3) {
+        throw FlowInitializationError("Taylor-Green vortex requires three dimensions");
+    }
+    const Real amplitude = config.parameter("beta", 0.1);
+    const Real phase_x = 2.0 * pi * x;
+    const Real phase_y = 2.0 * pi * y;
+    const Real phase_z = 2.0 * pi * z;
+    const Real u = amplitude * std::sin(phase_x) * std::cos(phase_y) * std::cos(phase_z);
+    const Real v = -amplitude * std::cos(phase_x) * std::sin(phase_y) * std::cos(phase_z);
+    const Real pressure_pattern
+        = (std::cos(2.0 * phase_x) + std::cos(2.0 * phase_y))
+        * (std::cos(2.0 * phase_z) + 2.0);
+    const Real temperature = config.parameter("temperature", 1.0)
+        + gas.gamma() * reference.mach() * reference.mach() * amplitude * amplitude
+            * pressure_pattern / 16.0;
+    return from_temperature(config.parameter("rho", 1.0),
+                            u,
+                            v,
+                            0.0,
+                            temperature,
+                            gas,
+                            reference,
+                            floors,
+                            dimension);
+}
+
 } // namespace
 
 TemperaturePrimitiveState FlowInitializer::evaluate(const InitialConditionConfig& config,
@@ -410,6 +445,16 @@ TemperaturePrimitiveState FlowInitializer::evaluate(const InitialConditionConfig
     }
     if (config.type == "manufactured_periodic") {
         return manufactured_state(config,
+                                  coordinates[0],
+                                  coordinates[1],
+                                  coordinates[2],
+                                  gas,
+                                  reference,
+                                  floors,
+                                  dimension);
+    }
+    if (config.type == "taylor_green_vortex") {
+        return taylor_green_state(config,
                                   coordinates[0],
                                   coordinates[1],
                                   coordinates[2],

@@ -20,13 +20,30 @@ void check_cgns(int status, const char* operation)
     }
 }
 
-std::vector<double> read_field(int file, const char* name, const std::array<cgsize_t, 9>& size)
+std::vector<double> read_field(int file,
+                               int zone,
+                               int dimension,
+                               const char* name,
+                               const std::array<cgsize_t, 9>& size)
 {
-    const auto count = static_cast<std::size_t>(size[2] * size[3]);
+    std::size_t count = 1;
+    std::array<cgsize_t, 3> lower {{1, 1, 1}};
+    std::array<cgsize_t, 3> upper {{1, 1, 1}};
+    for (int axis = 0; axis < dimension; ++axis) {
+        upper[static_cast<std::size_t>(axis)]
+            = size[static_cast<std::size_t>(dimension + axis)];
+        count *= static_cast<std::size_t>(upper[static_cast<std::size_t>(axis)]);
+    }
     std::vector<double> values(count);
-    cgsize_t lower[2] = {1, 1};
-    cgsize_t upper[2] = {size[2], size[3]};
-    check_cgns(cg_field_read(file, 1, 1, 1, name, RealDouble, lower, upper, values.data()),
+    check_cgns(cg_field_read(file,
+                             1,
+                             zone,
+                             1,
+                             name,
+                             RealDouble,
+                             lower.data(),
+                             upper.data(),
+                             values.data()),
                "cg_field_read comparison");
     return values;
 }
@@ -49,21 +66,29 @@ int main(int argc, char** argv)
         check_cgns(cg_open(argv[2], CG_MODE_READ, &actual_file), "cg_open actual field");
         int expected_zones = 0;
         int actual_zones = 0;
+        int expected_dimension = 0;
+        int expected_physical_dimension = 0;
+        int actual_dimension = 0;
+        int actual_physical_dimension = 0;
+        char expected_base[33] = {};
+        char actual_base[33] = {};
+        check_cgns(cg_base_read(expected_file,
+                                1,
+                                expected_base,
+                                &expected_dimension,
+                                &expected_physical_dimension),
+                   "cg_base_read expected");
+        check_cgns(cg_base_read(actual_file,
+                                1,
+                                actual_base,
+                                &actual_dimension,
+                                &actual_physical_dimension),
+                   "cg_base_read actual");
+        WCNS_REQUIRE(expected_dimension == actual_dimension);
+        WCNS_REQUIRE(expected_physical_dimension == actual_physical_dimension);
         check_cgns(cg_nzones(expected_file, 1, &expected_zones), "cg_nzones expected");
         check_cgns(cg_nzones(actual_file, 1, &actual_zones), "cg_nzones actual");
-        WCNS_REQUIRE(expected_zones == 1);
         WCNS_REQUIRE(actual_zones == expected_zones);
-        std::array<cgsize_t, 9> expected_size {{}};
-        std::array<cgsize_t, 9> actual_size {{}};
-        char expected_zone[33] = {};
-        char actual_zone[33] = {};
-        check_cgns(cg_zone_read(expected_file, 1, 1, expected_zone, expected_size.data()),
-                   "cg_zone_read expected");
-        check_cgns(cg_zone_read(actual_file, 1, 1, actual_zone, actual_size.data()),
-                   "cg_zone_read actual");
-        WCNS_REQUIRE(std::string(expected_zone) == actual_zone);
-        WCNS_REQUIRE(expected_size[2] == actual_size[2]);
-        WCNS_REQUIRE(expected_size[3] == actual_size[3]);
         std::vector<std::string> fields {
             "Density",
             "MomentumX",
@@ -75,15 +100,33 @@ int main(int argc, char** argv)
             fields.emplace_back(argv[argument]);
         }
         double maximum_difference = 0.0;
-        for (const auto& field : fields) {
-            const auto expected = read_field(expected_file, field.c_str(), expected_size);
-            const auto actual = read_field(actual_file, field.c_str(), actual_size);
-            WCNS_REQUIRE(expected.size() == actual.size());
-            for (std::size_t index = 0; index < expected.size(); ++index) {
-                WCNS_REQUIRE(std::isfinite(expected[index]));
-                WCNS_REQUIRE(std::isfinite(actual[index]));
-                maximum_difference
-                    = std::max(maximum_difference, std::abs(expected[index] - actual[index]));
+        for (int zone = 1; zone <= expected_zones; ++zone) {
+            std::array<cgsize_t, 9> expected_size {{}};
+            std::array<cgsize_t, 9> actual_size {{}};
+            char expected_zone[33] = {};
+            char actual_zone[33] = {};
+            check_cgns(cg_zone_read(
+                           expected_file, 1, zone, expected_zone, expected_size.data()),
+                       "cg_zone_read expected");
+            check_cgns(cg_zone_read(actual_file, 1, zone, actual_zone, actual_size.data()),
+                       "cg_zone_read actual");
+            WCNS_REQUIRE(std::string(expected_zone) == actual_zone);
+            for (int axis = 0; axis < expected_dimension; ++axis) {
+                WCNS_REQUIRE(expected_size[static_cast<std::size_t>(expected_dimension + axis)]
+                             == actual_size[static_cast<std::size_t>(actual_dimension + axis)]);
+            }
+            for (const auto& field : fields) {
+                const auto expected = read_field(
+                    expected_file, zone, expected_dimension, field.c_str(), expected_size);
+                const auto actual = read_field(
+                    actual_file, zone, actual_dimension, field.c_str(), actual_size);
+                WCNS_REQUIRE(expected.size() == actual.size());
+                for (std::size_t index = 0; index < expected.size(); ++index) {
+                    WCNS_REQUIRE(std::isfinite(expected[index]));
+                    WCNS_REQUIRE(std::isfinite(actual[index]));
+                    maximum_difference = std::max(
+                        maximum_difference, std::abs(expected[index] - actual[index]));
+                }
             }
         }
         std::cout << "field comparison max_abs=" << maximum_difference

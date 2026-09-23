@@ -170,6 +170,22 @@ void test_flow_initializer()
         WCNS_REQUIRE_NEAR(center[4], 1.001, 1.0e-14);
         WCNS_REQUIRE_NEAR(pressure_primitive(center, gas, reference, floors, 3)[4], 0.8, 1.0e-14);
     }
+    // 受限 TGV 初场用于 LES 短时方向性检查，不替代长时间湍流验证。
+    {
+        InitialConditionConfig config;
+        config.type = "taylor_green_vortex";
+        config.parameters = {{"beta", 0.2}, {"rho", 1.0}, {"temperature", 1.0}};
+        const auto first
+            = FlowInitializer::evaluate(config, {0.125, 0.25, 0.375}, gas, reference, floors, 3);
+        const auto periodic
+            = FlowInitializer::evaluate(config, {1.125, 0.25, 0.375}, gas, reference, floors, 3);
+        for (std::size_t component = 0; component < first.size(); ++component) {
+            WCNS_REQUIRE_NEAR(first[component], periodic[component], 2.0e-14);
+        }
+        WCNS_REQUIRE_NEAR(first[3], 0.0, 0.0);
+        WCNS_REQUIRE(first[0] > 0.0 && first[4] > 0.0);
+        WCNS_REQUIRE_THROWS(CaseConfigurationError, config.validate(2));
+    }
     // 验证槽道湍流初场严格满足三维、壁面静止、x/z 周期和确定性低波数扰动契约。
     {
         constexpr Real channel_pi = 3.141592653589793238462643383279502884;

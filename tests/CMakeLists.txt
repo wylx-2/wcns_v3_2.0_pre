@@ -166,6 +166,23 @@ if(WCNS_ENABLE_CGNS)
             )
         endforeach()
     endforeach()
+    set(WCNS_LES_ZERO_CASE les-zero-none)
+    set(WCNS_LES_ZERO_OUTPUT les-zero-none)
+    set(WCNS_LES_ZERO_MODEL "turbulence.model = none")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/les_zero_equivalence_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/les_zero_none.wcns
+        @ONLY
+    )
+    set(WCNS_LES_ZERO_CASE les-zero-smagorinsky)
+    set(WCNS_LES_ZERO_OUTPUT les-zero-smagorinsky)
+    set(WCNS_LES_ZERO_MODEL
+        "turbulence.model = smagorinsky\nles.filter.type = box3_tensor\nles.filter.width_ratio = 1\nles.sgs_prandtl = 0.9\nles.smagorinsky.cs = 0\nles.smagorinsky.wall_damping = none")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/les_zero_equivalence_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/les_zero_smagorinsky.wcns
+        @ONLY
+    )
     set(WCNS_LES_STATS_CASE les-statistics-source)
     set(WCNS_LES_STATS_MAX_STEPS 1)
     set(WCNS_LES_STATS_END_TIME 0.001)
@@ -632,6 +649,39 @@ if(WCNS_ENABLE_CGNS)
             PROPERTIES FIXTURES_REQUIRED cgns_files
         )
     endforeach()
+    add_test(
+        NAME wcns.run.les_zero.none.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_zero_none.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_zero.none.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_zero_none
+    )
+    add_test(
+        NAME wcns.run.les_zero.smagorinsky.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_zero_smagorinsky.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_zero.smagorinsky.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_zero_smagorinsky
+    )
+    add_test(
+        NAME wcns.check.les_zero_equivalence.serial
+        COMMAND wcns_cgns_field_compare
+            ${CMAKE_CURRENT_BINARY_DIR}/les-zero-none/les-zero-none.field.step00000001.time1p000000000eM05.cgns
+            ${CMAKE_CURRENT_BINARY_DIR}/les-zero-smagorinsky/les-zero-smagorinsky.field.step00000001.time1p000000000eM05.cgns
+            0
+    )
+    set_tests_properties(
+        wcns.check.les_zero_equivalence.serial
+        PROPERTIES FIXTURES_REQUIRED "les_zero_none;les_zero_smagorinsky"
+    )
     add_test(
         NAME wcns.run.les_statistics.source.serial
         COMMAND wcns_run

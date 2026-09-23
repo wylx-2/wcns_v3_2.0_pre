@@ -759,6 +759,7 @@ void InitialConditionConfig::validate(int dimension) const
         "poiseuille",
         "linear_conduction",
         "manufactured_periodic",
+        "taylor_green_vortex",
         "double_mach_reflection",
         "turbulent_channel",
     };
@@ -796,6 +797,12 @@ void InitialConditionConfig::validate(int dimension) const
                 "turbulent-channel initial data require 3D, y1>y0, positive "
                 "Re_tau/bulk scales/periods and perturbation amplitude in [0,0.5]");
         }
+    }
+    if (type == "taylor_green_vortex"
+        && (dimension != 3 || parameter("beta", 0.1) <= 0.0
+            || parameter("beta", 0.1) > 1.0)) {
+        throw CaseConfigurationError(
+            "Taylor-Green initial data require 3D and beta in (0,1]");
     }
     if (type == "couette" || type == "poiseuille" || type == "linear_conduction") {
         const Real y0 = parameter("y0", 0.0);
