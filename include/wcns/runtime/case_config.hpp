@@ -238,6 +238,17 @@ struct CheckpointOutputConfig {
     [[nodiscard]] std::string summary() const;
 };
 
+struct TimeStatisticsConfig {
+    bool enabled = false;
+    Real start_time = 0.0;
+    Real end_time = 0.0;
+    std::size_t every_steps = 1;
+
+    void validate(RunMode mode, bool instantaneous_statistics_enabled) const;
+    [[nodiscard]] std::string summary() const;
+    [[nodiscard]] std::string restart_signature(const std::vector<std::string>& quantities) const;
+};
+
 struct OutputConfig {
     std::string directory = "output";
     bool allow_existing = false;
@@ -296,6 +307,7 @@ struct CaseConfig {
     SourceTermConfig source_terms;
     CaseRunConfig run;
     OutputConfig output;
+    TimeStatisticsConfig time_statistics;
     std::string restart_path;
 
     [[nodiscard]] static CaseConfig from_text(const std::string& text);
@@ -310,6 +322,7 @@ struct CaseConfig {
     [[nodiscard]] std::string summary() const;
     [[nodiscard]] std::string restart_signature() const;
     [[nodiscard]] std::string legacy_v1_restart_signature() const;
+    [[nodiscard]] std::string time_statistics_identity() const;
     [[nodiscard]] std::uint64_t digest() const noexcept { return digest_; }
 
 private:

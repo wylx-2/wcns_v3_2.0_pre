@@ -468,8 +468,20 @@ int main(int argc, char** argv)
         };
         const auto conservation_weights
             = wcns::GlobalConservationWeights::build(partitioned.global_mesh, profile);
+        std::unique_ptr<wcns::AcceptedTimeStatistics> time_statistics;
+        if (config.time_statistics.enabled) {
+            time_statistics = std::make_unique<wcns::AcceptedTimeStatistics>(
+                config.time_statistics_identity(), config.output.statistics.quantities.size());
+        }
         wcns::CheckpointService checkpoint(
-            mpi, config, plan, local_blocks, metrics, quantity_context, mesh_name);
+            mpi,
+            config,
+            plan,
+            local_blocks,
+            metrics,
+            quantity_context,
+            mesh_name,
+            time_statistics.get());
         wcns::SimulationInitialState simulation_initial;
         if (config.restart_path.empty()) {
             wcns::FlowInitializer::initialize_local_blocks(
@@ -581,7 +593,8 @@ int main(int argc, char** argv)
                 }
                 return {};
             },
-            std::move(statistic_registry));
+            std::move(statistic_registry),
+            time_statistics.get());
         wcns::CompositeSimulationObserver observer;
         observer.add(console);
         observer.add(output);

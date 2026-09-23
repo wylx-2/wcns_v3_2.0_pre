@@ -465,6 +465,11 @@ const std::set<std::string>& fixed_keys()
         "output.statistics.write_initial",
         "output.statistics.write_final",
         "output.statistics.quantities",
+        "statistics.time.enabled",
+        "statistics.time.start",
+        "statistics.time.end",
+        "statistics.time.every_steps",
+        "statistics.time.weight",
         "output.boundary.enabled",
         "output.boundary.format",
         "output.boundary.every_steps",
@@ -1265,6 +1270,51 @@ std::string CheckpointOutputConfig::summary() const
         + ')';
 }
 
+void TimeStatisticsConfig::validate(RunMode mode,
+                                    bool instantaneous_statistics_enabled) const
+{
+    if (!enabled) return;
+    if (mode != RunMode::Unsteady) {
+        throw CaseConfigurationError("time statistics require run.mode=unsteady");
+    }
+    if (!instantaneous_statistics_enabled) {
+        throw CaseConfigurationError(
+            "time statistics require output.statistics.enabled=true");
+    }
+    if (!std::isfinite(start_time) || !std::isfinite(end_time) || start_time < 0.0
+        || end_time <= start_time || every_steps == 0) {
+        throw CaseConfigurationError(
+            "time statistics require 0 <= start < end and every_steps > 0");
+    }
+}
+
+std::string TimeStatisticsConfig::summary() const
+{
+    std::ostringstream result;
+    result << "time_statistics(enabled=" << (enabled ? "true" : "false");
+    if (enabled) {
+        result << std::setprecision(17) << ",start=" << start_time << ",end=" << end_time
+               << ",every_steps=" << every_steps << ",weight=accepted_dt";
+    }
+    result << ')';
+    return result.str();
+}
+
+std::string
+TimeStatisticsConfig::restart_signature(const std::vector<std::string>& quantities) const
+{
+    if (!enabled) return "time_statistics=disabled";
+    std::ostringstream result;
+    result << std::setprecision(17) << "time_statistics=v1,start=" << start_time
+           << ",end=" << end_time << ",every_steps=" << every_steps
+           << ",weight=accepted_dt,quantities=";
+    for (std::size_t index = 0; index < quantities.size(); ++index) {
+        if (index != 0) result << ':';
+        result << quantities[index];
+    }
+    return result.str();
+}
+
 void OutputConfig::validate(bool viscous) const
 {
     if (directory.empty()) {
@@ -1393,7 +1443,7 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     result.schema_version = static_cast<int>(version);
-    const std::array<const char*, 38> v2_keys {{
+    const std::array<const char*, 43> v2_keys {{
         "turbulence.model",
         "turbulence.experimental",
         "turbulence.prandtl",
@@ -1432,6 +1482,11 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         "preconditioner.type",
         "preconditioner.mach_cutoff",
         "preconditioner.viscous_cutoff",
+        "statistics.time.enabled",
+        "statistics.time.start",
+        "statistics.time.end",
+        "statistics.time.every_steps",
+        "statistics.time.weight",
     }};
     if (version == 1) {
         for (const auto* key : v2_keys) {
@@ -1960,6 +2015,19 @@ CaseConfig CaseConfig::from_text(const std::string& text)
     result.output.statistics.schedule = parse_schedule(entries, "output.statistics", true);
     result.output.statistics.quantities
         = optional_string_list(entries, "output.statistics.quantities");
+    result.time_statistics.enabled
+        = optional_bool(entries, "statistics.time.enabled", false);
+    result.time_statistics.start_time
+        = optional_real(entries, "statistics.time.start", 0.0);
+    result.time_statistics.end_time
+        = optional_real(entries, "statistics.time.end", result.run.end_time);
+    result.time_statistics.every_steps
+        = optional_size(entries, "statistics.time.every_steps", 1);
+    if (const auto iterator = entries.find("statistics.time.weight");
+        iterator != entries.end() && iterator->second != "accepted_dt") {
+        throw CaseConfigurationError(
+            "statistics.time.weight must be accepted_dt");
+    }
     result.output.boundary.enabled = optional_bool(entries, "output.boundary.enabled", false);
     if (const auto iterator = entries.find("output.boundary.format"); iterator != entries.end()) {
         result.output.boundary.format = parse_series_output_format(iterator->second);
@@ -2167,6 +2235,11 @@ void CaseConfig::validate() const
     initial.validate();
     run.validate();
     output.validate(run.viscous);
+    time_statistics.validate(run.mode, output.statistics.enabled);
+    if (time_statistics.enabled && output.statistics.quantities.empty()) {
+        throw CaseConfigurationError(
+            "time statistics require at least one output.statistics quantity");
+    }
     const std::set<std::string> rans_wall_quantities {
         "wall_distance", "friction_velocity", "wall_y_plus", "wall_y_plus_class"};
     const bool rans_transport = turbulence.kind == TurbulenceModelKind::SaNegative
@@ -2330,6 +2403,7 @@ std::string CaseConfig::summary() const
                << preconditioner.summary();
     }
     result << ',' << source_terms.summary() << ',' << run.summary() << ',' << output.summary()
+           << ',' << time_statistics.summary()
            << ",restart.path=" << (restart_path.empty() ? "<none>" : restart_path) << ",digest=0x"
            << std::hex << digest_ << ')';
     return result.str();
@@ -2394,8 +2468,16 @@ std::string CaseConfig::restart_signature() const
                              << metric_options.maximum_reference_relative_difference;
             result += metric_signature.str();
         }
+        if (time_statistics.enabled) {
+            result += ";" + time_statistics_identity();
+        }
     }
     return result;
+}
+
+std::string CaseConfig::time_statistics_identity() const
+{
+    return time_statistics.restart_signature(output.statistics.quantities);
 }
 
 } // namespace wcns

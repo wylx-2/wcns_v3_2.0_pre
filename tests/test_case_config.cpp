@@ -244,6 +244,33 @@ void test_case_config()
         missing.erase(missing.find(required), required.size());
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(missing));
+
+        auto time_statistics = valid_les_config("wale");
+        const auto statistics_enabled
+            = time_statistics.find("output.statistics.enabled = false");
+        time_statistics.replace(
+            statistics_enabled,
+            std::string("output.statistics.enabled = false").size(),
+            "output.statistics.enabled = true\n"
+            "output.statistics.quantities = total_mass,total_energy\n"
+            "statistics.time.enabled = true\n"
+            "statistics.time.start = 0.05\n"
+            "statistics.time.end = 0.20\n"
+            "statistics.time.every_steps = 2\n"
+            "statistics.time.weight = accepted_dt");
+        const auto statistics_config
+            = wcns::CaseConfig::from_text(time_statistics);
+        WCNS_REQUIRE(statistics_config.time_statistics.enabled);
+        WCNS_REQUIRE(statistics_config.time_statistics.every_steps == 2);
+        WCNS_REQUIRE(statistics_config.time_statistics_identity().find(
+                         "weight=accepted_dt,quantities=total_mass:total_energy")
+                     != std::string::npos);
+        auto invalid_weight = time_statistics;
+        const auto accepted_weight = invalid_weight.find("accepted_dt");
+        invalid_weight.replace(
+            accepted_weight, std::string("accepted_dt").size(), "pseudo_iteration");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(invalid_weight));
     }
     {
         const auto config = wcns::CaseConfig::from_text(valid_v2_config());

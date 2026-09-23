@@ -425,6 +425,7 @@ struct RootCheckpointData {
     CheckpointRestoreResult restored;
     bool implicit_history_valid = false;
     Real implicit_history_time_step = 0.0;
+    std::string time_statistics;
     std::vector<Real> rank_payload;
     std::vector<std::size_t> rank_counts;
 };
@@ -464,7 +465,8 @@ CheckpointService::CheckpointService(const MpiRuntime& mpi,
                                      LocalBlockSet& local_blocks,
                                      const BlockMetricMap& metrics,
                                      QuantityContext quantity_context,
-                                     std::string mesh_path)
+                                     std::string mesh_path,
+                                     AcceptedTimeStatistics* time_statistics)
     : mpi_(mpi)
     , config_(config)
     , partition_(partition)
@@ -473,7 +475,16 @@ CheckpointService::CheckpointService(const MpiRuntime& mpi,
     , quantity_context_(std::move(quantity_context))
     , mesh_path_(std::move(mesh_path))
     , registry_(FieldQuantityRegistry::create_builtin())
+    , time_statistics_(time_statistics)
 {
+    if ((time_statistics_ != nullptr) != config_.time_statistics.enabled) {
+        throw std::invalid_argument(
+            "checkpoint time-statistics state differs from configuration");
+    }
+    if (time_statistics_ != nullptr
+        && time_statistics_->state().identity != config_.time_statistics_identity()) {
+        throw std::invalid_argument("checkpoint time-statistics identity differs");
+    }
     quantity_context_.dimensional = false;
     const auto model = TurbulenceModelRegistry::create_builtin().create(config_.turbulence);
     for (const auto& descriptor : model->fields()) {
@@ -594,6 +605,10 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
         }());
         write_descriptor(file->id(), "WCNS_MeshSignature", mesh_signature_);
         write_descriptor(file->id(), "WCNS_RestartSignature", config_.restart_signature());
+        if (time_statistics_ != nullptr) {
+            write_descriptor(
+                file->id(), "WCNS_TimeStatistics", time_statistics_->serialize());
+        }
         if (implicit_checkpoint) {
             write_descriptor(file->id(), "WCNS_ImplicitHistoryValid", history_valid ? "1" : "0");
             std::ostringstream history_step;
@@ -816,6 +831,16 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
             root.restored.initial.time = parse_real(required(descriptors, "WCNS_Time"), "time");
             root.restored.previous_time_step
                 = parse_real(required(descriptors, "WCNS_TimeStep"), "time step");
+            if (time_statistics_ != nullptr) {
+                root.time_statistics = required(descriptors, "WCNS_TimeStatistics");
+                const auto restored_statistics
+                    = AcceptedTimeStatistics::deserialize(root.time_statistics);
+                if (restored_statistics.state().identity
+                    != config_.time_statistics_identity()) {
+                    throw std::runtime_error(
+                        "checkpoint time-statistics identity differs");
+                }
+            }
             if (checkpoint_version(config_) == implicit_checkpoint_version) {
                 root.implicit_history_valid
                     = required(descriptors, "WCNS_ImplicitHistoryValid") == "1";
@@ -1032,6 +1057,17 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
     }
     if (status.rfind("OK\n", 0) != 0) {
         throw std::runtime_error("invalid checkpoint restore broadcast");
+    }
+    if (time_statistics_ != nullptr) {
+        auto serialized_statistics = mpi_.broadcast_string(
+            mpi_.rank() == 0 ? std::move(root.time_statistics) : std::string {});
+        auto restored_statistics
+            = AcceptedTimeStatistics::deserialize(serialized_statistics);
+        if (restored_statistics.state().identity
+            != config_.time_statistics_identity()) {
+            throw std::runtime_error("checkpoint time-statistics identity differs");
+        }
+        *time_statistics_ = std::move(restored_statistics);
     }
     std::istringstream header(status.substr(3));
     std::string line;

@@ -166,6 +166,39 @@ if(WCNS_ENABLE_CGNS)
             )
         endforeach()
     endforeach()
+    set(WCNS_LES_STATS_CASE les-statistics-source)
+    set(WCNS_LES_STATS_MAX_STEPS 1)
+    set(WCNS_LES_STATS_END_TIME 0.001)
+    set(WCNS_LES_STATS_OUTPUT les-statistics-source)
+    set(WCNS_LES_STATS_CHECKPOINT true)
+    set(WCNS_LES_STATS_RESTART "# fresh statistics run")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/les_statistics_restart_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_source.wcns
+        @ONLY
+    )
+    foreach(les_stats_rank_label IN ITEMS serial mpi2 mpi4)
+        set(WCNS_LES_STATS_CASE les-statistics-continuous-${les_stats_rank_label})
+        set(WCNS_LES_STATS_MAX_STEPS 2)
+        set(WCNS_LES_STATS_END_TIME 0.002)
+        set(WCNS_LES_STATS_OUTPUT les-statistics-continuous-${les_stats_rank_label})
+        set(WCNS_LES_STATS_CHECKPOINT false)
+        set(WCNS_LES_STATS_RESTART "# fresh statistics run")
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/les_statistics_restart_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_continuous_${les_stats_rank_label}.wcns
+            @ONLY
+        )
+        set(WCNS_LES_STATS_CASE les-statistics-restart-${les_stats_rank_label})
+        set(WCNS_LES_STATS_OUTPUT les-statistics-restart-${les_stats_rank_label})
+        set(WCNS_LES_STATS_RESTART
+            "restart.path = ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-source/les-statistics-source.checkpoint.latest.cgns")
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/les_statistics_restart_case.wcns.in
+            ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_restart_${les_stats_rank_label}.wcns
+            @ONLY
+        )
+    endforeach()
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_sa_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/implicit_sa_steady.wcns
@@ -591,6 +624,50 @@ if(WCNS_ENABLE_CGNS)
             PROPERTIES FIXTURES_REQUIRED cgns_files
         )
     endforeach()
+    add_test(
+        NAME wcns.run.les_statistics.source.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_source.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_statistics.source.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_statistics_source
+    )
+    add_test(
+        NAME wcns.run.les_statistics.continuous.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_continuous_serial.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_statistics.continuous.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            FIXTURES_SETUP les_statistics_continuous_serial
+    )
+    add_test(
+        NAME wcns.run.les_statistics.restart.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_restart_serial.wcns
+    )
+    set_tests_properties(
+        wcns.run.les_statistics.restart.serial
+        PROPERTIES
+            FIXTURES_REQUIRED les_statistics_source
+            FIXTURES_SETUP les_statistics_restart_serial
+    )
+    add_test(
+        NAME wcns.check.les_statistics.restart.serial
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/check_les_time_statistics.py
+            ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-continuous-serial/les-statistics-continuous-serial.time_statistics.r1.txt
+            ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-restart-serial/les-statistics-restart-serial.time_statistics.r1.txt
+    )
+    set_tests_properties(
+        wcns.check.les_statistics.restart.serial
+        PROPERTIES FIXTURES_REQUIRED "les_statistics_continuous_serial;les_statistics_restart_serial"
+    )
     add_test(
         NAME wcns.run.implicit_sa.steady.serial
         COMMAND wcns_run
@@ -1543,6 +1620,42 @@ if(WCNS_ENABLE_CGNS)
                     PROPERTIES FIXTURES_REQUIRED cgns_files
                 )
             endforeach()
+            add_test(
+                NAME wcns.run.les_statistics.continuous.${rank_count}
+                COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                    $<TARGET_FILE:wcns_run>
+                    --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_continuous_mpi${rank_count}.wcns
+            )
+            set_tests_properties(
+                wcns.run.les_statistics.continuous.${rank_count}
+                PROPERTIES
+                    FIXTURES_REQUIRED cgns_files
+                    FIXTURES_SETUP les_statistics_continuous_${rank_count}
+            )
+            add_test(
+                NAME wcns.run.les_statistics.restart.${rank_count}
+                COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}
+                    $<TARGET_FILE:wcns_run>
+                    --config ${CMAKE_CURRENT_BINARY_DIR}/les_statistics_restart_mpi${rank_count}.wcns
+            )
+            set_tests_properties(
+                wcns.run.les_statistics.restart.${rank_count}
+                PROPERTIES
+                    FIXTURES_REQUIRED les_statistics_source
+                    FIXTURES_SETUP les_statistics_restart_${rank_count}
+            )
+            add_test(
+                NAME wcns.check.les_statistics.restart.${rank_count}
+                COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/check_les_time_statistics.py
+                    ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-continuous-serial/les-statistics-continuous-serial.time_statistics.r1.txt
+                    ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-continuous-mpi${rank_count}/les-statistics-continuous-mpi${rank_count}.time_statistics.r${rank_count}.txt
+                    ${CMAKE_CURRENT_BINARY_DIR}/les-statistics-restart-mpi${rank_count}/les-statistics-restart-mpi${rank_count}.time_statistics.r${rank_count}.txt
+            )
+            set_tests_properties(
+                wcns.check.les_statistics.restart.${rank_count}
+                PROPERTIES FIXTURES_REQUIRED "les_statistics_continuous_serial;les_statistics_continuous_${rank_count};les_statistics_restart_${rank_count}"
+            )
             add_test(
                 NAME wcns.run.implicit_sa.steady.${rank_count}
                 COMMAND ${WCNS_MPIEXEC_EXECUTABLE} -n ${rank_count}

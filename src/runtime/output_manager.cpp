@@ -133,6 +133,42 @@ std::vector<std::string> transported_model_names(const TurbulenceModelConfig& co
     return result;
 }
 
+Real mean_density(const StatisticContext& context)
+{
+    Real local_mass = 0.0;
+    Real local_volume = 0.0;
+    for (const auto& block : context.local_blocks.blocks()) {
+        const auto metric = context.metrics.find(block.id());
+        if (metric == context.metrics.end()) {
+            throw std::invalid_argument("time statistics are missing metric data");
+        }
+        const auto& weights = context.conservation_weights.block(block.id()).cell;
+        const auto& jacobian = metric->second.jacobian();
+        const auto extent = block.cell_extent();
+        for (int k = 0; k < extent.nk; ++k) {
+            for (int j = 0; j < extent.nj; ++j) {
+                for (int i = 0; i < extent.ni; ++i) {
+                    const Real volume = weights(i, j, k) * jacobian(i, j, k);
+                    const Real rho = block.flow.conservative(i, j, k, density);
+                    if (!std::isfinite(volume) || volume <= 0.0 || !std::isfinite(rho)
+                        || rho <= context.quantities.floors.density) {
+                        throw PhysicsError(
+                            "time statistics encountered an invalid density or volume");
+                    }
+                    local_volume += volume;
+                    local_mass += volume * rho;
+                }
+            }
+        }
+    }
+    const Real volume = context.mpi.sum(local_volume);
+    const Real mass = context.mpi.sum(local_mass);
+    if (!std::isfinite(volume) || volume <= 0.0 || !std::isfinite(mass) || mass <= 0.0) {
+        throw PhysicsError("time statistics produced an invalid mean density");
+    }
+    return mass / volume;
+}
+
 } // namespace
 
 OutputSchedule::OutputSchedule(OutputScheduleConfig config)
@@ -201,13 +237,15 @@ RuntimeOutputManager::RuntimeOutputManager(const MpiRuntime& mpi,
                                            std::string mesh_signature,
                                            const StatisticContext* statistic_context,
                                            EventWriter event_writer,
-                                           StatisticRegistry statistic_registry)
+                                           StatisticRegistry statistic_registry,
+                                           AcceptedTimeStatistics* time_statistics)
     : mpi_(mpi)
     , config_(config)
     , partition_(partition)
     , mesh_signature_(std::move(mesh_signature))
     , statistic_context_(statistic_context)
     , statistic_registry_(std::move(statistic_registry))
+    , time_statistics_(time_statistics)
     , event_writer_(std::move(event_writer))
     , field_schedule_(config.output.field.schedule)
     , history_schedule_(config.output.history.schedule)
@@ -215,7 +253,16 @@ RuntimeOutputManager::RuntimeOutputManager(const MpiRuntime& mpi,
     , boundary_schedule_(config.output.boundary.schedule)
     , checkpoint_schedule_(config.output.checkpoint.schedule)
     , output_directory_(config.output.directory)
-{ }
+{
+    if ((time_statistics_ != nullptr) != config_.time_statistics.enabled) {
+        throw std::invalid_argument(
+            "runtime output time-statistics state differs from configuration");
+    }
+    if (time_statistics_ != nullptr
+        && time_statistics_->state().identity != config_.time_statistics_identity()) {
+        throw std::invalid_argument("runtime output time-statistics identity differs");
+    }
+}
 
 RuntimeOutputManager::~RuntimeOutputManager()
 {
@@ -359,6 +406,12 @@ void RuntimeOutputManager::prepare_directory()
                 statistics_stream_ << '\n';
             }
         }
+    }
+    if (config_.time_statistics.enabled && mpi_.rank() == 0) {
+        const auto base
+            = safe_name(config_.case_name) + ".time_statistics.r" + std::to_string(mpi_.size());
+        time_statistics_final_path_ = join_path(output_directory_, base + ".txt");
+        time_statistics_temporary_path_ = time_statistics_final_path_ + ".tmp";
     }
 }
 
@@ -561,6 +614,7 @@ void RuntimeOutputManager::on_step(const SimulationState& state, bool residual_c
         write_history(state, residual_checked);
     }
     if (state.stop_reason == StopReason::NumericalFailure) return;
+    sample_time_statistics(state);
     dispatch(
         OutputCategory::Field, field_schedule_, state, false, false, config_.output.field.enabled);
     if (config_.output.statistics.enabled && statistics_schedule_.consume(state, false, false)) {
@@ -615,6 +669,32 @@ void RuntimeOutputManager::write_statistics(const SimulationState& state)
     if (!statistics_stream_) throw std::runtime_error("failed to write statistics");
 }
 
+void RuntimeOutputManager::sample_time_statistics(const SimulationState& state)
+{
+    if (time_statistics_ == nullptr) return;
+    if (statistic_context_ == nullptr) {
+        throw std::runtime_error("time statistics are enabled without a statistic context");
+    }
+    const auto& selection = config_.output.statistics.quantities;
+    if (selection.empty()) {
+        throw std::runtime_error("time statistics require at least one selected quantity");
+    }
+    if (state.step == 0 || state.step % config_.time_statistics.every_steps != 0) return;
+    const Real step_begin = state.time - state.time_step;
+    const Real overlap_begin = std::max(step_begin, config_.time_statistics.start_time);
+    const Real overlap_end = std::min(state.time, config_.time_statistics.end_time);
+    const Real sample_weight = overlap_end - overlap_begin;
+    if (sample_weight <= time_tolerance(overlap_begin, overlap_end)) return;
+
+    std::vector<Real> values;
+    values.reserve(selection.size());
+    for (const auto& name : selection) {
+        values.push_back(statistic_registry_.evaluate(name, *statistic_context_));
+    }
+    static_cast<void>(time_statistics_->sample(
+        state.step, state.time, sample_weight, values, mean_density(*statistic_context_), true));
+}
+
 void RuntimeOutputManager::finish_statistics()
 {
     if (!config_.output.statistics.enabled || mpi_.rank() != 0 || !statistics_stream_.is_open()) {
@@ -626,6 +706,41 @@ void RuntimeOutputManager::finish_statistics()
     atomic_replace(
         statistics_temporary_path_, statistics_final_path_, config_.output.allow_existing);
     record_file(statistics_final_path_);
+}
+
+void RuntimeOutputManager::finish_time_statistics()
+{
+    if (time_statistics_ == nullptr || mpi_.rank() != 0) return;
+    std::ofstream output(time_statistics_temporary_path_, std::ios::out | std::ios::trunc);
+    if (!output) {
+        throw std::runtime_error(
+            "cannot open time-statistics temporary file: " + time_statistics_temporary_path_);
+    }
+    const auto& state = time_statistics_->state();
+    output << "# wcns_time_statistics_v1\n"
+           << "# identity " << state.identity << '\n'
+           << "# accepted_events " << state.accepted_events << '\n'
+           << std::setprecision(17) << "# first_step " << state.first_step << " first_time "
+           << state.first_time << '\n'
+           << "# last_step " << state.last_step << " last_time " << state.last_time << '\n'
+           << "# quantity samples weight mean rms favre_weight favre_mean favre_rms\n";
+    for (std::size_t variable = 0; variable < state.reynolds.size(); ++variable) {
+        const auto& reynolds = state.reynolds[variable];
+        const auto& favre = state.favre[variable];
+        output << config_.output.statistics.quantities[variable] << ' '
+               << reynolds.sample_count << ' ' << reynolds.weight << ' ' << reynolds.mean << ' '
+               << reynolds.rms() << ' ' << favre.weight << ' ' << favre.mean << ' '
+               << favre.rms() << '\n';
+    }
+    output.close();
+    if (!output) {
+        throw std::runtime_error(
+            "failed to write time-statistics file: " + time_statistics_temporary_path_);
+    }
+    atomic_replace(time_statistics_temporary_path_,
+                   time_statistics_final_path_,
+                   config_.output.allow_existing);
+    record_file(time_statistics_final_path_);
 }
 
 void RuntimeOutputManager::write_manifest(const SimulationState& state)
@@ -691,6 +806,15 @@ void RuntimeOutputManager::write_manifest(const SimulationState& state)
            << state.diagnostics.wall_function_minimum_y_plus << '\n'
            << "wall_function_maximum_y_plus="
            << state.diagnostics.wall_function_maximum_y_plus << '\n';
+    if (time_statistics_ != nullptr) {
+        const auto& statistics = time_statistics_->state();
+        output << "time_statistics_identity=" << statistics.identity << '\n'
+               << "time_statistics_accepted_events=" << statistics.accepted_events << '\n'
+               << "time_statistics_first_step=" << statistics.first_step << '\n'
+               << "time_statistics_first_time=" << statistics.first_time << '\n'
+               << "time_statistics_last_step=" << statistics.last_step << '\n'
+               << "time_statistics_last_time=" << statistics.last_time << '\n';
+    }
     for (std::size_t variable = 0; variable < model_names.size(); ++variable) {
         output << model_names[variable] << "_floor_repairs="
                << turbulence_floor_repairs_total_[variable] << '\n'
@@ -741,6 +865,7 @@ void RuntimeOutputManager::on_final(const SimulationState& state)
     }
     finish_history();
     finish_statistics();
+    finish_time_statistics();
     write_manifest(state);
     finalized_ = true;
 }
