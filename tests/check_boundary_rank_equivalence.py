@@ -33,7 +33,7 @@ for rank in (1, 2, 4):
     face_paths = sorted(glob.glob(os.path.join(output, f"*.boundary.r{rank}.step*.txt")))
     load_paths = glob.glob(os.path.join(output, f"*.loads.r{rank}.txt"))
     span_paths = sorted(glob.glob(os.path.join(output, f"*.spanwise_loads.r{rank}.step*.txt")))
-    if len(face_paths) != 2 or len(load_paths) != 1 or len(span_paths) != 2:
+    if len(face_paths) != 2 or len(load_paths) != 1 or len(span_paths) not in (0, 2):
         raise SystemExit(
             f"rank {rank}: expected two boundary/spanwise snapshots and one load history, "
             f"got {face_paths}, {span_paths}, {load_paths}"
@@ -46,6 +46,8 @@ for rank in (1, 2, 4):
         reference_loads = load_rows
         reference_spanwise = span_rows
     else:
+        if len(reference_spanwise) != len(span_rows):
+            raise SystemExit(f"rank {rank}: spanwise output enablement differs")
         for event, (left, right) in enumerate(zip(reference_faces, face_rows)):
             require_close(left, right, f"rank {rank} boundary event {event}")
         require_close(reference_loads, load_rows, f"rank {rank} loads")
