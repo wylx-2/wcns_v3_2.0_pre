@@ -323,6 +323,8 @@ const std::set<std::string>& fixed_keys()
         "partition.allow_idle_ranks",
         "partition.max_load_ratio",
         "partition.min_cells_per_active_direction",
+        "geometry.metric.fallback",
+        "geometry.metric.maximum_reference_relative_difference",
         "initial.type",
         "initial.rho",
         "initial.u",
@@ -376,6 +378,11 @@ const std::set<std::string>& fixed_keys()
         "initial.se_v",
         "initial.se_p",
         "boundary.default",
+        "boundary.point_vortex.enabled",
+        "boundary.point_vortex.lift_coefficient",
+        "boundary.point_vortex.center_x",
+        "boundary.point_vortex.center_y",
+        "boundary.point_vortex.chord",
         "source.enabled",
         "source.models",
         "source.uniform.rho",
@@ -893,6 +900,31 @@ std::string BoundaryPhysicalDataConfig::summary() const
     return text.empty() ? text : text.substr(1);
 }
 
+void FarfieldPointVortexConfig::validate(int schema_version) const
+{
+    if (enabled && schema_version != 2) {
+        throw CaseConfigurationError("farfield point vortex requires schema_version=2");
+    }
+    if (!std::isfinite(lift_coefficient) || !std::isfinite(center[0])
+        || !std::isfinite(center[1]) || !std::isfinite(chord) || chord <= 0.0) {
+        throw CaseConfigurationError("farfield point vortex parameters are invalid");
+    }
+}
+
+std::string FarfieldPointVortexConfig::summary() const
+{
+    std::ostringstream result;
+    result << std::setprecision(17) << "point_vortex(enabled=" << (enabled ? "true" : "false")
+           << ",Cl=" << lift_coefficient << ",center=" << center[0] << ':' << center[1]
+           << ",chord=" << chord << ')';
+    return result.str();
+}
+
+std::string FarfieldPointVortexConfig::restart_signature() const
+{
+    return "farfield_" + summary();
+}
+
 void SteadyConvergenceConfig::validate() const
 {
     if (min_steps == 0 || check_interval_steps == 0 || consecutive_checks == 0) {
@@ -1012,6 +1044,10 @@ void BoundaryOutputConfig::validate(bool viscous) const
         "Cp",
         "Cf",
         "q_wall",
+        "wall_distance",
+        "friction_velocity",
+        "wall_y_plus",
+        "wall_y_plus_class",
         "pressure_traction_x",
         "pressure_traction_y",
         "pressure_traction_z",
@@ -1025,6 +1061,10 @@ void BoundaryOutputConfig::validate(bool viscous) const
     const std::set<std::string> viscous_only {
         "Cf",
         "q_wall",
+        "wall_distance",
+        "friction_velocity",
+        "wall_y_plus",
+        "wall_y_plus_class",
         "viscous_traction_x",
         "viscous_traction_y",
         "viscous_traction_z",
@@ -1624,6 +1664,21 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         throw CaseConfigurationError("partition minimum cells exceed int range");
     }
     result.partition.min_cells_per_active_direction = static_cast<int>(min_cells);
+    if (const auto iterator = entries.find("geometry.metric.fallback");
+        iterator != entries.end()) {
+        if (iterator->second == "strict") {
+            result.metric_options.fallback = MetricFallback::Strict;
+        } else if (iterator->second == "phenglei_finite_volume") {
+            result.metric_options.fallback = MetricFallback::PhengleiFiniteVolume;
+        } else {
+            throw CaseConfigurationError("unknown geometry metric fallback: "
+                                         + iterator->second);
+        }
+    }
+    result.metric_options.maximum_reference_relative_difference = optional_real(
+        entries,
+        "geometry.metric.maximum_reference_relative_difference",
+        result.metric_options.maximum_reference_relative_difference);
 
     result.initial.type = require(entries, "initial.type");
     constexpr std::string_view initial_prefix = "initial.";
@@ -1638,6 +1693,16 @@ CaseConfig CaseConfig::from_text(const std::string& text)
     }
 
     result.default_boundary = parse_boundary_type(require(entries, "boundary.default"));
+    result.farfield_point_vortex.enabled
+        = optional_bool(entries, "boundary.point_vortex.enabled", false);
+    result.farfield_point_vortex.lift_coefficient = optional_real(
+        entries, "boundary.point_vortex.lift_coefficient", 0.0);
+    result.farfield_point_vortex.center = {{
+        optional_real(entries, "boundary.point_vortex.center_x", 0.25),
+        optional_real(entries, "boundary.point_vortex.center_y", 0.0),
+    }};
+    result.farfield_point_vortex.chord
+        = optional_real(entries, "boundary.point_vortex.chord", 1.0);
     for (const auto& [key, value] : entries) {
         if (!dynamic_boundary_key(key)) continue;
         const auto [name, property] = split_boundary_key(key);
@@ -1949,9 +2014,25 @@ void CaseConfig::validate() const
     }
     static_cast<void>(make_profile());
     partition.validate(profile);
+    metric_options.validate(make_profile());
     initial.validate();
     run.validate();
     output.validate(run.viscous);
+    const std::set<std::string> rans_wall_quantities {
+        "wall_distance", "friction_velocity", "wall_y_plus", "wall_y_plus_class"};
+    const bool rans_transport = turbulence.kind == TurbulenceModelKind::SaNegative
+        || turbulence.kind == TurbulenceModelKind::KOmegaSst
+        || turbulence.kind == TurbulenceModelKind::KEpsilon;
+    if (!rans_transport
+        && std::any_of(output.boundary.quantities.begin(),
+                       output.boundary.quantities.end(),
+                       [&](const std::string& quantity) {
+                           return rans_wall_quantities.find(quantity)
+                               != rans_wall_quantities.end();
+                       })) {
+        throw CaseConfigurationError(
+            "RANS wall-unit boundary output requires an active RANS turbulence model");
+    }
     if (output.channel_walls.enabled && !run.viscous) {
         throw CaseConfigurationError("channel-wall friction monitoring requires run.viscous=true");
     }
@@ -1960,6 +2041,18 @@ void CaseConfig::validate() const
     }
     if (default_boundary == BoundaryType::Undefined) {
         throw CaseConfigurationError("default boundary type must be defined");
+    }
+    farfield_point_vortex.validate(schema_version);
+    if (farfield_point_vortex.enabled) {
+        bool has_farfield = default_boundary == BoundaryType::Farfield;
+        for (const auto& [name, type] : boundary_overrides) {
+            static_cast<void>(name);
+            has_farfield = has_farfield || type == BoundaryType::Farfield;
+        }
+        if (!has_farfield) {
+            throw CaseConfigurationError(
+                "enabled farfield point vortex requires a farfield boundary");
+        }
     }
     for (const auto& [name, type] : boundary_overrides) {
         if (name.empty() || type == BoundaryType::Undefined) {
@@ -2070,7 +2163,13 @@ std::string CaseConfig::summary() const
            << reconstruction.summary() << ',' << riemann.summary() << ',' << robustness.summary()
            << ',' << transport.summary() << ',' << gas_model.summary() << ','
            << reference_scales.summary() << ',' << partition.summary() << ',' << initial.summary()
-           << ",boundary.default=" << boundary_type_name(default_boundary);
+           << ",metric(fallback="
+           << (metric_options.fallback == MetricFallback::Strict ? "strict"
+                                                                  : "phenglei_finite_volume")
+           << ",max_reference_relative_difference=" << std::setprecision(17)
+           << metric_options.maximum_reference_relative_difference << ')'
+           << ",boundary.default=" << boundary_type_name(default_boundary) << ','
+           << farfield_point_vortex.summary();
     for (const auto& [name, type] : boundaries) {
         result << ",boundary." << name << '=' << boundary_type_name(type);
     }
@@ -2130,6 +2229,22 @@ std::string CaseConfig::restart_signature() const
     if (schema_version == 2) {
         result += ";" + turbulence.restart_signature() + ";"
             + time_algorithm.restart_signature() + ";" + preconditioner.restart_signature();
+        if (farfield_point_vortex.enabled) {
+            result += ";" + farfield_point_vortex.restart_signature();
+        }
+        const MetricBuildOptions defaults;
+        if (metric_options.fallback != defaults.fallback
+            || metric_options.maximum_reference_relative_difference
+                != defaults.maximum_reference_relative_difference) {
+            std::ostringstream metric_signature;
+            metric_signature << std::setprecision(17) << ";metric_fallback="
+                             << (metric_options.fallback == MetricFallback::Strict
+                                     ? "strict"
+                                     : "phenglei_finite_volume")
+                             << ";metric_reference_tolerance="
+                             << metric_options.maximum_reference_relative_difference;
+            result += metric_signature.str();
+        }
     }
     return result;
 }

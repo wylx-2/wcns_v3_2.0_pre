@@ -473,8 +473,6 @@ void report_field_extrema(const std::string& path, const std::string& field_name
 void report_flatplate_profile(const std::string& path, double target_x)
 {
     const auto file = read_fields(path);
-    std::cout << std::setprecision(17)
-              << "# zone i j x y velocity_x k omega mu_t_over_mu\n";
     for (const auto& [zone_name, zone] : file) {
         if (zone.dimension != 2 || zone.cells.size() != 2) {
             throw std::runtime_error("flatplate-profile requires a two-dimensional field");
@@ -483,9 +481,19 @@ void report_flatplate_profile(const std::string& path, double target_x)
         const auto nj = static_cast<std::size_t>(zone.cells[1]);
         const auto& density = require_field(zone, "Density");
         const auto& momentum_x = require_field(zone, "MomentumX");
-        const auto& k = require_field(zone, "k");
-        const auto& omega = require_field(zone, "omega");
         const auto& viscosity_ratio = require_field(zone, "mu_t_over_mu");
+        const auto& wall_distance = require_field(zone, "wall_distance");
+        const bool two_equation = zone.fields.find("k") != zone.fields.end()
+            && zone.fields.find("omega") != zone.fields.end();
+        const bool sa = zone.fields.find("nu_tilde") != zone.fields.end();
+        if (!two_equation && !sa) {
+            throw std::runtime_error(
+                "flatplate-profile requires either k/omega or nu_tilde");
+        }
+        std::cout << std::setprecision(17)
+                  << (two_equation
+                          ? "# zone i j x y velocity_x k omega mu_t_over_mu wall_distance\n"
+                          : "# zone i j x y velocity_x nu_tilde mu_t_over_mu wall_distance\n");
         for (std::size_t j = 0; j < nj; ++j) {
             std::size_t selected = j * ni;
             double distance = std::numeric_limits<double>::infinity();
@@ -504,9 +512,52 @@ void report_flatplate_profile(const std::string& path, double target_x)
             std::cout << zone_name << ' ' << selected % ni << ' ' << j << ' '
                       << zone.cell_centers[selected][0] << ' '
                       << zone.cell_centers[selected][1] << ' '
-                      << momentum_x[selected] / density[selected] << ' ' << k[selected] << ' '
-                      << omega[selected] << ' ' << viscosity_ratio[selected] << '\n';
+                      << momentum_x[selected] / density[selected] << ' ';
+            if (two_equation) {
+                std::cout << require_field(zone, "k")[selected] << ' '
+                          << require_field(zone, "omega")[selected] << ' ';
+            } else {
+                std::cout << require_field(zone, "nu_tilde")[selected] << ' ';
+            }
+            std::cout << viscosity_ratio[selected] << ' ' << wall_distance[selected] << '\n';
         }
+    }
+}
+
+void report_flatplate_y_plus(const std::string& path,
+                             double target_x,
+                             double skin_friction,
+                             double reynolds)
+{
+    if (!std::isfinite(skin_friction) || skin_friction < 0.0
+        || !std::isfinite(reynolds) || reynolds <= 0.0) {
+        throw std::runtime_error("flatplate-yplus requires Cf >= 0 and Re > 0");
+    }
+    const auto file = read_fields(path);
+    for (const auto& [zone_name, zone] : file) {
+        if (zone.dimension != 2 || zone.cells.size() != 2) {
+            throw std::runtime_error("flatplate-yplus requires a two-dimensional field");
+        }
+        const auto ni = static_cast<std::size_t>(zone.cells[0]);
+        const auto& wall_distance = require_field(zone, "wall_distance");
+        std::size_t selected = 0;
+        double streamwise_distance = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i < ni; ++i) {
+            const double candidate = std::abs(zone.cell_centers[i][0] - target_x);
+            if (candidate < streamwise_distance) {
+                selected = i;
+                streamwise_distance = candidate;
+            }
+        }
+        const double distance = wall_distance[selected];
+        if (!std::isfinite(distance) || distance < 0.0) {
+            throw std::runtime_error("flatplate-yplus encountered an invalid wall distance");
+        }
+        const double y_plus = reynolds * distance * std::sqrt(0.5 * skin_friction);
+        std::cout << std::setprecision(17) << "check=flatplate_y_plus zone=" << zone_name
+                  << " i=" << selected << " x=" << zone.cell_centers[selected][0]
+                  << " wall_distance=" << distance << " Cf=" << skin_friction
+                  << " Re=" << reynolds << " y_plus=" << y_plus << '\n';
     }
 }
 
@@ -1577,6 +1628,11 @@ int main(int argc, char** argv)
             report_field_extrema(argv[2], argv[3]);
         } else if (argc == 4 && std::string(argv[1]) == "flatplate-profile") {
             report_flatplate_profile(argv[2], parse_real(argv[3], "target x"));
+        } else if (argc == 6 && std::string(argv[1]) == "flatplate-yplus") {
+            report_flatplate_y_plus(argv[2],
+                                    parse_real(argv[3], "target x"),
+                                    parse_real(argv[4], "skin-friction coefficient"),
+                                    parse_real(argv[5], "Reynolds number"));
         } else if (argc == 7 && std::string(argv[1]) == "derived") {
             validate_derived_fields(argv[2],
                                     parse_real(argv[3], "gamma"),
@@ -1619,7 +1675,9 @@ int main(int argc, char** argv)
                          "  wcns_validate_release_case field-extrema <field.cgns> "
                          "<field-name>\n"
                          "  wcns_validate_release_case flatplate-profile <field.cgns> "
-                         "<target-x>\n";
+                         "<target-x>\n"
+                         "  wcns_validate_release_case flatplate-yplus <field.cgns> "
+                         "<target-x> <Cf> <Re>\n";
             return EXIT_FAILURE;
         }
         return EXIT_SUCCESS;

@@ -34,6 +34,27 @@ void test_boundary_face_physics()
     WCNS_REQUIRE_NEAR(face.skin_friction_coefficient, -0.4 / 9.0, 1.0e-15);
     WCNS_REQUIRE_NEAR(face.heat_flux_into_wall, -1.0, 1.0e-15);
 
+    auto resolved_wall = face;
+    populate_boundary_wall_units(
+        resolved_wall, {{1.0, 0.0, 0.0}}, 1.25, 0.01, 100.0);
+    const Real expected_friction_velocity = std::sqrt(0.4 / 1.25);
+    WCNS_REQUIRE_NEAR(
+        resolved_wall.friction_velocity, expected_friction_velocity, 1.0e-15);
+    WCNS_REQUIRE_NEAR(resolved_wall.wall_y_plus,
+                      expected_friction_velocity * 0.01 * 1.25 * 100.0 / 1.2,
+                      1.0e-15);
+    WCNS_REQUIRE_NEAR(resolved_wall.wall_y_plus_class, 0.0, 0.0);
+    auto wall_function = face;
+    populate_boundary_wall_units(
+        wall_function, {{1.0, 0.0, 0.0}}, 1.25, 0.01, 100.0, 50.0);
+    WCNS_REQUIRE_NEAR(wall_function.wall_y_plus, 50.0, 0.0);
+    WCNS_REQUIRE_NEAR(wall_function.friction_velocity, 48.0, 1.0e-14);
+    WCNS_REQUIRE_NEAR(wall_function.wall_y_plus_class, 2.0, 0.0);
+    WCNS_REQUIRE_THROWS(
+        PhysicsError,
+        populate_boundary_wall_units(
+            wall_function, {{1.0, 0.0, 0.0}}, 1.25, 0.0, 100.0));
+
     const auto flipped = evaluate_boundary_face_physics(2.0,
                                                         1.5,
                                                         1.2,
@@ -78,6 +99,7 @@ void test_boundary_face_physics()
     WCNS_REQUIRE_NEAR(scales_2d.pressure, 8.0, 0.0);
     WCNS_REQUIRE_NEAR(scales_2d.temperature, 3.0, 0.0);
     WCNS_REQUIRE_NEAR(scales_2d.viscosity, 7.0, 0.0);
+    WCNS_REQUIRE_NEAR(scales_2d.velocity, 2.0, 0.0);
     WCNS_REQUIRE_NEAR(scales_2d.force, 40.0, 0.0);
     WCNS_REQUIRE_NEAR(scales_2d.moment, 200.0, 0.0);
     const Real nondimensional_force = 1.23456789;

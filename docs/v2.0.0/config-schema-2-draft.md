@@ -66,6 +66,12 @@ schema 1 不接受上述 v2 键；其缺省迁移发生在内部语义层，不�
 | `preconditioner.type` | `none|weiss_smith` | 是 | weiss_smith 只配 Roe+LU-SGS |
 | `preconditioner.mach_cutoff` | real in `(0,1]` | 是 | Weiss--Smith 默认 `1e-3` |
 | `preconditioner.viscous_cutoff` | real in `[0,10]` | 是 | Weiss--Smith 默认 1 |
+| `boundary.point_vortex.enabled` | bool | 是 | 默认 false；仅二维 farfield，NACA numerical-analysis 对照用 |
+| `boundary.point_vortex.lift_coefficient` | finite real | 是 | 给定 $C_{L,pv}$，不从迭代载荷反馈 |
+| `boundary.point_vortex.center_x/y` | finite real | 是 | 默认 `(0.25,0)` |
+| `boundary.point_vortex.chord` | positive real | 是 | 默认 1；进入点涡环量 |
+| `geometry.metric.fallback` | `strict|phenglei_finite_volume` | 是 | 默认 strict；后者仅 PH profile 合法且必须报告计数 |
+| `geometry.metric.maximum_reference_relative_difference` | non-negative real | 是 | 默认 0.20；Family II 尖尾缘冻结 0.35 |
 | `statistics.time.*` | start/end/every/weight | 否；累加器身份单列 | 只累计接受物理步 |
 
 ## 3. 合法草案
@@ -86,6 +92,18 @@ preconditioner.type = none
 `local_implicit` 只把解析源 Jacobian 加入每个 SSPRK stage 的局部标量更新，不等同于 LU-SGS，
 也不改变 `time.integrator=ssprk3`。SA-neg 当前要求黏性求解和至少一个 no-slip resolved wall；
 阶段 X 不启用 wall function、trip 或压缩修正。
+
+Family II 带 point-vortex 对照在同一 SA 配置上增加：
+
+```text
+boundary.point_vortex.enabled = true
+boundary.point_vortex.lift_coefficient = 1.09125
+boundary.point_vortex.center_x = 0.25
+boundary.point_vortex.center_y = 0
+boundary.point_vortex.chord = 1
+```
+
+其局部远场速度和拒绝条件见《算法补充》12.11；无 PV 主分支省略这些键。
 
 定常低 Mach SST：
 
@@ -168,3 +186,9 @@ run.mode = unsteady
 字段候选包括 wall distance、`nu_tilde/k/omega/epsilon`、`mu_model/mu`、SGS 应力六分量、
 `Pi_sgs`、动态系数和模型源/耗散。checkpoint 保存模型 descriptor、BDF 历史层、物理/伪迭代、
 动态平均状态及统计累加器。任何缺字段、变体/常数/滤波/积分器签名不同必须在推进前拒绝。
+
+RANS 无滑移壁的 `output.boundary.quantities` 允许
+`wall_distance,friction_velocity,wall_y_plus,wall_y_plus_class`。解析壁面由权威切向黏性牵引
+重构 $u_\tau$ 和 $y^+$；壁面函数路径输出模型实际使用的 $y^+$。分类字段固定为 0（$y^+\le5$）、
+1（$5<y^+<30$）、2（$30\le y^+\le300$）、3（$y^+>300$）。无活动 RANS 模型、无黏性运行
+或非无滑移 patch 请求上述量必须拒绝；分类只供后处理，不允许触发模型自动切换。

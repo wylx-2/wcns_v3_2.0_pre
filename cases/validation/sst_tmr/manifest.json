@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "identity": "wcns-v2-stage-y-sst-2003m-tmr-2026-09-14",
+  "model": {
+    "name": "k_omega_sst",
+    "variant": "NASA-TMR-SST-2003m",
+    "turbulent_prandtl": 0.9,
+    "freestream_eddy_viscosity_ratio": 0.009,
+    "stress_kinetic_energy_term": false,
+    "total_energy_includes_k": false
+  },
+  "assets": [
+    {
+      "path": "flatplategrids-grids.zip",
+      "url": "https://www.nasa.gov/wp-content/uploads/2026/02/flatplategrids-grids.zip",
+      "sha256": "4b0a64c2c1648f696f92bf9a91e64e972e6c32e76e8daa70ffa65ed8dd641412"
+    },
+    {
+      "path": "references/flatplate/cf_as_function_of_x.dat",
+      "url": "https://tmbwg.github.io/turbmodels/FlatPlate_validation/cf_as_function_of_x.dat",
+      "sha256": "97d01033550468819a0f081fee37fc1836ff12a4ad8318f0a80cdc847625a8e2"
+    },
+    {
+      "path": "references/flatplate/cf_K-S.dat",
+      "url": "https://tmbwg.github.io/turbmodels/FlatPlate_validation/cf_K-S.dat",
+      "sha256": "bafbaf7fa7969a945a5ad0935ca90c320ab72f14ba5a08474abffa61356bba2d"
+    },
+    {
+      "path": "references/flatplate/retheta_variation_typical.dat",
+      "url": "https://tmbwg.github.io/turbmodels/FlatPlate_validation/retheta_variation_typical.dat",
+      "sha256": "ea563b33fd85a3ab93b1063a74c2f65f10af22189eca2807aa3ce508f83797a7"
+    },
+    {
+      "path": "references/flatplate/sst-cf_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/FlatPlate_validation/sst-cf_cfl3d.dat",
+      "sha256": "d694caf86c8886ad40016f63e76f738e2c8caa982437ba2a1074d5d58efc2109"
+    },
+    {
+      "path": "references/flatplate/sst-upyp_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/FlatPlate_validation/sst-upyp_cfl3d.dat",
+      "sha256": "2c9715357a45fc792b24ee45c0f2add71ee2e1f54eafd94c38ecdcf53cc34316"
+    },
+    {
+      "path": "references/flatplate/u+y+.dat",
+      "url": "https://tmbwg.github.io/turbmodels/FlatPlate_validation/u%2By%2B.dat",
+      "sha256": "314dc0b5e4aa666ee88ac507eeda8cbeaacc1279057d10430748231264277bcb"
+    },
+    {
+      "path": "references/flatplate/cfl3d_typical_sst.inp",
+      "url": "https://tmbwg.github.io/turbmodels/FlatPlate/SST/cfl3d_typical_sst.inp",
+      "sha256": "5f6b11e6c0fbf0d9cc4bf0ad546f57e2a70d6bc3445486962a44d9fe2eda3535"
+    },
+    {
+      "path": "channelflowgrids-grids.zip",
+      "url": "https://www.nasa.gov/wp-content/uploads/2026/02/channelflowgrids-grids.zip",
+      "sha256": "1499bb44624cb2578cc249e174c48677bfa51ff1c375d2050dd61b415c89f7cc"
+    },
+    {
+      "path": "references/channel/sst_cf_vs_x_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/ChannelFlow/Validation/sst_cf_vs_x_cfl3d.dat",
+      "sha256": "85ff7a3287a5439f08c85c93ef57e9cfa2d030b1128852e3049249a932146401"
+    },
+    {
+      "path": "references/channel/sst_utau_vs_x_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/ChannelFlow/Validation/sst_utau_vs_x_cfl3d.dat",
+      "sha256": "6a1519c1e95ca6db4b629de80d13e1e0206024e4ca05f23cc81f606dc1ead6b9"
+    },
+    {
+      "path": "references/channel/sst_u_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/ChannelFlow/Validation/sst_u_cfl3d.dat",
+      "sha256": "2044b03eb6c97e2d064c5e66070d0dbb409817c237efe89a3681be3d6c6445f6"
+    },
+    {
+      "path": "references/channel/sst_u+y+KM_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/ChannelFlow/Validation/sst_u%2By%2BKM_cfl3d.dat",
+      "sha256": "f2a5986a63d07dbf6196dc4b5f4ed7f035e3a44c3755363346f11b2e65747a1d"
+    },
+    {
+      "path": "references/channel/sst_mut_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/ChannelFlow/Validation/sst_mut_cfl3d.dat",
+      "sha256": "a64044241ebfd9bb7f76224d71a99b8f564133a0c8c327d5ed1d1df006cf0285"
+    },
+    {
+      "path": "references/channel/sst_plus_cfl3d.dat",
+      "url": "https://tmbwg.github.io/turbmodels/ChannelFlow/Validation/sst_plus_cfl3d.dat",
+      "sha256": "914a4aa6d50c05a59f95ad8857aad2daa7b8c685a351d152b1d6d0a64b71f67b"
+    },
+    {
+      "path": "references/channel/sst_cfl3d_typical.inp",
+      "url": "https://tmbwg.github.io/turbmodels/ChannelFlow/Validation/sst_cfl3d_typical.inp",
+      "sha256": "dffaad660ae89d22da3b9c043711c1e624b5a336d8ed0610f38ad6b2b65111d1"
+    },
+    {
+      "path": "hump/archives/nasahump-grids.zip",
+      "url": "https://www.nasa.gov/wp-content/uploads/2026/02/nasahump-grids.zip",
+      "sha256": "59371f3fd81758459c54909b15091a029e6eadfb33e2c9952be314ced9690962"
+    },
+    {
+      "path": "hump/references/nasahump_cfl3d_cf_noplenum_sst.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Nasahump_validation/nasahump_cfl3d_cf_noplenum_sst.dat",
+      "sha256": "8f7edd216eb2b1fa4f8d0ec74fb05bbbb4858ce383043a98b0d0a963870689b8"
+    },
+    {
+      "path": "hump/references/nasahump_cfl3d_cp_noplenum_sst.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Nasahump_validation/nasahump_cfl3d_cp_noplenum_sst.dat",
+      "sha256": "6f96de81be4e6b2a613ef529fa97a68a7da1cc6fadbdc429391f7f0189b3b0ab"
+    },
+    {
+      "path": "hump/references/nasahump_cfl3d_vel_noplenum_sst.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Nasahump_validation/nasahump_cfl3d_vel_noplenum_sst.dat",
+      "sha256": "2e3fd0adf76336923677796ad85a16f0f49f8d5334587b86060b621893499595"
+    },
+    {
+      "path": "hump/references/nasahump_cfl3d_uv_noplenum_sst.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Nasahump_validation/nasahump_cfl3d_uv_noplenum_sst.dat",
+      "sha256": "14bf70d1c0fb10d8143a843c94e342dc66fd7219a4ef2251b783f39a9d249c69"
+    },
+    {
+      "path": "hump/references/nasahump_cfl3d_typical_noplenum_sst.inp",
+      "url": "https://tmbwg.github.io/turbmodels/Nasahump_validation/nasahump_cfl3d_typical_noplenum_sst.inp",
+      "sha256": "248463fd99684d59074646df9d15128b48cd197b4346b7e7018c87b768bb3280"
+    },
+    {
+      "path": "hump/references/noflow_cf.exp.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Nasahump_validation/noflow_cf.exp.dat",
+      "sha256": "f38f1d303c6f43937da188682196ad61dde380b9fc47a099e3d08bdda406d9a8"
+    },
+    {
+      "path": "hump/references/noflow_cp.exp.dat",
+      "url": "https://tmbwg.github.io/turbmodels/Nasahump_validation/noflow_cp.exp.dat",
+      "sha256": "a30835421ac9448d1ea83e93d5565f0beb8a7550e3033654d4a4efa4d4d3e024"
+    }
+  ],
+  "derived_grids": [
+    {
+      "path": "tmr-flatplate-35x25.cgns",
+      "source_member": "flatplate_clust2_4levelsdown_35x25.p2dfmt",
+      "converter_arguments": [7, 35],
+      "sha256": "d29ed849e9f5fa504b37544b1d4e012797fe6aa84abdff8a55f4fbfb73d5754a"
+    },
+    {
+      "path": "tmr-flatplate-69x49.cgns",
+      "source_member": "flatplate_clust2_3levelsdown_69x49.p2dfmt",
+      "converter_arguments": [13, 69],
+      "sha256": "add13708787d172cceb6184e9e149cacd1b29fc41dcf59e63be290d8a9e37752"
+    },
+    {
+      "path": "tmr-flatplate-137x97.cgns",
+      "source_member": "flatplate_clust2_2levelsdown_137x97.p2dfmt",
+      "converter_arguments": [25, 137],
+      "sha256": "00c5a42717c3473d2a841f5a040b8ce60fee16f7f47fb6b5ff10ff10bddca842"
+    },
+    {
+      "path": "channel_41x129_2d.cgns",
+      "source_member": "channel_6_quarter.p2dfmt.gz",
+      "converter_layout": "channel",
+      "sha256": "156f78986604396f3836938b5fbc9968cb1c2f2b3d439359d241bb3a98cb20b5"
+    },
+    {
+      "path": "channel_81x257_2d.cgns",
+      "source_member": "channel_6_half.p2dfmt.gz",
+      "converter_layout": "channel",
+      "sha256": "4b4e7f772816392e87198e47b135741780f4c5d802832efd7e2c2be9a216fe05"
+    },
+    {
+      "path": "channel_161x513_2d.cgns",
+      "source_member": "channel_6.p2dfmt.gz",
+      "converter_layout": "channel",
+      "sha256": "2f1217eb7639b5fa64d598286a426711a70589d083b950a31e3cc63b8cfcbae4"
+    },
+    {
+      "path": "hump/hump2newtop_noplenumZ103x28_2d.cgns",
+      "source_member": "hump2newtop_noplenumZ103x28.p2dfmt.gz",
+      "converter_layout": "hump",
+      "sha256": "f3fc5596dae23790f84780f2efa67735926b6a41c22cfa616d846339cd74dd34"
+    },
+    {
+      "path": "hump/hump2newtop_noplenumZ205x55_2d.cgns",
+      "source_member": "hump2newtop_noplenumZ205x55.p2dfmt.gz",
+      "converter_layout": "hump",
+      "sha256": "5b2054c05dee73e8f7da64c611eba7579c8917269fb1ea9e61078f37afdaca22"
+    },
+    {
+      "path": "hump/hump2newtop_noplenumZ409x109_2d.cgns",
+      "source_member": "hump2newtop_noplenumZ409x109.p2dfmt.gz",
+      "converter_layout": "hump",
+      "sha256": "8eb3667fa4f36f5ea329bf335a2d1f794634ab69778c1c2bcfc3cb8aee284291"
+    }
+  ],
+  "flat_plate": {
+    "mach": 0.2,
+    "reynolds_per_length": 5000000.0,
+    "freestream_intensity": 0.00039,
+    "freestream_eddy_viscosity_ratio": 0.009,
+    "acceptance_grids": [[35, 25], [69, 49], [137, 97]],
+    "cf_sample_x": 0.97,
+    "profile_retheta": 10000.0,
+    "cf_relative_tolerance": 0.05,
+    "adjacent_grid_relative_change": 0.03,
+    "profile_relative_l2_tolerance": 0.08,
+    "first_cell_y_plus_max": 1.0
+  },
+  "channel": {
+    "mach": 0.2,
+    "reynolds_height": 80000000.0,
+    "freestream_intensity": 0.00039,
+    "freestream_eddy_viscosity_ratio": 0.009,
+    "acceptance_grids": [[41, 129], [81, 257], [161, 513]],
+    "reference_x": 500.0,
+    "cf_relative_tolerance": 0.05,
+    "profile_relative_l2_tolerance": 0.08,
+    "kappa_interval": [0.38, 0.44]
+  },
+  "hump_no_plenum": {
+    "mach": 0.1,
+    "reynolds_chord": 936000.0,
+    "freestream_intensity": 0.00077,
+    "freestream_eddy_viscosity_ratio": 0.009,
+    "acceptance_grids": [[103, 28], [205, 55], [409, 109]],
+    "separation_interval": [0.614, 0.694],
+    "reattachment_interval": [1.13, 1.39],
+    "cp_relative_l2_tolerance": 0.12,
+    "cf_relative_l2_tolerance": 0.25
+  },
+  "run_gate": {
+    "minimum_residual_decades": 3.0,
+    "maximum_load_relative_span": 0.002,
+    "load_window_samples": 10,
+    "last_accepted_steps_without_projection": 500,
+    "maximum_projection_rate": 0.005,
+    "omega_or_epsilon_projection_count": 0
+  },
+  "excluded": [
+    "cases/manual/case06_2d_naca0012",
+    "cases/manual/case05_3d_turbulent_channel/results/lowmach-longrun-segment01"
+  ]
+}

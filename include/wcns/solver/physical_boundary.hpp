@@ -13,14 +13,28 @@
 
 namespace wcns {
 
+struct FarfieldPointVortex {
+    Real lift_coefficient = 0.0;
+    std::array<Real, 2> center {{0.25, 0.0}};
+    Real chord = 1.0;
+
+    void validate() const;
+};
+
 struct BoundaryData {
     std::optional<TemperaturePrimitiveState> target_state;
     std::array<Real, 3> wall_velocity {{0.0, 0.0, 0.0}};
     std::optional<Real> wall_temperature;
     std::optional<DoubleMachReflection> double_mach_reflection;
+    std::optional<FarfieldPointVortex> farfield_point_vortex;
 
     void validate(BoundaryType type, int dimension) const;
 };
+
+[[nodiscard]] TemperaturePrimitiveState
+farfield_target_at(const BoundaryData& data,
+                   std::array<Real, 3> face_coordinates,
+                   int dimension);
 
 using BoundaryDataMap = std::unordered_map<std::string, BoundaryData>;
 

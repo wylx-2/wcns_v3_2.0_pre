@@ -213,7 +213,7 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
     operand_workspace_.reserve(local_count);
     gradient_workspace_.reserve(local_count);
     turbulence_gradient_workspace_.reserve(local_count);
-    two_equation_gradient_workspace_.reserve(local_count);
+    two_equation_face_workspace_.reserve(local_count);
     viscous_flux_workspace_.reserve(local_count);
     turbulence_flux_workspace_.reserve(local_count);
     turbulence_residual_workspace_.reserve(local_count);
@@ -271,14 +271,17 @@ ViscousWcnsSolver::ViscousWcnsSolver(const MpiRuntime& mpi,
                 turbulence_gradient_registry_.add(block.id(), model_gradient.first->second);
                 turbulence_flux_registry_.add(block.id(), model_flux.first->second);
             } else {
-                gradient_inserted = two_equation_gradient_workspace_
+                const auto face_workspace = two_equation_face_workspace_
                                         .emplace(std::piecewise_construct,
                                                  std::forward_as_tuple(block.id()),
                                                  std::forward_as_tuple(block.cell_extent(),
-                                                                       3 * variables,
-                                                                       0,
-                                                                       0.0))
-                                        .second;
+                                                                       two_equation_face_workspace_components,
+                                                                       block.ghost_width(),
+                                                                       0.0));
+                gradient_inserted = face_workspace.second;
+                if (face_workspace.second) {
+                    two_equation_face_registry_.add(block.id(), face_workspace.first->second);
+                }
             }
             const auto model_residual = turbulence_residual_workspace_.emplace(
                 std::piecewise_construct,
@@ -483,18 +486,32 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                 reference_,
                 version_);
         } else if (turbulence_active()) {
-            compute_two_equation_residual_and_source(
+            compute_two_equation_gradients_and_source(
                 turbulence_residual_workspace_.at(block.id()),
                 turbulence_source_jacobian_workspace_.at(block.id()),
-                two_equation_gradient_workspace_.at(block.id()),
+                two_equation_face_workspace_.at(block.id()),
                 block,
                 metrics_.at(block.id()),
-                inviscid_flux_workspace_.at(block.id()),
                 gradient_workspace_.at(block.id()),
                 *turbulence_model_,
                 transport_,
                 gas_,
                 reference_);
+        }
+    }
+    if (turbulence_active()
+        && config_.turbulence.kind != TurbulenceModelKind::SaNegative) {
+        turbulence_exchanger_.exchange(two_equation_face_registry_);
+        for (auto& block : local_blocks_.blocks()) {
+            fill_two_equation_workspace_physical_ghosts(
+                block, two_equation_face_workspace_.at(block.id()));
+            assemble_two_equation_flux_residual(
+                turbulence_residual_workspace_.at(block.id()),
+                two_equation_face_workspace_.at(block.id()),
+                block,
+                metrics_.at(block.id()),
+                inviscid_flux_workspace_.at(block.id()),
+                *turbulence_model_);
         }
     }
     viscous_flux_plan_.set_version(version_);

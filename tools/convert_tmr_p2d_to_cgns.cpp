@@ -88,21 +88,30 @@ void write_connection(int file,
 
 int main(int argc, char** argv)
 {
-    if (argc != 5) {
+    const std::string named_layout = argc == 4 ? argv[3] : "";
+    const bool hump_layout = named_layout == "hump";
+    const bool channel_layout = named_layout == "channel";
+    if (argc != 5 && !hump_layout && !channel_layout) {
         std::cerr << "usage: wcns_convert_tmr_p2d_to_cgns <input.p2dfmt> <output.cgns> "
-                     "<wall-first-i> <wall-last-i>\n";
+                     "<wall-first-i> <wall-last-i>\n"
+                     "   or: wcns_convert_tmr_p2d_to_cgns <input.p2dfmt> <output.cgns> "
+                     "hump|channel\n";
         return EXIT_FAILURE;
     }
     try {
-        const int wall_first = parse_index(argv[3], "wall-first-i");
-        const int wall_last = parse_index(argv[4], "wall-last-i");
+        const bool named_boundary_layout = hump_layout || channel_layout;
+        const int wall_first
+            = named_boundary_layout ? 1 : parse_index(argv[3], "wall-first-i");
+        const int wall_last
+            = named_boundary_layout ? 1 : parse_index(argv[4], "wall-last-i");
         std::ifstream input(argv[1]);
         if (!input) throw std::runtime_error("cannot open TMR PLOT3D input");
         int blocks = 0;
         int ni = 0;
         int nj = 0;
         if (!(input >> blocks >> ni >> nj) || blocks != 1 || ni < 3 || nj < 3
-            || wall_first <= 1 || wall_first >= wall_last || wall_last > ni) {
+            || (!named_boundary_layout
+                && (wall_first <= 1 || wall_first >= wall_last || wall_last > ni))) {
             throw std::runtime_error("unsupported TMR PLOT3D header or wall range");
         }
         const auto count = static_cast<std::size_t>(ni) * static_cast<std::size_t>(nj);
@@ -149,7 +158,20 @@ int main(int argc, char** argv)
                                   &coordinate),
                    "cg_coord_write converted CoordinateY");
 
-        if (wall_last == ni) {
+        if (hump_layout || channel_layout) {
+            write_boundary(output.id(), base, zone, "Inflow", BCInflowSubsonic,
+                           {1, 1, 1, nj});
+            write_boundary(output.id(), base, zone, "Outflow", BCOutflowSubsonic,
+                           {ni, 1, ni, nj});
+            write_boundary(output.id(), base, zone,
+                           channel_layout ? "LowerWall" : "Wall",
+                           BCWallViscousHeatFlux,
+                           {1, 1, ni, 1});
+            write_boundary(output.id(), base, zone,
+                           channel_layout ? "UpperWall" : "Top",
+                           channel_layout ? BCWallViscousHeatFlux : BCSymmetryPlane,
+                           {1, nj, ni, nj});
+        } else if (wall_last == ni) {
             // The standard TMR zero-pressure-gradient plate begins part way
             // along JLower and continues to the outflow boundary.
             write_boundary(output.id(), base, zone, "Inflow", BCInflowSubsonic,
@@ -187,8 +209,12 @@ int main(int argc, char** argv)
                              {1, 1, wall_first, 1});
         }
         output.close();
-        std::cout << "converted TMR PLOT3D grid " << ni << 'x' << nj << " wall=["
-                  << wall_first << ',' << wall_last << "]\n";
+        std::cout << "converted TMR PLOT3D grid " << ni << 'x' << nj;
+        if (named_boundary_layout) {
+            std::cout << " layout=" << named_layout << '\n';
+        } else {
+            std::cout << " wall=[" << wall_first << ',' << wall_last << "]\n";
+        }
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

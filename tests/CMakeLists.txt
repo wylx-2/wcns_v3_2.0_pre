@@ -54,6 +54,19 @@ if(WCNS_ENABLE_CGNS)
     target_link_libraries(wcns_unit_tests PRIVATE wcns::cgns)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+    add_test(
+        NAME wcns.validation_budget
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_validation_budget.py
+            --checker ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_validation_budget.py
+    )
+    add_test(
+        NAME wcns.rans_analyzer
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_rans_analyzer.py
+            --analyzer ${CMAKE_CURRENT_SOURCE_DIR}/../tools/analyze_rans_run.py
+    )
+
     add_executable(wcns_generate_test_cgns
         ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_test_cgns.cpp
     )
@@ -129,6 +142,7 @@ if(WCNS_ENABLE_CGNS)
     set(WCNS_TWO_EQUATION_IMPLICIT_TIME_LINES
         "time.integrator = lu_sgs\ntime.physical.scheme = bdf2\ntime.dual_time.max_iterations = 20\n# Restart smoke accepts the initialized physical layer; convergence quality is\n# covered by the dedicated RANS validation cases rather than this I/O fixture.\ntime.dual_time.absolute_tolerance = 1e6\ntime.dual_time.relative_tolerance = 1e-8\ntime.dual_time.cfl = 0.01\nlu_sgs.sweeps = 1\nlu_sgs.jacobian = scalar_spectral\nlu_sgs.relaxation = 0.5")
     set(WCNS_TWO_EQUATION_TIME_LINES ${WCNS_TWO_EQUATION_IMPLICIT_TIME_LINES})
+    set(WCNS_TWO_EQUATION_MIN_STEPS 1)
     set(WCNS_TWO_EQUATION_CASE sst-steady)
     set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
         ${CMAKE_CURRENT_BINARY_DIR}/implicit-sst-steady)
@@ -258,7 +272,11 @@ if(WCNS_ENABLE_CGNS)
     set(WCNS_TWO_EQUATION_RUN_LINES "# rank-consistency pseudo-time")
     set(WCNS_TWO_EQUATION_CHECKPOINT false)
     set(WCNS_TWO_EQUATION_RESTART_LINE "# fresh rank-consistency run")
-    set(WCNS_TWO_EQUATION_MAX_STEPS 1)
+    # The second step transports the wall-generated nonuniform model field
+    # across runtime partition interfaces; a single uniform first step cannot
+    # expose a missing gradient/diffusion-coefficient halo.
+    set(WCNS_TWO_EQUATION_MAX_STEPS 2)
+    set(WCNS_TWO_EQUATION_MIN_STEPS 2)
     foreach(two_equation_model IN ITEMS sst k_epsilon)
         if(two_equation_model STREQUAL "sst")
             set(WCNS_TWO_EQUATION_MODEL k_omega_sst)
@@ -1521,7 +1539,7 @@ if(WCNS_ENABLE_CGNS)
                     set(WCNS_TWO_EQUATION_COMPARISON_FIELD epsilon)
                 endif()
                 set(WCNS_TWO_EQUATION_RANK_FIELD
-                    implicit-${two_equation_case}-rank-consistency.field.step00000001.time1p000000000eP00.cgns)
+                    implicit-${two_equation_case}-rank-consistency.field.step00000002.time2p000000000eP00.cgns)
                 add_test(
                     NAME wcns.implicit_${two_equation_case}.rank_consistency.${rank_count}
                     COMMAND wcns_cgns_field_compare

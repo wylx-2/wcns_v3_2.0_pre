@@ -404,7 +404,12 @@ SA-neg 必须与 `run.viscous = true`和至少一个 no-slip wall 同时使用�
 定常停止判定会同时要求五个平均流残差和 `nu_tilde` 残差通过，checkpoint 会保存
 `NuTilde` 及其参考残差。可输出 `nu_tilde,mu_t_over_mu,sa_production,sa_destruction,`
 `wall_distance,sa_negative_branch`。该模型尚处于 X 验收中，不能将 smoke 结果当作定量验证。
-SST/LES 模型名、`lu_sgs` 和 `weiss_smith` 仍是后续阶段保留值，当前会明确拒绝。
+SST-2003m、实验级标准 k-epsilon 与 LU-SGS 已进入阶段 Y 候选实现。阶段 Y 的真实 RANS
+验收固定使用 TMR 平板、发展槽道和 no-plenum hump；资产散列、三级网格、阈值和命令见
+[`cases/validation/sst_tmr`](../cases/validation/sst_tmr/README.md)，阶段状态以
+[`stage-y-acceptance.md`](v2.0.0/stage-y-acceptance.md) 为准。可用
+`wcns_extract_rans_profile <field.cgns> <target-x> <output.txt>` 从真实 CGNS 顶点壁面位置抽取
+二维 RANS 剖面。LES 仍是后续阶段保留值。
 schema 1 继续使用原配置，不应添加上述键。
 
 ### 8.2 算法选择
@@ -428,6 +433,20 @@ schema 1 继续使用原配置，不应添加上述键。
 restart signature，修改后不能直接续算旧检查点。
 
 `linear5` 主要供线性回退、光滑基线和算法测试使用；普通有激波计算不把它或 `zero_order` 当作高分辨率首选方案。
+
+尖后缘曲线网格可显式调整高阶 Jacobian 与有限体积参考体积的一致性门槛：
+
+```text
+geometry.metric.fallback = strict
+geometry.metric.maximum_reference_relative_difference = 0.35
+```
+
+默认值分别为 `strict` 和 `0.20`。程序逐单元比较高阶 Jacobian 与正的有限体积参考体积；
+任一值非有限、非正，或相对差超过门槛时，`strict` 在推进前失败。仅
+`phenglei_wcns` 可选 `phenglei_finite_volume` 回退，且日志会报告替换单元数；该回退改变数值
+离散身份，不应作为修补坏网格的通用手段。Family II NACA0012 的尖尾缘三层网格经只读检查
+得到最大相对差 `0.349915/0.264342/0.165909`，因此该算例族冻结为 `strict + 0.35`，没有发生
+有限体积替换。非默认设置进入 restart signature，续算时必须一致。
 
 ### 8.2.1 SSPRK 事后稳健化（v1.1）
 
@@ -773,6 +792,22 @@ patch 名必须与 CGNS 名完全一致。自动分区会保留原 patch 名。�
 
 当前无粘真实边界面在重构后总执行强约束；粘性壁面速度/温度或热流约束也总是强制。配置 schema 尚未暴露 `strong_boundary_face_state`。
 
+阶段 X 的二维 NACA numerical-analysis 对照可在 farfield 上叠加固定点涡：
+
+```text
+boundary.point_vortex.enabled = true
+boundary.point_vortex.lift_coefficient = 1.09125
+boundary.point_vortex.center_x = 0.25
+boundary.point_vortex.center_y = 0.0
+boundary.point_vortex.chord = 1.0
+```
+
+它按给定的 `lift_coefficient` 一次性构造远场目标速度，不读取或反馈当前计算载荷；正升力采用
+顺时针环量约定。只允许二维算例，且只改变 `farfield` 目标态的速度，密度与温度仍取原远场值。
+弦长必须为正，点涡中心不得落在远场面中心；非法组合在推进前或首次边界构造时明确失败。
+默认关闭，启用后的参数全部进入 restart signature。公式和符号约定见
+[`../算法补充.md`](../算法补充.md) 12.11。
+
 经典双马赫反射的边界配置必须按 CGNS patch 名显式写成：
 
 ```text
@@ -1007,7 +1042,10 @@ output.boundary.tangent_direction_z = 0.0
 ```
 
 `patches` 和 `quantities` 均为禁止重复的逗号列表。逐面内建量还包括
-`pressure_traction_x/y/z`、`viscous_traction_x/y/z` 和 `traction_x/y/z`。`Cp/Cf` 使用配置中的
+`pressure_traction_x/y/z`、`viscous_traction_x/y/z` 和 `traction_x/y/z`。RANS 无滑移壁还可输出
+`wall_distance,friction_velocity,wall_y_plus,wall_y_plus_class`；最后一项依次用 0/1/2/3 表示
+$y^+\le5$、$5<y^+<30$、$30\le y^+\le300$、$y^+>300$。这些量只作诊断，不改变
+`resolved`/`wall_function` 的显式选择；无 RANS 模型或非无滑移 patch 请求它们会失败。`Cp/Cf` 使用配置中的
 `q_inf=0.5*rho_inf*|u_inf|^2`；参考动压必须大于统一阈值，方向必须为单位向量且 drag/lift
 正交。无粘运行请求 `Cf,q_wall` 或黏性牵引会在写文件前失败。
 
@@ -1022,7 +1060,8 @@ output.boundary.tangent_direction_z = 0.0
 `<case>.loads.r<ranks>.txt` 保存压力、黏性、总力/力矩以及 `Cd/Cl/Cm`。二维力按单位展向长度
 解释并在文件头写 `force_per_unit_span=true`。`output.dimensional=true` 时坐标、面积、牵引、
 力和力矩分别按 `L_ref`、`L_ref^(d-1)`、`rho_ref U_ref^2`、
-`rho_ref U_ref^2 L_ref^(d-1)` 和 `rho_ref U_ref^2 L_ref^d` 恢复量纲；系数不变。
+`rho_ref U_ref^2 L_ref^(d-1)` 和 `rho_ref U_ref^2 L_ref^d` 恢复量纲；`wall_distance` 与
+`friction_velocity` 分别按 $L_{ref}$、$U_{ref}$ 恢复，$y^+$ 和分类保持无量纲，其余系数不变。
 
 ### 9.5 检查点
 
@@ -1209,11 +1248,11 @@ wcns_compare_metric_profiles mesh.cgns
 
 ## 16. 当前功能边界
 
-当前可运行物理包括单组分热完全理想气体、层流常比热、常黏度/Sutherland 输运、显式
-SSPRK3、结构共形网格和内建源项。阶段 X 分支另已有可运行的 SA-neg 闭合与模型场，
-但它尚未通过 TMR 平板和 NACA0012 的定量收敛验收，因此仍是阶段候选功能。低 Mach
-预处理、SST/k--epsilon/LES、化学反应、隐式推进、本地时间步、通用表达式源项、
-动态插件和涡量/Q 等体派生输出仍未实现。
+当前开发分支可运行单组分热完全理想气体、层流常比热、常黏度/Sutherland 输运、显式
+SSPRK3、LU-SGS、BDF2 双时间接口、Weiss--Smith 低 Mach 预处理、结构共形网格和内建源项。
+SA-neg 已进入 X-B 定量验收；SST-2003m 和实验级标准 k-epsilon 已进入 Y 候选实现。只有对应
+阶段自动报告通过后，相关功能才可称为已验证。LES、化学反应、通用表达式源项、动态插件和
+涡量/Q 等体派生输出仍未实现。
 默认输运为 `Pr=0.72` 和 `mu/mu_ref=1` 的常黏度。
 
 这些限制不能通过写一个未知配置键绕过。需要扩展时按开发手册同时修改数据结构、严格 parser、验证、摘要/重启签名、生产装配、测试、模板和文档。
