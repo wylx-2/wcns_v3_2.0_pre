@@ -414,6 +414,13 @@ void ViscousWcnsSolver::update_les_closure_fields()
         static_cast<void>(block);
         complete_les_fixed_stencil_ghosts(field);
     }
+    for (int round = 0; round < 2; ++round) {
+        les_resolved_exchanger_.exchange_tangential_ghosts(les_resolved_registry_, 1);
+        for (auto& [block, field] : les_resolved_workspace_) {
+            static_cast<void>(block);
+            complete_les_fixed_stencil_ghosts(field);
+        }
+    }
     for (const auto& block : local_blocks_.blocks()) {
         compute_les_dynamic_moments(les_dynamic_moment_workspace_.at(block.id()),
                                     les_resolved_workspace_.at(block.id()),
@@ -423,6 +430,14 @@ void ViscousWcnsSolver::update_les_closure_fields()
     for (auto& [block, field] : les_dynamic_moment_workspace_) {
         static_cast<void>(block);
         complete_les_fixed_stencil_ghosts(field);
+    }
+    for (int round = 0; round < 2; ++round) {
+        les_dynamic_moment_exchanger_.exchange_tangential_ghosts(
+            les_dynamic_moment_registry_, 1);
+        for (auto& [block, field] : les_dynamic_moment_workspace_) {
+            static_cast<void>(block);
+            complete_les_fixed_stencil_ghosts(field);
+        }
     }
     for (const auto& block : local_blocks_.blocks()) {
         compute_les_closure_field(les_closure_workspace_.at(block.id()),
@@ -434,6 +449,13 @@ void ViscousWcnsSolver::update_les_closure_fields()
     for (auto& [block, field] : les_closure_workspace_) {
         static_cast<void>(block);
         complete_les_fixed_stencil_ghosts(field);
+    }
+    for (int round = 0; round < 2; ++round) {
+        les_closure_exchanger_.exchange_tangential_ghosts(les_closure_registry_, 1);
+        for (auto& [block, field] : les_closure_workspace_) {
+            static_cast<void>(block);
+            complete_les_fixed_stencil_ghosts(field);
+        }
     }
     for (auto& block : local_blocks_.blocks()) {
         const auto& gradients = gradient_workspace_.at(block.id());
@@ -506,7 +528,10 @@ void ViscousWcnsSolver::update_les_closure_fields()
                     block.turbulence.at(cell, "sgs_stress_yz")
                         = -contribution.stress.yz * inverse_reynolds;
                     block.turbulence.at(cell, "les_dynamic_coefficient")
-                        = closure(i, j, k, les_dynamic_coefficient);
+                        = config_.turbulence.kind
+                                == TurbulenceModelKind::DynamicSmagorinsky
+                            ? closure(i, j, k, les_dynamic_coefficient)
+                            : 0.0;
                     block.turbulence.at(cell, "les_filter_width") = context.filter_width;
 
                     const Real volume = metric.jacobian()(i, j, k);

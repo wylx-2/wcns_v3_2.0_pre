@@ -44,6 +44,18 @@ void test_filter()
     // nearest-constant physical extension: 3/4 left value + 1/4 right value.
     WCNS_REQUIRE_NEAR(les_box3_tensor_sample(boundary, {0, 0, 0}, 0), 1.25, 1.0e-15);
 
+    Field<Real> split_edge({2, 2, 2}, 1, 1, std::numeric_limits<Real>::quiet_NaN());
+    for (int k = 0; k < 2; ++k) {
+        for (int j = 0; j < 2; ++j) {
+            for (int i = 0; i < 2; ++i) split_edge(i, j, k, 0) = 10.0 + i;
+            split_edge(-1, j, k, 0) = 100.0 + 10.0 * j + k;
+        }
+    }
+    complete_les_fixed_stencil_ghosts(split_edge);
+    WCNS_REQUIRE_NEAR(split_edge(-1, -1, 0, 0), 100.0, 1.0e-15);
+    WCNS_REQUIRE_NEAR(split_edge(-1, -1, -1, 0), 100.0, 1.0e-15);
+    WCNS_REQUIRE_NEAR(split_edge(2, -1, -1, 0), 11.0, 1.0e-15);
+
     const Real pi = std::acos(-1.0);
     WCNS_REQUIRE_NEAR(les_box3_fourier_response({pi / 2.0, 0.0, 0.0}), 0.5, 1.0e-15);
     WCNS_REQUIRE_NEAR(les_box3_fourier_response({pi, 0.0, 0.0}), 0.0, 1.0e-15);
@@ -212,6 +224,10 @@ void test_statistics()
 {
     using namespace wcns;
     WeightedMomentState moments;
+    moments.add(7.0, 0.001);
+    WCNS_REQUIRE(moments.mean == 7.0);
+    WCNS_REQUIRE(moments.rms() == 0.0);
+    moments = {};
     moments.add(1.0, 1.0);
     moments.add(3.0, 3.0);
     WCNS_REQUIRE_NEAR(moments.mean, 2.5, 1.0e-15);
@@ -226,6 +242,11 @@ void test_statistics()
     WCNS_REQUIRE_NEAR(left.second_central, moments.second_central, 1.0e-15);
 
     WeightedCovarianceState covariance;
+    covariance.add(7.0, -3.0, 0.001);
+    WCNS_REQUIRE(covariance.mean_x == 7.0);
+    WCNS_REQUIRE(covariance.mean_y == -3.0);
+    WCNS_REQUIRE(covariance.covariance() == 0.0);
+    covariance = {};
     covariance.add(1.0, 2.0, 1.0);
     covariance.add(3.0, 6.0, 1.0);
     WCNS_REQUIRE_NEAR(covariance.covariance(), 2.0, 1.0e-15);

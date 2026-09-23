@@ -30,7 +30,11 @@ def read_statistics(path: pathlib.Path):
 
 
 def close(lhs: float, rhs: float) -> bool:
-    return math.isclose(lhs, rhs, rel_tol=2.0e-13, abs_tol=2.0e-13)
+    # Cross-rank restart intentionally mixes deterministic serial checkpoint
+    # state with a differently ordered MPI spatial reduction.  The integral
+    # means retain the tight relative tolerance; near-zero RMS values need an
+    # absolute floor for that last-bit reduction difference.
+    return math.isclose(lhs, rhs, rel_tol=2.0e-13, abs_tol=1.0e-12)
 
 
 def main() -> int:

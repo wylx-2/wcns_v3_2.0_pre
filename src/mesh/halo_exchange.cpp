@@ -103,6 +103,10 @@ HaloExchangePlan make_halo_exchange_plan(const ConnectivityPatch& connection,
         connection.receiver_block,
         connection.donor_block,
         connection.donor_rank,
+        receiver_cell_extent,
+        donor_cell_extent,
+        dimension,
+        connection.transform,
         {},
     };
     plan.cell_pairs.reserve(connection.receiver_adjacent_cell_range.size()

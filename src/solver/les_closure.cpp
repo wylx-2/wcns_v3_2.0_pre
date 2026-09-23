@@ -171,20 +171,58 @@ void complete_les_fixed_stencil_ghosts(Field<Real>& field)
     }
     const auto extent = field.interior_extent();
     const int ghost = field.ghost_width();
+    const Field<Real> exchanged = field;
+    // Halo exchange supplies connected face ghosts but not their edge/corner
+    // extensions.  Extend one physical direction per pass so a valid exchanged
+    // face value is preserved at a partition/physical-boundary intersection.
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int k = -ghost; k < extent.nk + ghost; ++k) {
+            for (int j = -ghost; j < extent.nj + ghost; ++j) {
+                for (int i = -ghost; i < extent.ni + ghost; ++i) {
+                    const Index3 cell {i, j, k};
+                    for (int component = 0; component < field.components(); ++component) {
+                        Real& value = field(i, j, k, component);
+                        if (std::isfinite(value)) continue;
+                        for (const bool connected_axis : {false, true}) {
+                            for (int axis = 0; axis < 3; ++axis) {
+                                const auto direction = static_cast<std::size_t>(axis);
+                                const int upper = extent[direction] - 1;
+                                if (cell[direction] >= 0 && cell[direction] <= upper) continue;
+                                auto anchor = cell;
+                                for (int other = 0; other < 3; ++other) {
+                                    if (other == axis) continue;
+                                    const auto other_direction
+                                        = static_cast<std::size_t>(other);
+                                    anchor[other_direction] = std::clamp(
+                                        anchor[other_direction],
+                                        0,
+                                        extent[other_direction] - 1);
+                                }
+                                const bool axis_has_exchange = std::isfinite(exchanged(
+                                    anchor.i, anchor.j, anchor.k, component));
+                                if (axis_has_exchange != connected_axis) continue;
+                                auto source = cell;
+                                source[direction]
+                                    = std::clamp(cell[direction], 0, upper);
+                                const Real candidate
+                                    = field(source.i, source.j, source.k, component);
+                                if (std::isfinite(candidate)) {
+                                    value = candidate;
+                                    break;
+                                }
+                            }
+                            if (std::isfinite(value)) break;
+                        }
+                    }
+                }
+            }
+        }
+    }
     for (int k = -ghost; k < extent.nk + ghost; ++k) {
         for (int j = -ghost; j < extent.nj + ghost; ++j) {
             for (int i = -ghost; i < extent.ni + ghost; ++i) {
-                const Index3 nearest {
-                    std::clamp(i, 0, extent.ni - 1),
-                    std::clamp(j, 0, extent.nj - 1),
-                    std::clamp(k, 0, extent.nk - 1),
-                };
                 for (int component = 0; component < field.components(); ++component) {
-                    Real& value = field(i, j, k, component);
-                    if (!std::isfinite(value)) {
-                        value = field(nearest.i, nearest.j, nearest.k, component);
-                    }
-                    if (!std::isfinite(value)) {
+                    if (!std::isfinite(field(i, j, k, component))) {
                         throw PhysicsError("LES fixed-stencil ghost extension is non-finite");
                     }
                 }

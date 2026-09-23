@@ -646,7 +646,9 @@ if(WCNS_ENABLE_CGNS)
         )
         set_tests_properties(
             wcns.run.les_${les_model}.serial
-            PROPERTIES FIXTURES_REQUIRED cgns_files
+            PROPERTIES
+                FIXTURES_REQUIRED cgns_files
+                FIXTURES_SETUP les_${les_model}_serial
         )
     endforeach()
     add_test(
@@ -1733,7 +1735,33 @@ if(WCNS_ENABLE_CGNS)
                 )
                 set_tests_properties(
                     wcns.run.les_${les_model}.${rank_count}
-                    PROPERTIES FIXTURES_REQUIRED cgns_files
+                    PROPERTIES
+                        FIXTURES_REQUIRED cgns_files
+                        FIXTURES_SETUP les_${les_model}_${rank_count}
+                )
+                add_test(
+                    NAME wcns.check.les_${les_model}.${rank_count}
+                    COMMAND wcns_cgns_field_compare
+                        ${CMAKE_CURRENT_BINARY_DIR}/les-${les_model}-rserial/les-${les_model}.field.step00000001.time1p000000000eM03.cgns
+                        ${CMAKE_CURRENT_BINARY_DIR}/les-${les_model}-rmpi${rank_count}/les-${les_model}.field.step00000001.time1p000000000eM03.cgns
+                        2e-12
+                        mu_sgs
+                        mu_sgs_over_mu
+                        sgs_energy_transfer
+                        sgs_stress_xx
+                        sgs_stress_yy
+                        sgs_stress_zz
+                        sgs_stress_xy
+                        sgs_stress_xz
+                        sgs_stress_yz
+                        les_dynamic_coefficient
+                        les_filter_width
+                        les_grid_anisotropy
+                )
+                set_tests_properties(
+                    wcns.check.les_${les_model}.${rank_count}
+                    PROPERTIES
+                        FIXTURES_REQUIRED "les_${les_model}_serial;les_${les_model}_${rank_count}"
                 )
             endforeach()
             add_test(

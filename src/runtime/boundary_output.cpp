@@ -700,22 +700,38 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
                 closure_registry.add(block.id(), closure->second);
             }
             const int ranks = partition_.distribution().rank_count();
-            HaloExchanger(mpi_, topology_, ranks, les_resolved_components)
-                .exchange(resolved_registry);
+            HaloExchanger resolved_exchanger(
+                mpi_, topology_, ranks, les_resolved_components);
+            resolved_exchanger.exchange(resolved_registry);
             for (auto& [block, field] : les_resolved) {
                 static_cast<void>(block);
                 complete_les_fixed_stencil_ghosts(field);
+            }
+            for (int round = 0; round < 2; ++round) {
+                resolved_exchanger.exchange_tangential_ghosts(resolved_registry, 1);
+                for (auto& [block, field] : les_resolved) {
+                    static_cast<void>(block);
+                    complete_les_fixed_stencil_ghosts(field);
+                }
             }
             for (const auto& block : local_blocks_.blocks()) {
                 compute_les_dynamic_moments(les_moments.at(block.id()),
                                             les_resolved.at(block.id()),
                                             config_.turbulence);
             }
-            HaloExchanger(mpi_, topology_, ranks, les_dynamic_moment_components)
-                .exchange(moment_registry);
+            HaloExchanger moment_exchanger(
+                mpi_, topology_, ranks, les_dynamic_moment_components);
+            moment_exchanger.exchange(moment_registry);
             for (auto& [block, field] : les_moments) {
                 static_cast<void>(block);
                 complete_les_fixed_stencil_ghosts(field);
+            }
+            for (int round = 0; round < 2; ++round) {
+                moment_exchanger.exchange_tangential_ghosts(moment_registry, 1);
+                for (auto& [block, field] : les_moments) {
+                    static_cast<void>(block);
+                    complete_les_fixed_stencil_ghosts(field);
+                }
             }
             for (const auto& block : local_blocks_.blocks()) {
                 compute_les_closure_field(les_closures.at(block.id()),
@@ -723,11 +739,19 @@ std::vector<std::string> BoundaryOutputWriter::write(const SimulationState& stat
                                           les_moments.at(block.id()),
                                           config_.turbulence);
             }
-            HaloExchanger(mpi_, topology_, ranks, les_closure_components)
-                .exchange(closure_registry);
+            HaloExchanger closure_exchanger(
+                mpi_, topology_, ranks, les_closure_components);
+            closure_exchanger.exchange(closure_registry);
             for (auto& [block, field] : les_closures) {
                 static_cast<void>(block);
                 complete_les_fixed_stencil_ghosts(field);
+            }
+            for (int round = 0; round < 2; ++round) {
+                closure_exchanger.exchange_tangential_ghosts(closure_registry, 1);
+                for (auto& [block, field] : les_closures) {
+                    static_cast<void>(block);
+                    complete_les_fixed_stencil_ghosts(field);
+                }
             }
         }
     }

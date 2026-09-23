@@ -34,6 +34,13 @@ void WeightedMomentState::add(Real value, Real sample_weight)
     if (!std::isfinite(value) || !std::isfinite(sample_weight) || sample_weight <= 0.0) {
         throw std::invalid_argument("weighted moment sample is invalid");
     }
+    if (sample_count == 0) {
+        sample_count = 1;
+        weight = sample_weight;
+        mean = value;
+        second_central = 0.0;
+        return;
+    }
     const Real next_weight = weight + sample_weight;
     const Real delta = value - mean;
     const Real next_mean = mean + sample_weight * delta / next_weight;
@@ -90,6 +97,14 @@ void WeightedCovarianceState::add(Real x, Real y, Real sample_weight)
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(sample_weight)
         || sample_weight <= 0.0) {
         throw std::invalid_argument("weighted covariance sample is invalid");
+    }
+    if (sample_count == 0) {
+        sample_count = 1;
+        weight = sample_weight;
+        mean_x = x;
+        mean_y = y;
+        co_moment = 0.0;
+        return;
     }
     const Real next_weight = weight + sample_weight;
     const Real dx = x - mean_x;

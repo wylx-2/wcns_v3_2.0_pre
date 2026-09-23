@@ -100,6 +100,11 @@ int main(int argc, char** argv)
             fields.emplace_back(argv[argument]);
         }
         double maximum_difference = 0.0;
+        std::string maximum_field;
+        int maximum_zone = 0;
+        std::size_t maximum_index = 0;
+        double maximum_expected = 0.0;
+        double maximum_actual = 0.0;
         for (int zone = 1; zone <= expected_zones; ++zone) {
             std::array<cgsize_t, 9> expected_size {{}};
             std::array<cgsize_t, 9> actual_size {{}};
@@ -124,13 +129,23 @@ int main(int argc, char** argv)
                 for (std::size_t index = 0; index < expected.size(); ++index) {
                     WCNS_REQUIRE(std::isfinite(expected[index]));
                     WCNS_REQUIRE(std::isfinite(actual[index]));
-                    maximum_difference = std::max(
-                        maximum_difference, std::abs(expected[index] - actual[index]));
+                    const double difference = std::abs(expected[index] - actual[index]);
+                    if (difference > maximum_difference) {
+                        maximum_difference = difference;
+                        maximum_field = field;
+                        maximum_zone = zone;
+                        maximum_index = index;
+                        maximum_expected = expected[index];
+                        maximum_actual = actual[index];
+                    }
                 }
             }
         }
         std::cout << "field comparison max_abs=" << maximum_difference
-                  << ", tolerance=" << tolerance << '\n';
+                  << ", tolerance=" << tolerance << ", field=" << maximum_field
+                  << ", zone=" << maximum_zone << ", index=" << maximum_index
+                  << ", expected=" << maximum_expected << ", actual=" << maximum_actual
+                  << '\n';
         WCNS_REQUIRE(maximum_difference <= tolerance);
         check_cgns(cg_close(expected_file), "cg_close expected field");
         expected_file = 0;
