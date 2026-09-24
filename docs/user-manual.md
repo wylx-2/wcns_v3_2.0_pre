@@ -816,6 +816,18 @@ boundary.point_vortex.chord = 1.0
 默认关闭，启用后的参数全部进入 restart signature。公式和符号约定见
 [`../算法补充.md`](../算法补充.md) 12.11。
 
+Case06 正式模板不要手工复制上述点涡示例；使用受限生成器：
+
+```powershell
+python tools\prepare_case06_naca0012.py --model sa_neg --grid <grid.cgns> --output-directory <output> --config <case.wcns> --case-name <name> --mode smoke --angle-deg 10
+```
+
+可选模型为 `laminar|sa_neg|sst_2003m`，模式为 `smoke|local|server`。`smoke` 固定一步，
+`local` 强制不超过 20 步/300 s，`server` 强制显式给出不少于 1000 步和正的
+`--max-wall-time`。`--reference-point-vortex` 只允许服务器 RANS 同源对照，并自动从冻结
+manifest 读取对应模型/攻角的参考 $C_L$；它不属于自洽主分支。完整工况、模型差异和数据散列
+见 [`../cases/validation/case06_naca0012/README.md`](../cases/validation/case06_naca0012/README.md)。
+
 经典双马赫反射的边界配置必须按 CGNS patch 名显式写成：
 
 ```text
@@ -1249,6 +1261,7 @@ Re、物性和壁面剪切速度时直接解释为 $y^+$。
 - patch 名与 CGNS 完全一致；周期用 connectivity。
 - 输出目录不存在或已明确允许覆盖；墙钟限制有检查点。
 - 目标 rank 的 dry-run 成功，分区摘要合理。
+- Case06 若在本机运行，网格必须不大于 113×33、配置通过预算检查；897×257 只能 dry-run。
 
 ### 14.2 运行中
 

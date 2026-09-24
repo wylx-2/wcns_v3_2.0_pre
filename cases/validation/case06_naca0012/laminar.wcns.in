@@ -1,0 +1,95 @@
+schema_version = 2
+case.name = case06-naca0012-laminar-diagnostic
+mesh.path = @CASE06_GRID@
+
+algorithm.profile = phenglei_wcns
+algorithm.reconstruction = linear5
+algorithm.reconstruction_variables = characteristic
+algorithm.riemann = roe
+robustness.enabled = false
+
+gas.gamma = 1.4
+gas.specific_gas_constant = 287.05
+reference.velocity = 52.0828426643554
+reference.density = 1.0
+reference.temperature = 300.0
+reference.length = 1.0
+reference.viscosity = 8.68047377739257e-6
+
+transport.model = sutherland
+transport.prandtl = 0.72
+transport.sutherland.reference_viscosity_ratio = 1.0
+transport.sutherland.temperature = 110.33333333333333
+
+partition.mode = auto_split
+partition.allow_idle_ranks = false
+partition.max_load_ratio = 1.2
+partition.min_cells_per_active_direction = 8
+
+initial.type = uniform
+initial.rho = 1.0
+initial.u = 0.984807753012208
+initial.v = 0.17364817766693033
+initial.w = 0.0
+initial.temperature = 1.0
+
+boundary.default = farfield
+boundary.Wall.type = no_slip_adiabatic_wall
+boundary.point_vortex.enabled = false
+
+source.enabled = false
+turbulence.model = none
+
+time.integrator = lu_sgs
+lu_sgs.sweeps = 1
+lu_sgs.jacobian = scalar_spectral
+lu_sgs.relaxation = 0.5
+preconditioner.type = weiss_smith
+preconditioner.mach_cutoff = 0.001
+preconditioner.viscous_cutoff = 1.0
+
+run.mode = steady
+run.viscous = true
+run.cfl = 0.1
+run.max_steps = 1
+run.max_wall_time = 300
+steady.min_steps = 1
+steady.consecutive_checks = 1
+
+output.directory = @CASE06_OUTPUT_DIRECTORY@
+output.allow_existing = true
+output.dimensional = false
+output.field.enabled = true
+output.field.write_final = true
+output.field.quantities = rho,rho_u,rho_v,rho_w,rho_E
+output.history.enabled = true
+output.history.every_steps = 1
+output.statistics.enabled = false
+output.boundary.enabled = true
+output.boundary.format = txt
+output.boundary.every_steps = 1
+output.boundary.write_final = true
+output.boundary.patches = Wall
+output.boundary.quantities = p_w,mu_w,Cp,Cf,viscous_traction_x,viscous_traction_y,traction_x,traction_y
+output.boundary.reference_pressure = 31.746031746031747
+output.boundary.reference_density = 1.0
+output.boundary.reference_velocity_x = 0.984807753012208
+output.boundary.reference_velocity_y = 0.17364817766693033
+output.boundary.reference_velocity_z = 0.0
+output.boundary.reference_area = 1.0
+output.boundary.reference_length = 1.0
+output.boundary.moment_center_x = 0.25
+output.boundary.moment_center_y = 0.0
+output.boundary.moment_center_z = 0.0
+output.boundary.drag_direction_x = 0.984807753012208
+output.boundary.drag_direction_y = 0.17364817766693033
+output.boundary.drag_direction_z = 0.0
+output.boundary.lift_direction_x = -0.17364817766693033
+output.boundary.lift_direction_y = 0.984807753012208
+output.boundary.lift_direction_z = 0.0
+output.boundary.tangent_direction_x = 1.0
+output.boundary.tangent_direction_y = 0.0
+output.boundary.tangent_direction_z = 0.0
+output.checkpoint.enabled = true
+output.checkpoint.every_steps = 20
+output.checkpoint.write_final = true

@@ -62,6 +62,13 @@ if(WCNS_ENABLE_CGNS)
             --checker ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_validation_budget.py
     )
     add_test(
+        NAME wcns.case06_preparation
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_prepare_case06_naca0012.py
+            --generator ${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_case06_naca0012.py
+            --manifest ${CMAKE_CURRENT_SOURCE_DIR}/../cases/validation/case06_naca0012/manifest.json
+    )
+    add_test(
         NAME wcns.rans_analyzer
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test_rans_analyzer.py
