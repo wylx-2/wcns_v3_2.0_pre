@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "identity": "wcns-v2-stage-ab-case06-tmr-2026-09-24",
+  "sources": {
+    "validation": "https://tmbwg.github.io/turbmodels/naca0012_val.html",
+    "grids": "https://tmbwg.github.io/turbmodels/naca0012_grids.html",
+    "numerical_analysis": "https://tmbwg.github.io/turbmodels/naca0012numerics_val.html",
+    "sa_results": "https://tmbwg.github.io/turbmodels/naca0012_val_sa.html",
+    "sst_results": "https://tmbwg.github.io/turbmodels/naca0012_val_sst.html"
+  },
+  "physics": {
+    "mach": 0.15,
+    "reynolds_chord": 6000000.0,
+    "angles_deg": [0.0, 10.0, 15.0],
+    "primary_angle_deg": 10.0,
+    "gamma": 1.4,
+    "specific_gas_constant": 287.05,
+    "reference_temperature_kelvin": 300.0,
+    "reference_temperature_rankine": 540.0,
+    "sutherland_kelvin": 110.33333333333333,
+    "sutherland_rankine": 198.6,
+    "prandtl": 0.72,
+    "turbulent_prandtl": 0.9,
+    "adiabatic_wall": true,
+    "fully_turbulent": true,
+    "reference_chord": 1.0,
+    "reference_area_per_unit_span": 1.0,
+    "moment_center": [0.25, 0.0, 0.0]
+  },
+  "normalization": {
+    "reference_velocity": 52.0828426643554,
+    "reference_density": 1.0,
+    "reference_temperature": 300.0,
+    "reference_length": 1.0,
+    "reference_viscosity": 8.68047377739257e-6,
+    "nondimensional_freestream_pressure": 31.746031746031747,
+    "note": "The density and viscosity are nondimensional reference scales; only Re, Ma and the normalized Sutherland ratio enter the target equations."
+  },
+  "grid": {
+    "family": "NASA-TMR-NACA0012-validation",
+    "farfield_chords_approx": 500.0,
+    "official_vertex_levels": [[113, 33], [225, 65], [449, 129], [897, 257], [1793, 513]],
+    "local_l_gate_vertex_level": [113, 33],
+    "local_l_gate_cells": 3584,
+    "server_trend_vertex_levels": [[225, 65], [449, 129], [897, 257]],
+    "case06_vertex_level": [897, 257],
+    "case06_cells": 229376,
+    "case06_sha256": "adbec980fb1c1cc2956dcfdfb918ed25f7159f2287c958db5056c926d725351e",
+    "local_113x33_sha256": "35f2e022ac39d3c30057ca3ee5545081727f17646e16226eef2d71ef7b34122d"
+  },
+  "models": {
+    "sa_neg": {
+      "implementation": "NASA-TMR-SA-neg-modified-vorticity-1c",
+      "comparison_model": "NASA-TMR-SA",
+      "freestream_nu_tilde_over_nu": 3.0,
+      "comparison_note": "SA-neg is identical to standard SA for non-negative nu_tilde; negative-branch activity must be reported.",
+      "cfl3d_point_vortex_reference": {
+        "0": {"cl": -6.8553224298e-6, "cd": 0.0081924676041},
+        "10": {"cl": 1.0909146672, "cd": 0.012310544747},
+        "15": {"cl": 1.5460981214, "cd": 0.021236647158}
+      }
+    },
+    "sst_2003m": {
+      "implementation": "NASA-TMR-SST-2003m",
+      "comparison_model": "NASA-TMR-SSTm",
+      "comparison_is_exact_model_match": false,
+      "freestream_turbulence_intensity": 0.00052,
+      "freestream_eddy_viscosity_ratio": 0.009,
+      "freestream_k_over_u_squared": 4.055999999999999e-7,
+      "freestream_omega_length_over_u": 270.4,
+      "freestream_length_scale_over_chord": 4.300130725961134e-6,
+      "cfl3d_point_vortex_reference": {
+        "0": {"cl": -7.6275807991e-6, "cd": 0.008093729238},
+        "10": {"cl": 1.0778080613, "cd": 0.012362110998},
+        "15": {"cl": 1.5067867358, "cd": 0.022186245406}
+      }
+    }
+  },
+  "assets": [
+    {
+      "path": "references/naca0012_validation_clcd_sa.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012clcd_cfl3d_sa.dat",
+      "sha256": "b07afec6ce3ae4bf2f2d1a1d53785fde0a5ca68481a0d4186aa92754d811944e"
+    },
+    {
+      "path": "references/naca0012_validation_cp_sa.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cp_cfl3d_sa.dat",
+      "sha256": "2f1231eba6a7da0e988a6954ac34f2f420ff59a5e24fca331110f980cd881dd2"
+    },
+    {
+      "path": "references/naca0012_validation_cf_sa.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cf_cfl3d_sa.dat",
+      "sha256": "e7372151e535d3f89c2eb8b8260a1e69e6b6681bb33aacdd677967ad5403ba5e"
+    },
+    {
+      "path": "references/naca0012_validation_clcd_sst.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012clcd_cfl3d_sst.dat",
+      "sha256": "373dc142018816628b7b53ad278327db731162988ba35a166cd9fdc131a7fd7a"
+    },
+    {
+      "path": "references/naca0012_validation_cp_sst.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cp_cfl3d_sst.dat",
+      "sha256": "378f9dcd058ffbe900081f213ee5c7e24dfaec0d6a9e02f366f96e8d76bf179d"
+    },
+    {
+      "path": "references/naca0012_validation_cf_sst.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/n0012cf_cfl3d_sst.dat",
+      "sha256": "d8001cd09d0c573de63475f8e0e02a2a989216133af74b84876eba5c328da8be"
+    },
+    {
+      "path": "references/CLCD_Ladson_expdata.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/CLCD_Ladson_expdata.dat",
+      "sha256": "78cd2f6aa4968e80f44cbf6c96f699bd9c6e45681d958ec528a10cf72ed23357"
+    },
+    {
+      "path": "references/CP_Gregory_expdata.dat",
+      "url": "https://tmbwg.github.io/turbmodels/NACA0012_validation/CP_Gregory_expdata.dat",
+      "sha256": "38d8474bc67661c3cef5e4cd9eeddb95d4a436d06abc1f58a8518066f510647c"
+    }
+  ],
+  "acceptance": {
+    "local": {
+      "maximum_cells": 3584,
+      "maximum_accepted_steps": 20,
+      "maximum_wall_seconds": 300,
+      "claim": "configuration, topology, finite-state and short-trend evidence only"
+    },
+    "server_after_feature_complete": {
+      "primary": "alpha=10 deg; SA-neg on 225/449/897 and SST-2003m on 225/897",
+      "secondary": "alpha=0 deg symmetry/drag and alpha=15 deg high-lift diagnostics only after the primary gate",
+      "point_vortex_policy": "no-PV is the self-consistent primary branch; a fixed published-CL PV branch is used only for like-for-like TMR comparison",
+      "sa_finest_relative_tolerance": {"cl": 0.01, "cd": 0.03, "cp_l2": 0.05, "cf_l2": 0.08},
+      "sst2003m_engineering_tolerance": {"cl": 0.02, "cd": 0.05, "cp_l2": 0.08, "cf_l2": 0.12},
+      "first_cell_y_plus_max": 1.0,
+      "minimum_residual_decades": 3.0,
+      "maximum_load_relative_span": 0.002
+    }
+  }
+}
