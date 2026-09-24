@@ -404,7 +404,8 @@ k--epsilon、Smagorinsky/尺度相似/动态/WALE、Weiss--Smith、LU-SGS、双�
    支持级别。
 7. **Z：LES 与统计。** 完成三维 Favre 滤波、原始 Smagorinsky、尺度相似、混合/动态
    Smagorinsky、WALE、能量预算、LU-SGS/双时间耦合及可重启统计。
-8. **AB：Case06 NACA0012。** 在用户冻结工况后完成二维 RANS/URANS、网格趋势和参考比对；
+8. **AB：Case06 NACA0012。** TMR 工况冻结后先完成本机公式/配置/微型 L 级并允许继续 AC；
+   完整二维 RANS/可选 URANS、网格趋势和参考比对在功能完整后转服务器，于 AE 前关闭。
    二维不运行 LES。
 9. **AC：三维机翼通用能力。** 验证 RANS/LES、方向、对称、截面载荷、MPI、内存和 I/O。
 10. **AD：用户目标三维翼型/机翼。** 输入到位后按冻结的 RANS/URANS/LES 目标执行计算和
@@ -427,7 +428,7 @@ Y 候选后恢复人工卡口。项目继续采用本机独立开发，不恢复
 | AA | `v2.0.0-aa-candidate.1` 自动通过并经 X 联合验收 | 已完成；通用 LU-SGS/低 Mach 契约已供 Y/Z 使用 |
 | Y | `v2.0.0-y-candidate.1` 自动和人工验收通过，已合入 release | 已完成；细网格 RANS 为服务器 `pending` |
 | Z | `v2.0.0-z-candidate.1` 自动和人工验收通过，批准合入 release | 已完成；服务器 S 级 LES 证据保持 `pending` |
-| AB | AB0 混合块面守恒、网格 intake、1/2/4-rank dry-run 和完整本机回归已通过 | 等待工况/参考数据/服务器预算冻结；AB 未完成且不创建候选 |
-| AC | 未开始 | 等待 AB 人工批准 |
+| AB | AB0 与 AB1 本机 L 级自动卡口已通过；服务器 S 级后置 | `S=pending` 候选停在人工卡口；不代表物理验收完成 |
+| AC | 未开始 | 等待 AB-L 人工批准；不等待大型服务器计算 |
 | AD | 未开始，目标输入待提供 | 等待 AC 人工批准及三维 intake 冻结 |
 | AE | 未开始 | 等待 AD 人工批准；RC 后合并主干前必须人工核验 |

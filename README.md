@@ -21,9 +21,11 @@ Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.m
 v2.0.0 已进入分阶段开发：V、W、X、AA、Y、Z 已通过相应自动/人工卡口并合入
 `release/v2.0.0`。Z 已实现五种三维 LES、SGS 诊断、可重启接受步时间统计、展向载荷分箱，
 以及 BDF2 双时间 LU-SGS 耦合。完整 HIT、槽道、能谱与长时间统计仍属于服务器 S 级
-`pending`，短 smoke 不作为物理湍流验证。当前阶段 AB0 已完成 Case06 O 网格同一块面上
-壁面段与尾迹自连接段并存的守恒闭合及 1/2/4-rank dry-run；目标工况、参考数据和服务器预算
-尚未冻结，因此阶段 AB 尚未形成候选，也不启动大型计算。
+`pending`，短 smoke 不作为物理湍流验证。阶段 AB0 已完成 Case06 O 网格同一块面上
+壁面段与尾迹自连接段并存的守恒闭合及 1/2/4-rank dry-run；AB1 已按 NASA TMR 冻结
+$M=0.15$、$Re_c=6\times10^6$、$\alpha=10^\circ$ 主工况、SA/SST 远场量和参考数据。本机
+AB-L 自动卡口已通过并停在人工卡口；897×257 物理收敛保持 `S=pending`，在完整 v2 功能
+完成后转服务器执行。
 后续依次进入三维通用能力和用户提供的三维翼型/机翼目标算例。
 详细阶段 V--AE、
 自动卡口、人工放行和 Git 规则见
@@ -31,6 +33,10 @@ v2.0.0 已进入分阶段开发：V、W、X、AA、Y、Z 已通过相应自动/�
 [`算法补充.md`](算法补充.md) 第 12 节，Case06 只读登记见
 [`docs/v2.0.0/case06-intake.md`](docs/v2.0.0/case06-intake.md)，AA 前置人工审查单见
 [`docs/v2.0.0/stage-aa-reorder-review.md`](docs/v2.0.0/stage-aa-reorder-review.md)。
+Case06 可执行模板、参考数据散列和 L/S 分层流程见
+[`cases/validation/case06_naca0012/README.md`](cases/validation/case06_naca0012/README.md)。
+AB-L 自动证据见
+[`docs/v2.0.0/stage-ab1-acceptance.md`](docs/v2.0.0/stage-ab1-acceptance.md)。
 
 本开发仓库保留阶段设计、自动测试、人工算例及验收证据。v1.1.0 的确定性内部源码包由
 `tools/package_release.py` 从版本提交直接生成，并包含版本验收所需的 Case07；NACA0012 不在
