@@ -45,4 +45,7 @@ Case06、长期 LES 或目标三维翼型的生产物理验证版本，也不对
 缓存或 Git 元数据。目录内 `PACKAGE_CONTENTS.sha256` 可核验每个文件，
 `WCNS_SOURCE_REVISION` 记录来源提交。
 
+完整的本机命令、串行/MPI 计数和证据边界见
+[`v2.0-pre-validation.md`](v2.0-pre-validation.md)。
+
 本版本继续只用于本机独立开发和内部评估；没有恢复外部 CI，也没有解决 WCNS 自有代码许可。
