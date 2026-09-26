@@ -166,15 +166,17 @@ TemperaturePrimitiveState load_mean_state(const StructuredBlock& block, Index3 c
     return result;
 }
 
-TurbulenceCellContext make_cell_context(const StructuredBlock& block,
-                                        Index3 cell,
-                                        const PrimitiveGradientField& mean_gradients,
-                                        const PrimitiveGradientField& model_gradients,
-                                        const TransportModel& transport,
-                                        const GasModel& gas,
-                                        const ReferenceScales& reference)
+void populate_cell_context(TurbulenceCellContext& context,
+                           const StructuredBlock& block,
+                           Index3 cell,
+                           const PrimitiveGradientField& mean_gradients,
+                           const PrimitiveGradientField& model_gradients,
+                           int nu_component,
+                           int wall_distance_component,
+                           const TransportModel& transport,
+                           const GasModel& gas,
+                           const ReferenceScales& reference)
 {
-    TurbulenceCellContext context;
     context.mean_state = load_mean_state(block, cell);
     for (int variable = 0; variable < viscous_primitive_components; ++variable) {
         for (int direction = 0; direction < 3; ++direction) {
@@ -185,20 +187,22 @@ TurbulenceCellContext make_cell_context(const StructuredBlock& block,
                                  direction);
         }
     }
-    context.model_values = {block.turbulence.at(cell, "nu_tilde")};
-    context.model_gradients = {{{model_gradients(cell, ViscousPrimitive::Temperature, 0),
-                                 model_gradients(cell, ViscousPrimitive::Temperature, 1),
-                                 model_gradients(cell, ViscousPrimitive::Temperature, 2)}}};
+    context.model_values[0]
+        = block.turbulence.storage()(cell.i, cell.j, cell.k, nu_component);
+    context.model_gradients[0]
+        = {{model_gradients(cell, ViscousPrimitive::Temperature, 0),
+            model_gradients(cell, ViscousPrimitive::Temperature, 1),
+            model_gradients(cell, ViscousPrimitive::Temperature, 2)}};
     const Real rho = context.mean_state[temperature_density];
     context.molecular_kinematic_viscosity
         = transport.viscosity(context.mean_state[temperature_value])
         / (rho * reference.reynolds());
-    context.wall_distance = block.turbulence.at(cell, "wall_distance");
+    context.wall_distance = block.turbulence.storage()(
+        cell.i, cell.j, cell.k, wall_distance_component);
     context.reference_reynolds = reference.reynolds();
     context.reference_mach = reference.mach();
     context.heat_capacity_ratio = gas.gamma();
     context.dimension = block.cell_dimension();
-    return context;
 }
 
 Real centered_face_derivative(const Field<Real>& field,
@@ -389,11 +393,24 @@ void compute_sa_negative_flux_and_source(
     flux.reset(version);
     const auto cells = block.cell_extent();
     const int nu_component = block.turbulence.component("nu_tilde");
+    const int wall_distance_component = block.turbulence.component("wall_distance");
+    const int mu_ratio_component = block.turbulence.component("mu_t_over_mu");
+    const int production_component = block.turbulence.component("sa_production");
+    const int destruction_component = block.turbulence.component("sa_destruction");
+    const int negative_branch_component
+        = block.turbulence.component("sa_negative_branch");
+    auto& turbulence_storage = block.turbulence.storage();
 
     const auto compute_axis = [&](Axis axis) {
         const auto extent = faces(metric, axis).x.interior_extent();
         auto& output = flux.field(axis);
         const auto& mass = mean_flux.field(axis);
+        TurbulenceCellContext left_context;
+        TurbulenceCellContext right_context;
+        left_context.model_values.resize(1);
+        left_context.model_gradients.resize(1);
+        right_context.model_values.resize(1);
+        right_context.model_gradients.resize(1);
         for (int k = 0; k < extent.nk; ++k) {
             for (int j = 0; j < extent.nj; ++j) {
                 for (int i = 0; i < extent.ni; ++i) {
@@ -416,30 +433,40 @@ void compute_sa_negative_flux_and_source(
                     };
                     const auto left_cell = clamp_cell(left);
                     const auto right_cell = clamp_cell(right);
-                    const auto left_context = make_cell_context(block,
-                                                                left_cell,
-                                                                mean_gradients,
-                                                                model_gradients,
-                                                                transport,
-                                                                gas,
-                                                                reference);
-                    const auto right_context = make_cell_context(block,
-                                                                 right_cell,
-                                                                 mean_gradients,
-                                                                 model_gradients,
-                                                                 transport,
-                                                                 gas,
-                                                                 reference);
+                    populate_cell_context(left_context,
+                                          block,
+                                          left_cell,
+                                          mean_gradients,
+                                          model_gradients,
+                                          nu_component,
+                                          wall_distance_component,
+                                          transport,
+                                          gas,
+                                          reference);
+                    populate_cell_context(right_context,
+                                          block,
+                                          right_cell,
+                                          mean_gradients,
+                                          model_gradients,
+                                          nu_component,
+                                          wall_distance_component,
+                                          transport,
+                                          gas,
+                                          reference);
                     const Real diffusion = 0.5
-                        * (model.diffusion_coefficients(left_context).front()
-                           + model.diffusion_coefficients(right_context).front());
+                        * (left_context.mean_state[temperature_density]
+                               * evaluate_sa_negative(left_context).diffusion_coefficient
+                           + right_context.mean_state[temperature_density]
+                               * evaluate_sa_negative(right_context).diffusion_coefficient);
                     const auto area = area_vector(metric, axis, face);
                     Real normal_gradient = 0.0;
                     if (const auto* patch = physical_patch(block, axis, face);
                         patch != nullptr && is_no_slip(patch->type)) {
                         const auto inside = adjacent_cell(face, patch->face, cells);
-                        const Real value = block.turbulence.at(inside, "nu_tilde");
-                        const Real distance = block.turbulence.at(inside, "wall_distance");
+                        const Real value = turbulence_storage(
+                            inside.i, inside.j, inside.k, nu_component);
+                        const Real distance = turbulence_storage(
+                            inside.i, inside.j, inside.k, wall_distance_component);
                         const Real sign = patch->face.side == Side::Lower ? -1.0 : 1.0;
                         normal_gradient = -sign * value * area_magnitude(area) / distance;
                     } else {
@@ -468,30 +495,37 @@ void compute_sa_negative_flux_and_source(
     compute_axis(Axis::J);
     if (block.cell_dimension() == 3) compute_axis(Axis::K);
 
+    TurbulenceCellContext context;
+    context.model_values.resize(1);
+    context.model_gradients.resize(1);
     for (int k = 0; k < cells.nk; ++k) {
         for (int j = 0; j < cells.nj; ++j) {
             for (int i = 0; i < cells.ni; ++i) {
                 const Index3 cell {i, j, k};
-                const auto context = make_cell_context(block,
-                                                       cell,
-                                                       mean_gradients,
-                                                       model_gradients,
-                                                       transport,
-                                                       gas,
-                                                       reference);
+                populate_cell_context(context,
+                                      block,
+                                      cell,
+                                      mean_gradients,
+                                      model_gradients,
+                                      nu_component,
+                                      wall_distance_component,
+                                      transport,
+                                      gas,
+                                      reference);
                 const auto evaluation = evaluate_sa_negative(context);
-                const auto source = model.source_linearization(context);
-                residual(i, j, k, 0) = source.source.front();
-                source_jacobian(i, j, k, 0) = source.jacobian.front();
+                // Reuse the same evaluation for the source, Jacobian and diagnostics.
+                residual(i, j, k, 0)
+                    = context.mean_state[temperature_density] * evaluation.source;
+                source_jacobian(i, j, k, 0) = evaluation.source_derivative;
                 const Real mu = transport.viscosity(context.mean_state[temperature_value]);
-                block.turbulence.at(cell, "mu_t_over_mu")
+                turbulence_storage(i, j, k, mu_ratio_component)
                     = context.mean_state[temperature_density] * reference.reynolds()
                     * evaluation.eddy_kinematic_viscosity / mu;
-                block.turbulence.at(cell, "sa_production")
+                turbulence_storage(i, j, k, production_component)
                     = context.mean_state[temperature_density] * evaluation.production_source;
-                block.turbulence.at(cell, "sa_destruction")
+                turbulence_storage(i, j, k, destruction_component)
                     = context.mean_state[temperature_density] * evaluation.destruction_source;
-                block.turbulence.at(cell, "sa_negative_branch")
+                turbulence_storage(i, j, k, negative_branch_component)
                     = evaluation.negative_branch ? 1.0 : 0.0;
             }
         }

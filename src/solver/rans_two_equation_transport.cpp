@@ -91,16 +91,17 @@ Index3 clamp_cell(Index3 cell, Extent3 extent)
     return cell;
 }
 
-TurbulenceCellContext make_context(const StructuredBlock& block,
-                                   Index3 cell,
-                                   const PrimitiveGradientField& mean_gradients,
-                                   const Field<Real>& model_gradients,
-                                   const std::vector<TurbulenceFieldDescriptor>& descriptors,
-                                   const TransportModel& transport,
-                                   const GasModel& gas,
-                                   const ReferenceScales& reference)
+void populate_context(TurbulenceCellContext& context,
+                      const StructuredBlock& block,
+                      Index3 cell,
+                      const PrimitiveGradientField& mean_gradients,
+                      const Field<Real>& model_gradients,
+                      const std::array<int, 2>& transported_components,
+                      int wall_distance_component,
+                      const TransportModel& transport,
+                      const GasModel& gas,
+                      const ReferenceScales& reference)
 {
-    TurbulenceCellContext context;
     for (int component = 0; component < fluid_components; ++component) {
         context.mean_state[static_cast<std::size_t>(component)]
             = block.flow.temperature_primitive(cell.i, cell.j, cell.k, component);
@@ -112,24 +113,25 @@ TurbulenceCellContext make_context(const StructuredBlock& block,
                 = mean_gradients(cell, static_cast<ViscousPrimitive>(variable), direction);
         }
     }
-    for (std::size_t variable = 0; variable < descriptors.size(); ++variable) {
-        context.model_values.push_back(block.turbulence.at(cell, descriptors[variable].name));
-        context.model_gradients.push_back({{
+    for (std::size_t variable = 0; variable < transported_components.size(); ++variable) {
+        context.model_values[variable] = block.turbulence.storage()(
+            cell.i, cell.j, cell.k, transported_components[variable]);
+        context.model_gradients[variable] = {{
             model_gradients(cell.i, cell.j, cell.k, static_cast<int>(3 * variable)),
             model_gradients(cell.i, cell.j, cell.k, static_cast<int>(3 * variable + 1)),
             model_gradients(cell.i, cell.j, cell.k, static_cast<int>(3 * variable + 2)),
-        }});
+        }};
     }
     const Real rho = context.mean_state[temperature_density];
     context.molecular_kinematic_viscosity
         = transport.viscosity(context.mean_state[temperature_value])
         / (rho * reference.reynolds());
-    context.wall_distance = block.turbulence.at(cell, "wall_distance");
+    context.wall_distance = block.turbulence.storage()(
+        cell.i, cell.j, cell.k, wall_distance_component);
     context.reference_reynolds = reference.reynolds();
     context.reference_mach = reference.mach();
     context.heat_capacity_ratio = gas.gamma();
     context.dimension = block.cell_dimension();
-    return context;
 }
 
 Real equilibrium_friction_velocity(Real velocity, Real distance, Real nu)
@@ -174,15 +176,19 @@ void initialize_two_equation_fields(const MpiRuntime& mpi,
     for (auto& block : local_blocks.blocks()) {
         block.turbulence.reset(block.cell_extent(), block.ghost_width(), model->fields());
         block.turbulence.fill(0.0);
-        wall_index.fill_cell_field(
-            block, block.turbulence.storage(), block.turbulence.component("wall_distance"));
+        auto& storage = block.turbulence.storage();
+        const int wall_distance_component = block.turbulence.component("wall_distance");
+        const std::array<int, 2> transported_components {{
+            block.turbulence.component(transported[0].name),
+            block.turbulence.component(transported[1].name),
+        }};
+        wall_index.fill_cell_field(block, storage, wall_distance_component);
         const auto extent = block.cell_extent();
         for (int k = 0; k < extent.nk; ++k) {
             for (int j = 0; j < extent.nj; ++j) {
                 for (int i = 0; i < extent.ni; ++i) {
-                    const Index3 cell {i, j, k};
-                    block.turbulence.at(cell, transported[0].name) = farfield[0];
-                    block.turbulence.at(cell, transported[1].name) = farfield[1];
+                    storage(i, j, k, transported_components[0]) = farfield[0];
+                    storage(i, j, k, transported_components[1]) = farfield[1];
                 }
             }
         }
@@ -192,12 +198,19 @@ void initialize_two_equation_fields(const MpiRuntime& mpi,
 
 void synchronize_two_equation_fields(const HaloExchanger& exchanger,
                                      LocalBlockSet& local_blocks,
-                                     const TurbulenceModelConfig& config,
+                                     const ITurbulenceModel& model,
                                      const TransportModel& transport,
                                      const ReferenceScales& reference)
 {
-    const auto model = TurbulenceModelRegistry::create_builtin().create(config);
-    const auto descriptors = transported_fields(*model);
+    const auto& config = model.config();
+    if (config.kind != TurbulenceModelKind::KOmegaSst
+        && config.kind != TurbulenceModelKind::KEpsilon) {
+        throw std::invalid_argument("two-equation synchronization requires SST or k-epsilon");
+    }
+    const auto descriptors = transported_fields(model);
+    if (descriptors.size() != 2) {
+        throw std::invalid_argument("two-equation synchronization requires two fields");
+    }
     const auto farfield = two_equation_farfield_values(config);
     if (local_blocks.blocks().empty()) return;
     const int components = local_blocks.blocks().front().turbulence.components();
@@ -207,6 +220,13 @@ void synchronize_two_equation_fields(const HaloExchanger& exchanger,
 
     for (auto& block : local_blocks.blocks()) {
         auto& storage = block.turbulence.storage();
+        // Resolve the schema once; string lookup inside the boundary-cell loops is avoidable.
+        const std::array<int, 2> transported_components {{
+            block.turbulence.component(descriptors[0].name),
+            block.turbulence.component(descriptors[1].name),
+        }};
+        const int wall_distance_component = block.turbulence.component("wall_distance");
+        const int wall_y_plus_component = block.turbulence.component("wall_y_plus");
         const auto extent = block.cell_extent();
         for (const auto& patch : block.boundaries) {
             const auto counts = patch.boundary_face_range.counts();
@@ -216,8 +236,8 @@ void synchronize_two_equation_fields(const HaloExchanger& exchanger,
                         const auto face = patch.boundary_face_range.at({oi, oj, ok});
                         const auto first = mirror_cell(face, patch.face, 1, extent);
                         std::array<Real, 2> boundary {{
-                            block.turbulence.at(first, descriptors[0].name),
-                            block.turbulence.at(first, descriptors[1].name),
+                            storage(first.i, first.j, first.k, transported_components[0]),
+                            storage(first.i, first.j, first.k, transported_components[1]),
                         }};
                         bool dirichlet = false;
                         if (uses_farfield_value(patch.type)) {
@@ -225,7 +245,8 @@ void synchronize_two_equation_fields(const HaloExchanger& exchanger,
                             dirichlet = true;
                         } else if (is_wall(patch.type)) {
                             dirichlet = true;
-                            const Real distance = block.turbulence.at(first, "wall_distance");
+                            const Real distance = storage(
+                                first.i, first.j, first.k, wall_distance_component);
                             const Real rho = block.flow.temperature_primitive(
                                 first.i, first.j, first.k, temperature_density);
                             const Real temperature = block.flow.temperature_primitive(
@@ -233,6 +254,10 @@ void synchronize_two_equation_fields(const HaloExchanger& exchanger,
                             const Real nu = transport.viscosity(temperature)
                                 / (rho * reference.reynolds());
                             if (config.wall_treatment == WallTreatment::Resolved) {
+                                if (config.kind != TurbulenceModelKind::KOmegaSst) {
+                                    throw PhysicsConfigurationError(
+                                        "resolved two-equation wall treatment requires SST");
+                                }
                                 const SstConstants constants;
                                 boundary = {{0.0,
                                              60.0 * nu
@@ -247,7 +272,8 @@ void synchronize_two_equation_fields(const HaloExchanger& exchanger,
                                 const Real friction = equilibrium_friction_velocity(
                                     std::sqrt(u * u + v * v + w * w), distance, nu);
                                 const Real y_plus = friction * distance / nu;
-                                block.turbulence.at(first, "wall_y_plus") = y_plus;
+                                storage(first.i, first.j, first.k, wall_y_plus_component)
+                                    = y_plus;
                                 const StandardKEpsilonConstants constants;
                                 const Real k_wall
                                     = friction * friction / std::sqrt(constants.c_mu);
@@ -272,8 +298,7 @@ void synchronize_two_equation_fields(const HaloExchanger& exchanger,
                             }
                             if (dirichlet) {
                                 for (int variable = 0; variable < 2; ++variable) {
-                                    const int component
-                                        = block.turbulence.component(descriptors[variable].name);
+                                    const int component = transported_components[variable];
                                     storage(ghost.i, ghost.j, ghost.k, component)
                                         = 2.0 * boundary[static_cast<std::size_t>(variable)]
                                         - storage(mirror.i, mirror.j, mirror.k, component);
@@ -353,6 +378,19 @@ void compute_two_equation_gradients_and_source(
         throw std::invalid_argument("two-equation transport workspace is incompatible");
     }
     const auto extent = block.cell_extent();
+    auto& turbulence_storage = block.turbulence.storage();
+    const std::array<int, 2> transported_components {{
+        block.turbulence.component(descriptors[0].name),
+        block.turbulence.component(descriptors[1].name),
+    }};
+    const int wall_distance_component = block.turbulence.component("wall_distance");
+    const int mu_ratio_component = block.turbulence.component("mu_t_over_mu");
+    const int production_component = block.turbulence.component("turbulence_production");
+    const int destruction_component = block.turbulence.component("turbulence_destruction");
+    const bool sst = model.config().kind == TurbulenceModelKind::KOmegaSst;
+    const int f1_component = sst ? block.turbulence.component("sst_f1") : -1;
+    const int f2_component = sst ? block.turbulence.component("sst_f2") : -1;
+    const int cross_component = sst ? block.turbulence.component("cross_diffusion") : -1;
     residual.fill(0.0);
     source_jacobian.fill(0.0);
     face_workspace.fill(0.0);
@@ -372,14 +410,13 @@ void compute_two_equation_gradients_and_source(
                         auto left = lower;
                         --left[static_cast<std::size_t>(axis)];
                         auto right = upper;
-                        const int component
-                            = block.turbulence.component(descriptors[variable].name);
+                        const int component = transported_components[variable];
                         const Real lower_value = 0.5
-                            * (block.turbulence.storage()(left.i, left.j, left.k, component)
-                               + block.turbulence.storage()(cell.i, cell.j, cell.k, component));
+                            * (turbulence_storage(left.i, left.j, left.k, component)
+                               + turbulence_storage(cell.i, cell.j, cell.k, component));
                         const Real upper_value = 0.5
-                            * (block.turbulence.storage()(cell.i, cell.j, cell.k, component)
-                               + block.turbulence.storage()(right.i, right.j, right.k, component));
+                            * (turbulence_storage(cell.i, cell.j, cell.k, component)
+                               + turbulence_storage(right.i, right.j, right.k, component));
                         const auto lower_area = area_vector(metric, axis, lower);
                         const auto upper_area = area_vector(metric, axis, upper);
                         for (int direction = 0; direction < 3; ++direction) {
@@ -397,43 +434,50 @@ void compute_two_equation_gradients_and_source(
         }
     }
 
+    TurbulenceCellContext context;
+    context.model_values.resize(2);
+    context.model_gradients.resize(2);
     for (int k = 0; k < extent.nk; ++k) {
         for (int j = 0; j < extent.nj; ++j) {
             for (int i = 0; i < extent.ni; ++i) {
                 const Index3 cell {i, j, k};
-                const auto context = make_context(block,
-                                                  cell,
-                                                  mean_gradients,
-                                                  face_workspace,
-                                                  descriptors,
-                                                  transport,
-                                                  gas,
-                                                  reference);
-                const auto source = model.source_linearization(context);
-                for (int variable = 0; variable < 2; ++variable) {
-                    residual(i, j, k, variable) = source.source[static_cast<std::size_t>(variable)];
-                }
-                for (int entry = 0; entry < 4; ++entry) {
-                    source_jacobian(i, j, k, entry)
-                        = source.jacobian[static_cast<std::size_t>(entry)];
-                }
+                populate_context(context,
+                                 block,
+                                 cell,
+                                 mean_gradients,
+                                 face_workspace,
+                                 transported_components,
+                                 wall_distance_component,
+                                 transport,
+                                 gas,
+                                 reference);
                 const Real mu = transport.viscosity(context.mean_state[temperature_value]);
                 TwoEquationEvaluation evaluation;
-                if (model.config().kind == TurbulenceModelKind::KOmegaSst) {
+                if (sst) {
                     evaluation = evaluate_k_omega_sst(context);
-                    block.turbulence.at(cell, "sst_f1") = evaluation.blending_f1;
-                    block.turbulence.at(cell, "sst_f2") = evaluation.blending_f2;
-                    block.turbulence.at(cell, "cross_diffusion")
+                    turbulence_storage(i, j, k, f1_component) = evaluation.blending_f1;
+                    turbulence_storage(i, j, k, f2_component) = evaluation.blending_f2;
+                    turbulence_storage(i, j, k, cross_component)
                         = evaluation.cross_diffusion;
                 } else {
                     evaluation = evaluate_standard_k_epsilon(context);
                 }
-                block.turbulence.at(cell, "mu_t_over_mu")
+                // One evaluation supplies the source, Jacobian and diagnostics.  Calling the
+                // virtual source path here used to repeat the complete model calculation.
+                for (int variable = 0; variable < 2; ++variable) {
+                    residual(i, j, k, variable)
+                        = evaluation.source[static_cast<std::size_t>(variable)];
+                }
+                for (int entry = 0; entry < 4; ++entry) {
+                    source_jacobian(i, j, k, entry)
+                        = evaluation.source_jacobian[static_cast<std::size_t>(entry)];
+                }
+                turbulence_storage(i, j, k, mu_ratio_component)
                     = context.mean_state[temperature_density] * reference.reynolds()
                     * evaluation.eddy_kinematic_viscosity / mu;
-                block.turbulence.at(cell, "turbulence_production")
+                turbulence_storage(i, j, k, production_component)
                     = context.mean_state[temperature_density] * evaluation.production;
-                block.turbulence.at(cell, "turbulence_destruction")
+                turbulence_storage(i, j, k, destruction_component)
                     = context.mean_state[temperature_density] * evaluation.destruction_k;
                 face_workspace(i, j, k, 6)
                     = evaluation.diffusion_coefficients[0];
@@ -491,10 +535,13 @@ void assemble_two_equation_flux_residual(Field<Real>& residual,
         throw std::invalid_argument("two-equation flux workspace is incompatible");
     }
     const auto extent = block.cell_extent();
+    const std::array<int, 2> transported_components {{
+        block.turbulence.component(descriptors[0].name),
+        block.turbulence.component(descriptors[1].name),
+    }};
 
     const auto face_flux = [&](Axis axis, Index3 face, int variable) {
-        const int component = block.turbulence.component(
-            descriptors[static_cast<std::size_t>(variable)].name);
+        const int component = transported_components[static_cast<std::size_t>(variable)];
         const Real mass_flux = mean_flux.field(axis)(face.i, face.j, face.k, density);
         Real advected = second_order_upwind(
             block.turbulence.storage(), component, axis, face, mass_flux >= 0.0);

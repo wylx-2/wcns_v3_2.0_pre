@@ -61,16 +61,18 @@ void validate_system(const Field<Real>& right_hand_side,
     }
 }
 
-std::vector<Real> solve_dense_block(const Field<Real>& blocks,
-                                    Index3 cell,
-                                    const std::vector<Real>& right_hand_side)
+void solve_dense_block(const Field<Real>& blocks,
+                       Index3 cell,
+                       const std::vector<Real>& right_hand_side,
+                       std::vector<Real>& matrix,
+                       std::vector<Real>& result)
 {
     const int variables = static_cast<int>(right_hand_side.size());
     if (blocks.components() != variables * variables || variables == 0) {
         throw std::invalid_argument("LU-SGS dense diagonal block has an invalid size");
     }
-    std::vector<Real> matrix(static_cast<std::size_t>(variables * variables));
-    std::vector<Real> result = right_hand_side;
+    matrix.resize(static_cast<std::size_t>(variables * variables));
+    result = right_hand_side;
     for (int row = 0; row < variables; ++row) {
         for (int column = 0; column < variables; ++column) {
             matrix[static_cast<std::size_t>(row * variables + column)]
@@ -124,15 +126,15 @@ std::vector<Real> solve_dense_block(const Field<Real>& blocks,
             throw std::runtime_error("LU-SGS dense block solve is non-finite");
         }
     }
-    return result;
 }
 
-std::vector<Real> multiply_dense_block(const Field<Real>& blocks,
-                                       Index3 cell,
-                                       const Field<Real>& values)
+void multiply_dense_block(const Field<Real>& blocks,
+                          Index3 cell,
+                          const Field<Real>& values,
+                          std::vector<Real>& result)
 {
     const int variables = values.components();
-    std::vector<Real> result(static_cast<std::size_t>(variables), 0.0);
+    result.assign(static_cast<std::size_t>(variables), 0.0);
     for (int row = 0; row < variables; ++row) {
         for (int column = 0; column < variables; ++column) {
             result[static_cast<std::size_t>(row)]
@@ -140,7 +142,6 @@ std::vector<Real> multiply_dense_block(const Field<Real>& blocks,
                 * values(cell.i, cell.j, cell.k, column);
         }
     }
-    return result;
 }
 
 Matrix5 euler_normal_flux_jacobian(const PressurePrimitiveState& state,
@@ -188,14 +189,15 @@ Matrix5 euler_normal_flux_jacobian(const PressurePrimitiveState& state,
     return result;
 }
 
-std::vector<Real> multiply_face_block(const Field<Real>& face_blocks,
-                                      Index3 cell,
-                                      int face_component,
-                                      const Field<Real>& values,
-                                      Index3 neighbor)
+void multiply_face_block(const Field<Real>& face_blocks,
+                         Index3 cell,
+                         int face_component,
+                         const Field<Real>& values,
+                         Index3 neighbor,
+                         std::vector<Real>& result)
 {
     const int variables = values.components();
-    std::vector<Real> result(static_cast<std::size_t>(variables), 0.0);
+    result.assign(static_cast<std::size_t>(variables), 0.0);
     const int offset = face_component * variables * variables;
     for (int row = 0; row < variables; ++row) {
         for (int column = 0; column < variables; ++column) {
@@ -207,7 +209,6 @@ std::vector<Real> multiply_face_block(const Field<Real>& face_blocks,
                 * values(neighbor.i, neighbor.j, neighbor.k, column);
         }
     }
-    return result;
 }
 
 Real neighbor_value(const Field<Real>& field,
@@ -576,13 +577,19 @@ Field<Real> solve_block_lu_sgs(const Field<Real>& right_hand_side,
     Field<Real> defect(extent, variables, 0, 0.0);
     Field<Real> intermediate(extent, variables, 0, 0.0);
     Field<Real> correction(extent, variables, 0, 0.0);
+    // These buffers are reused for every cell.  Allocating them in the sweeps made the
+    // implicit path scale its heap traffic with cell count without changing the algebra.
+    std::vector<Real> product(static_cast<std::size_t>(variables));
+    std::vector<Real> value(static_cast<std::size_t>(variables));
+    std::vector<Real> solved(static_cast<std::size_t>(variables));
+    std::vector<Real> matrix(static_cast<std::size_t>(variables * variables));
 
     for (int sweep = 0; sweep < config.sweeps; ++sweep) {
         for (int k = 0; k < extent.nk; ++k) {
             for (int j = 0; j < extent.nj; ++j) {
                 for (int i = 0; i < extent.ni; ++i) {
                     const Index3 cell {i, j, k};
-                    const auto product = multiply_dense_block(diagonal_blocks, cell, solution);
+                    multiply_dense_block(diagonal_blocks, cell, solution, product);
                     for (int variable = 0; variable < variables; ++variable) {
                         Real value = right_hand_side(i, j, k, variable)
                             - product[static_cast<std::size_t>(variable)];
@@ -610,7 +617,6 @@ Field<Real> solve_block_lu_sgs(const Field<Real>& right_hand_side,
             for (int j = 0; j < extent.nj; ++j) {
                 for (int i = 0; i < extent.ni; ++i) {
                     const Index3 cell {i, j, k};
-                    std::vector<Real> value(static_cast<std::size_t>(variables));
                     for (int variable = 0; variable < variables; ++variable) {
                         value[static_cast<std::size_t>(variable)]
                             = defect(i, j, k, variable);
@@ -623,7 +629,7 @@ Field<Real> solve_block_lu_sgs(const Field<Real>& right_hand_side,
                             }
                         }
                     }
-                    const auto solved = solve_dense_block(diagonal_blocks, cell, value);
+                    solve_dense_block(diagonal_blocks, cell, value, matrix, solved);
                     for (int variable = 0; variable < variables; ++variable) {
                         intermediate(i, j, k, variable)
                             = solved[static_cast<std::size_t>(variable)];
@@ -635,7 +641,7 @@ Field<Real> solve_block_lu_sgs(const Field<Real>& right_hand_side,
             for (int j = extent.nj - 1; j >= 0; --j) {
                 for (int i = extent.ni - 1; i >= 0; --i) {
                     const Index3 cell {i, j, k};
-                    auto value = multiply_dense_block(diagonal_blocks, cell, intermediate);
+                    multiply_dense_block(diagonal_blocks, cell, intermediate, value);
                     for (int variable = 0; variable < variables; ++variable) {
                         for (int axis = 0; axis < dimension; ++axis) {
                             if (has_neighbor(extent, i, j, k, axis, 1)) {
@@ -646,7 +652,7 @@ Field<Real> solve_block_lu_sgs(const Field<Real>& right_hand_side,
                             }
                         }
                     }
-                    const auto solved = solve_dense_block(diagonal_blocks, cell, value);
+                    solve_dense_block(diagonal_blocks, cell, value, matrix, solved);
                     for (int variable = 0; variable < variables; ++variable) {
                         const Real delta = solved[static_cast<std::size_t>(variable)];
                         correction(i, j, k, variable) = delta;
@@ -771,6 +777,8 @@ Field<Real> solve_face_block_lu_sgs(const Field<Real>& right_hand_side,
     Field<Real> defect(extent, variables, 0, 0.0);
     Field<Real> intermediate(extent, variables, 0, 0.0);
     Field<Real> correction(extent, variables, 0, 0.0);
+    std::vector<Real> product(static_cast<std::size_t>(variables));
+    std::vector<Real> value(static_cast<std::size_t>(variables));
     for (int sweep = 0; sweep < config.sweeps; ++sweep) {
         for (int k = 0; k < extent.nk; ++k) {
             for (int j = 0; j < extent.nj; ++j) {
@@ -788,12 +796,13 @@ Field<Real> solve_face_block_lu_sgs(const Field<Real>& right_hand_side,
                             if (!has_neighbor(extent, i, j, k, axis, side)) continue;
                             auto neighbor = cell;
                             neighbor[static_cast<std::size_t>(axis)] += side;
-                            const auto product = multiply_face_block(
+                            multiply_face_block(
                                 face_blocks,
                                 cell,
                                 side < 0 ? lower_component(axis) : upper_component(axis),
                                 solution,
-                                neighbor);
+                                neighbor,
+                                product);
                             for (int variable = 0; variable < variables; ++variable) {
                                 defect(i, j, k, variable)
                                     += product[static_cast<std::size_t>(variable)];
@@ -809,7 +818,6 @@ Field<Real> solve_face_block_lu_sgs(const Field<Real>& right_hand_side,
             for (int j = 0; j < extent.nj; ++j) {
                 for (int i = 0; i < extent.ni; ++i) {
                     const Index3 cell {i, j, k};
-                    std::vector<Real> value(static_cast<std::size_t>(variables));
                     for (int variable = 0; variable < variables; ++variable) {
                         value[static_cast<std::size_t>(variable)]
                             = defect(i, j, k, variable);
@@ -818,12 +826,13 @@ Field<Real> solve_face_block_lu_sgs(const Field<Real>& right_hand_side,
                         if (!has_neighbor(extent, i, j, k, axis, -1)) continue;
                         auto neighbor = cell;
                         --neighbor[static_cast<std::size_t>(axis)];
-                        const auto product = multiply_face_block(
+                        multiply_face_block(
                             face_blocks,
                             cell,
                             lower_component(axis),
                             intermediate,
-                            neighbor);
+                            neighbor,
+                            product);
                         for (int variable = 0; variable < variables; ++variable) {
                             value[static_cast<std::size_t>(variable)]
                                 += product[static_cast<std::size_t>(variable)];
@@ -843,7 +852,6 @@ Field<Real> solve_face_block_lu_sgs(const Field<Real>& right_hand_side,
             for (int j = extent.nj - 1; j >= 0; --j) {
                 for (int i = extent.ni - 1; i >= 0; --i) {
                     const Index3 cell {i, j, k};
-                    std::vector<Real> value(static_cast<std::size_t>(variables));
                     for (int variable = 0; variable < variables; ++variable) {
                         const int diagonal_component
                             = diagonal.components() == 1 ? 0 : variable;
@@ -855,12 +863,13 @@ Field<Real> solve_face_block_lu_sgs(const Field<Real>& right_hand_side,
                         if (!has_neighbor(extent, i, j, k, axis, 1)) continue;
                         auto neighbor = cell;
                         ++neighbor[static_cast<std::size_t>(axis)];
-                        const auto product = multiply_face_block(
+                        multiply_face_block(
                             face_blocks,
                             cell,
                             upper_component(axis),
                             correction,
-                            neighbor);
+                            neighbor,
+                            product);
                         for (int variable = 0; variable < variables; ++variable) {
                             value[static_cast<std::size_t>(variable)]
                                 += product[static_cast<std::size_t>(variable)];

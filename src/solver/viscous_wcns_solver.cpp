@@ -461,6 +461,23 @@ void ViscousWcnsSolver::update_les_closure_fields()
         const auto& gradients = gradient_workspace_.at(block.id());
         const auto& closure = les_closure_workspace_.at(block.id());
         const auto& metric = metrics_.at(block.id());
+        auto& turbulence_storage = block.turbulence.storage();
+        // Diagnostic fields have a fixed schema for the life of the block.  Cache component
+        // indices before entering the per-cell closure loop.
+        const int mu_sgs_component = block.turbulence.component("mu_sgs");
+        const int mu_ratio_component = block.turbulence.component("mu_sgs_over_mu");
+        const int transfer_component = block.turbulence.component("sgs_energy_transfer");
+        const int stress_xx_component = block.turbulence.component("sgs_stress_xx");
+        const int stress_yy_component = block.turbulence.component("sgs_stress_yy");
+        const int stress_zz_component = block.turbulence.component("sgs_stress_zz");
+        const int stress_xy_component = block.turbulence.component("sgs_stress_xy");
+        const int stress_xz_component = block.turbulence.component("sgs_stress_xz");
+        const int stress_yz_component = block.turbulence.component("sgs_stress_yz");
+        const int dynamic_component
+            = block.turbulence.component("les_dynamic_coefficient");
+        const int filter_width_component = block.turbulence.component("les_filter_width");
+        const int anisotropy_component = block.turbulence.component("les_grid_anisotropy");
+        const Real inverse_reynolds = 1.0 / reference_.reynolds();
         const auto extent = block.cell_extent();
         for (int k = 0; k < extent.nk; ++k) {
             for (int j = 0; j < extent.nj; ++j) {
@@ -508,31 +525,31 @@ void ViscousWcnsSolver::update_les_closure_fields()
                         = turbulence_model_->viscous_contribution(context);
                     const Real molecular_viscosity = transport_.viscosity(
                         context.mean_state[temperature_value]);
-                    const Real inverse_reynolds = 1.0 / reference_.reynolds();
-                    block.turbulence.at(cell, "mu_sgs")
+                    turbulence_storage(i, j, k, mu_sgs_component)
                         = contribution.eddy_viscosity * inverse_reynolds;
-                    block.turbulence.at(cell, "mu_sgs_over_mu")
+                    turbulence_storage(i, j, k, mu_ratio_component)
                         = contribution.eddy_viscosity / molecular_viscosity;
-                    block.turbulence.at(cell, "sgs_energy_transfer")
+                    turbulence_storage(i, j, k, transfer_component)
                         = contribution.sgs_energy_transfer;
-                    block.turbulence.at(cell, "sgs_stress_xx")
+                    turbulence_storage(i, j, k, stress_xx_component)
                         = -contribution.stress.xx * inverse_reynolds;
-                    block.turbulence.at(cell, "sgs_stress_yy")
+                    turbulence_storage(i, j, k, stress_yy_component)
                         = -contribution.stress.yy * inverse_reynolds;
-                    block.turbulence.at(cell, "sgs_stress_zz")
+                    turbulence_storage(i, j, k, stress_zz_component)
                         = -contribution.stress.zz * inverse_reynolds;
-                    block.turbulence.at(cell, "sgs_stress_xy")
+                    turbulence_storage(i, j, k, stress_xy_component)
                         = -contribution.stress.xy * inverse_reynolds;
-                    block.turbulence.at(cell, "sgs_stress_xz")
+                    turbulence_storage(i, j, k, stress_xz_component)
                         = -contribution.stress.xz * inverse_reynolds;
-                    block.turbulence.at(cell, "sgs_stress_yz")
+                    turbulence_storage(i, j, k, stress_yz_component)
                         = -contribution.stress.yz * inverse_reynolds;
-                    block.turbulence.at(cell, "les_dynamic_coefficient")
+                    turbulence_storage(i, j, k, dynamic_component)
                         = config_.turbulence.kind
                                 == TurbulenceModelKind::DynamicSmagorinsky
                             ? closure(i, j, k, les_dynamic_coefficient)
                             : 0.0;
-                    block.turbulence.at(cell, "les_filter_width") = context.filter_width;
+                    turbulence_storage(i, j, k, filter_width_component)
+                        = context.filter_width;
 
                     const Real volume = metric.jacobian()(i, j, k);
                     std::array<Real, 3> lengths {};
@@ -552,7 +569,7 @@ void ViscousWcnsSolver::update_les_closure_fields()
                         || !std::isfinite(*maximum)) {
                         throw PhysicsError("LES grid-anisotropy diagnostic is invalid");
                     }
-                    block.turbulence.at(cell, "les_grid_anisotropy")
+                    turbulence_storage(i, j, k, anisotropy_component)
                         = *maximum / *minimum;
                 }
             }
@@ -603,7 +620,7 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                                                                       reference_.reynolds()));
         } else {
             synchronize_two_equation_fields(
-                turbulence_exchanger_, local_blocks_, config_.turbulence, transport_, reference_);
+                turbulence_exchanger_, local_blocks_, *turbulence_model_, transport_, reference_);
         }
     }
 
@@ -950,6 +967,19 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
         const auto& metric = metrics.at(block.id());
         Field<Real> additional(extent, 2 * block.cell_dimension(), 0, 0.0);
         const Real coefficient = stability.for_ssprk3(profile, block.cell_dimension());
+        std::vector<int> model_components;
+        TurbulenceCellContext turbulence_context;
+        int wall_distance_component = -1;
+        if (turbulence_model != nullptr
+            && turbulence_model->family() == TurbulenceModelFamily::RansTransport) {
+            model_components.reserve(descriptors.size());
+            for (const auto& descriptor : descriptors) {
+                model_components.push_back(block.turbulence.component(descriptor.name));
+            }
+            turbulence_context.model_values.resize(descriptors.size());
+            turbulence_context.model_gradients.resize(descriptors.size());
+            wall_distance_component = block.turbulence.component("wall_distance");
+        }
         for (int k = 0; k < extent.nk; ++k) {
             for (int j = 0; j < extent.nj; ++j) {
                 for (int i = 0; i < extent.ni; ++i) {
@@ -964,30 +994,30 @@ ViscousImplicitIncrementSet form_viscous_implicit_increments(
                     Real model_diffusivity = 0.0;
                     if (turbulence_model != nullptr
                         && turbulence_model->family() == TurbulenceModelFamily::RansTransport) {
-                        TurbulenceCellContext context;
                         for (int component = 0; component < fluid_components; ++component) {
-                            context.mean_state[static_cast<std::size_t>(component)]
+                            turbulence_context.mean_state[static_cast<std::size_t>(component)]
                                 = block.flow.temperature_primitive(i, j, k, component);
                         }
-                        for (const auto& descriptor : descriptors) {
-                            context.model_values.push_back(
-                                block.turbulence.at(cell, descriptor.name));
-                            context.model_gradients.push_back({{0.0, 0.0, 0.0}});
+                        for (std::size_t variable = 0; variable < descriptors.size(); ++variable) {
+                            turbulence_context.model_values[variable]
+                                = block.turbulence.storage()(
+                                    i, j, k, model_components[variable]);
                         }
-                        context.molecular_kinematic_viscosity = molecular;
-                        context.wall_distance = block.turbulence.at(cell, "wall_distance");
-                        context.reference_reynolds = reference.reynolds();
-                        context.reference_mach = reference.mach();
-                        context.heat_capacity_ratio = gas.gamma();
-                        context.dimension = block.cell_dimension();
+                        turbulence_context.molecular_kinematic_viscosity = molecular;
+                        turbulence_context.wall_distance = block.turbulence.storage()(
+                            i, j, k, wall_distance_component);
+                        turbulence_context.reference_reynolds = reference.reynolds();
+                        turbulence_context.reference_mach = reference.mach();
+                        turbulence_context.heat_capacity_ratio = gas.gamma();
+                        turbulence_context.dimension = block.cell_dimension();
                         const auto contribution
-                            = turbulence_model->viscous_contribution(context);
+                            = turbulence_model->viscous_contribution(turbulence_context);
                         mean_diffusivity = std::max(
                             mean_diffusivity,
                             molecular + contribution.eddy_viscosity
                                     / (rho * reference.reynolds()));
                         for (const Real diffusion :
-                             turbulence_model->diffusion_coefficients(context)) {
+                             turbulence_model->diffusion_coefficients(turbulence_context)) {
                             model_diffusivity = std::max(model_diffusivity, diffusion / rho);
                         }
                     } else if (turbulence_model != nullptr
@@ -1684,6 +1714,20 @@ Real ViscousWcnsSolver::global_time_step(Real cfl)
         const auto cells = block.cell_extent();
         const Real viscous_stability
             = config_.stability.for_ssprk3(profile_.kind(), block.cell_dimension());
+        std::vector<TurbulenceFieldDescriptor> descriptors;
+        std::vector<int> model_components;
+        TurbulenceCellContext turbulence_context;
+        int wall_distance_component = -1;
+        if (turbulence_active()) {
+            descriptors = transported_descriptors(turbulence_model_.get());
+            model_components.reserve(descriptors.size());
+            for (const auto& descriptor : descriptors) {
+                model_components.push_back(block.turbulence.component(descriptor.name));
+            }
+            turbulence_context.model_values.resize(descriptors.size());
+            turbulence_context.model_gradients.resize(descriptors.size());
+            wall_distance_component = block.turbulence.component("wall_distance");
+        }
         for (int k = 0; k < cells.nk; ++k) {
             for (int j = 0; j < cells.nj; ++j) {
                 for (int i = 0; i < cells.ni; ++i) {
@@ -1724,38 +1768,36 @@ Real ViscousWcnsSolver::global_time_step(Real cfl)
                     Real model_diffusivity = 0.0;
                     Real source_rate = 0.0;
                     if (turbulence_active()) {
-                        const auto descriptors
-                            = transported_descriptors(turbulence_model_.get());
-                        TurbulenceCellContext context;
-                        context.mean_state = state;
-                        for (const auto& descriptor : descriptors) {
-                            context.model_values.push_back(
-                                block.turbulence.at(cell, descriptor.name));
-                            context.model_gradients.push_back({{0.0, 0.0, 0.0}});
+                        turbulence_context.mean_state = state;
+                        for (std::size_t variable = 0; variable < descriptors.size(); ++variable) {
+                            turbulence_context.model_values[variable]
+                                = block.turbulence.storage()(
+                                    i, j, k, model_components[variable]);
                         }
-                        context.molecular_kinematic_viscosity
+                        turbulence_context.molecular_kinematic_viscosity
                             = mu / (rho * reference_.reynolds());
-                        context.wall_distance
-                            = block.turbulence.at(cell, "wall_distance");
-                        context.reference_reynolds = reference_.reynolds();
-                        context.reference_mach = reference_.mach();
-                        context.heat_capacity_ratio = gas_.gamma();
-                        context.dimension = block.cell_dimension();
+                        turbulence_context.wall_distance = block.turbulence.storage()(
+                            i, j, k, wall_distance_component);
+                        turbulence_context.reference_reynolds = reference_.reynolds();
+                        turbulence_context.reference_mach = reference_.mach();
+                        turbulence_context.heat_capacity_ratio = gas_.gamma();
+                        turbulence_context.dimension = block.cell_dimension();
                         const auto contribution
-                            = turbulence_model_->viscous_contribution(context);
+                            = turbulence_model_->viscous_contribution(turbulence_context);
                         mean_diffusivity = std::max(
                             mean_diffusivity,
                             mu / (rho * reference_.reynolds())
                                 + contribution.eddy_viscosity
                                     / (rho * reference_.reynolds()));
                         for (const Real diffusion :
-                             turbulence_model_->diffusion_coefficients(context)) {
+                             turbulence_model_->diffusion_coefficients(turbulence_context)) {
                             model_diffusivity
                                 = std::max(model_diffusivity, diffusion / rho);
                         }
                         if (config_.turbulence.source_treatment
                             == TurbulenceSourceTreatment::Explicit) {
-                            const auto source = turbulence_model_->source_linearization(context);
+                            const auto source
+                                = turbulence_model_->source_linearization(turbulence_context);
                             const int variables = static_cast<int>(source.source.size());
                             for (int variable = 0; variable < variables; ++variable) {
                                 source_rate = std::max(

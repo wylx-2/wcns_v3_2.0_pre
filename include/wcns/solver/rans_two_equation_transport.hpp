@@ -25,7 +25,7 @@ void initialize_two_equation_fields(const MpiRuntime& mpi,
 
 void synchronize_two_equation_fields(const HaloExchanger& exchanger,
                                      LocalBlockSet& local_blocks,
-                                     const TurbulenceModelConfig& config,
+                                     const ITurbulenceModel& model,
                                      const TransportModel& transport,
                                      const ReferenceScales& reference);
 
