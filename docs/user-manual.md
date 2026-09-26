@@ -1,11 +1,11 @@
 # WCNS 用户手册
 
-本文面向第一次接触本程序的算例使用者，以 WCNS `1.1.0` 已发布功能为主，并记录 v2.0.0
-阶段 Z 分支已经实现、但仍受候选/服务器验证边界约束的 `schema_version = 2` 能力；生产入口仍为
-`wcns_run`。按本文顺序操作，可以从源码构建程序、准备
+本文面向第一次接触本程序的算例使用者，对应 WCNS `v2.0_pre` 的 schema 1/2 统一程序；
+schema 2 的 RANS/LES、低 Mach 和隐式推进已可执行，但仍受大型服务器物理验证边界约束。
+生产入口为 `wcns_run`。按本文顺序操作，可以从源码构建程序、准备
 CGNS 网格、填写配置、完成串行或 MPI 计算、识别停止状态、读取输出并从检查点续算。
 
-本手册描述的是当前程序已经实现的行为。数学定义见[`算法补充.md`](../算法补充.md)，源码扩展见[`developer-guide.md`](developer-guide.md)，实现边界见[`known-limitations.md`](known-limitations.md)。可复制的完整配置见[`examples/full_case_template.wcns`](../examples/full_case_template.wcns)。
+本手册描述的是当前程序已经实现的行为。数学定义见[`算法补充.md`](../算法补充.md)，源码扩展见[`developer-guide.md`](developer-guide.md)，实现边界见[`known-limitations.md`](known-limitations.md)，schema 2 摘要见 [`config-reference-2.md`](config-reference-2.md)。精简发布目录不附带算例或完整配置模板。
 
 ## 1. 开始前必须知道的约定
 
@@ -406,17 +406,16 @@ SA-neg 必须与 `run.viscous = true`和至少一个 no-slip wall 同时使用�
 定常停止判定会同时要求五个平均流残差和 `nu_tilde` 残差通过，checkpoint 会保存
 `NuTilde` 及其参考残差。可输出 `nu_tilde,mu_t_over_mu,sa_production,sa_destruction,`
 `wall_distance,sa_negative_branch`。SA-neg、SST-2003m 与实验级标准 k-epsilon 已实现；短
-smoke 不能当作定量物理验证。阶段 Y 的真实 RANS
-验收固定使用 TMR 平板、发展槽道和 no-plenum hump；资产散列、三级网格、阈值和命令见
-[`cases/validation/sst_tmr`](../cases/validation/sst_tmr/README.md)，阶段状态以
-[`stage-y-acceptance.md`](v2.0.0/stage-y-acceptance.md) 为准。可用
+smoke 不能当作定量物理验证。阶段 Y 的 TMR 平板、发展槽道和 no-plenum hump 记录保存在
+开发仓库的 `cases/validation/sst_tmr` 与 `docs/v2.0.0/stage-y-acceptance.md`；这些大型证据不随
+精简目录交付。可用
 `wcns_extract_rans_profile <field.cgns> <target-x> <output.txt>` 从真实 CGNS 顶点壁面位置抽取
 二维 RANS 剖面。
 
 阶段 Z 候选支持三维非定常 `smagorinsky|scale_similarity|mixed_smagorinsky_similarity|`
 `dynamic_smagorinsky|wale`。LES 强制 `run.viscous=true`、`time.integrator=lu_sgs`、BDF2
 双时间和 `preconditioner.type=none`；二维、steady、SSPRK3 与无黏组合在启动前拒绝。完整且
-可复制的模型专属键见 [`config-schema-2-draft.md`](v2.0.0/config-schema-2-draft.md)。其中测试
+可复制的模型专属键见 [`config-reference-2.md`](config-reference-2.md)。其中测试
 滤波比固定为 2，van-Driest 名称虽可识别，但在生产 wall-$y^+$ 场接入残差前明确拒绝。
 schema 1 继续使用原配置，不应添加上述键。
 
@@ -731,8 +730,8 @@ initial.temperature = 1.0
 三个速度叠加可解析的低阶 x/z 周期扰动，扰动在两面壁上为零且 x-z 面平均为零。
 `period_x/period_z`、`re_tau`、`bulk_velocity`、`bulk_velocity_plus` 必须为正，
 `perturbation_amplitude` 只允许 `[0,0.5]`。修改壁律或参考尺度时必须重新计算
-`bulk_velocity_plus`、体系 Re 和驱动体积力。完整公式、稀疏网格限制和可执行示例见
-[`case05`](../cases/manual/case05_3d_turbulent_channel/README.md)。
+`bulk_velocity_plus`、体系 Re 和驱动体积力。完整历史算例保存在开发仓库的
+`cases/manual/case05_3d_turbulent_channel`，不随精简目录交付。
 case05 以初始体积平均速度 `U_ref=U_b,0` 缩放，所以无量纲
 `bulk_velocity=1`，而 `bulk_velocity_plus=U_b,0/u_tau` 仍为 15.4819787932。
 因此参考 Reynolds 数是 `Re_b^(h)=U_b^+*Re_tau`，体积力是
@@ -826,7 +825,7 @@ python tools\prepare_case06_naca0012.py --model sa_neg --grid <grid.cgns> --outp
 `local` 强制不超过 20 步/300 s，`server` 强制显式给出不少于 1000 步和正的
 `--max-wall-time`。`--reference-point-vortex` 只允许服务器 RANS 同源对照，并自动从冻结
 manifest 读取对应模型/攻角的参考 $C_L$；它不属于自洽主分支。完整工况、模型差异和数据散列
-见 [`../cases/validation/case06_naca0012/README.md`](../cases/validation/case06_naca0012/README.md)。
+保存在开发仓库的 `cases/validation/case06_naca0012/README.md`，不随精简目录交付。
 
 经典双马赫反射的边界配置必须按 CGNS patch 名显式写成：
 
@@ -1197,28 +1196,27 @@ mpiexec -n 4 build-user-mpi\wcns_run.exe --config run-b\restart.wcns
 
 ### 12.2 二维 Riemann 问题
 
-使用 `quadrant_riemann`、`outflow`、`run.mode=unsteady`、特征重构和 HLLC/Roe，输出初末场。完整 256² 均匀/局部加密操作见 [`case01`](../cases/manual/case01_2d_riemann/README.md)。
+使用 `quadrant_riemann`、`outflow`、`run.mode=unsteady`、特征重构和 HLLC/Roe，输出初末场。完整 256² 均匀/局部加密记录只保存在开发仓库的 `cases/manual/case01_2d_riemann`。
 
 ### 12.3 三维 Poiseuille
 
-使用 `periodic-channel` 网格、上下无滑移等温壁、`poiseuille` 初场、`source.models=pressure_gradient`、`run.viscous=true` 和 `run.mode=steady`。完整设置及一次未完成的壁面加密运行分析见 [`case02`](../cases/manual/case02_3d_poiseuille/README.md)。
+使用 `periodic-channel` 网格、上下无滑移等温壁、`poiseuille` 初场、`source.models=pressure_gradient`、`run.viscous=true` 和 `run.mode=steady`。历史设置保存在开发仓库的 `cases/manual/case02_3d_poiseuille`。
 
 ### 12.4 扭曲网格等熵涡
 
-使用 `warped-periodic-square`、周期初场距离、两套独立 profile 各运行一周期；用`wcns_compare_metric_profiles` 和 `field-error` 比较。完整实测见
-[`case03`](../cases/manual/case03_2d_vortex/README.md)。
+使用 `warped-periodic-square`、周期初场距离、两套独立 profile 各运行一周期；用`wcns_compare_metric_profiles` 和 `field-error` 比较。完整实测保存在开发仓库的 `cases/manual/case03_2d_vortex`。
 
 ### 12.5 经典双马赫反射
 
-用 `wcns_generate_release_cgns rectangle ... 960 240 ... 4.0 1.0 false` 生成`[0,4]x[0,1]`结构网格；配置 `double_mach_reflection` 初场和 left/bottom/top 三个同名专用边界，以 WENO-Z 特征重构和 HLLC 从 `t=0` 推进到 `t=0.2`。完整命令、配置解释和输出判读见 [`case04`](../cases/manual/case04_2d_double_mach_reflection/README.md)。
+用 `wcns_generate_release_cgns rectangle ... 960 240 ... 4.0 1.0 false` 生成`[0,4]x[0,1]`结构网格；配置 `double_mach_reflection` 初场和 left/bottom/top 三个同名专用边界，以 WENO-Z 特征重构和 HLLC 从 `t=0` 推进到 `t=0.2`。完整历史记录只保存在开发仓库的 `cases/manual/case04_2d_double_mach_reflection`。
 
 ### 12.6 \(Re_\tau=180\) 非定常湍流槽道
 
 使用 x/z 双周期 `periodic-channel` 网格、y 向两面等温无滑移壁、
 `turbulent_channel` 复合壁律加低模态扰动初场、`body_force` 定常体积力、
 `run.mode=unsteady`，并开启 \(x=0,\pi\) 附近的 y-z 截面流量/平均速度和两壁摩擦统计。当前 36×48×36 网格只通过
-4-rank、5 步工程可行性卡口，未作湍流统计/DNS 验收。完整公式、配置、命令、实测结果和
-Linux 迁移前检查见 [`case05`](../cases/manual/case05_3d_turbulent_channel/README.md)。
+4-rank、5 步工程可行性卡口，未作湍流统计/DNS 验收。完整配置和历史结果只保存在开发仓库的
+`cases/manual/case05_3d_turbulent_channel`。
 
 ### 12.7 二维圆柱低速与高超声速绕流
 
@@ -1227,8 +1225,7 @@ Linux 迁移前检查见 [`case05`](../cases/manual/case05_3d_turbulent_channel/
 分别观察稳定对称尾迹和非定常涡脱落；Mach 5 钝体功能检查使用 Euler、滑移壁和远场边界。
 当前粗网格结果只作定性验收。v1.1 已用求解器权威边界面迹直接输出压力/黏性牵引、热流，
 并对全局边界权重积分得到升阻力、力矩和系数；Case07 保留旧后处理结果仅供历史对照。完整参数、
-命令、实际结果、图像和限制见
-[`case07`](../cases/manual/case07_2d_cylinder/README.md)。
+命令、实际结果、图像和限制只保存在开发仓库的 `cases/manual/case07_2d_cylinder`。
 
 ## 13. 独立验证工具
 

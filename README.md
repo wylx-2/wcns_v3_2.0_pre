@@ -2,41 +2,27 @@
 
 一个面向结构多块网格、CGNS 和 MPI 并行设计的小型高阶 CFD 程序。
 
-当前生产版本为 **WCNS v1.1.0**。`v1.1.0-rc.1` 已通过人工核验，并在一次不改变程序功能的
-源码清理和完整本地回归后进入主干。本项目当前采用本机独立开发，不启用外部 CI；GitHub
-Actions 工作流已在发布后移除，质量卡口继续由本机串行/MPI CMake、CTest 和验收脚本承担。
-对外发布和代码许可证决定均暂缓。程序在本地发布矩阵基础上，已经过二维
-Riemann、三维泊肃叶流、扭曲网格等熵涡、双马赫反射、三维槽道流迁移/长算和二维圆柱
-低速/高超声速绕流等检查。数学与算法约定见 [`算法补充.md`](算法补充.md)，完整使用方法见
-[`docs/user-manual.md`](docs/user-manual.md)，源码扩展方法见
-[`docs/developer-guide.md`](docs/developer-guide.md)，v1.1.0 变化和迁移见
-[`docs/release-notes-1.1.0.md`](docs/release-notes-1.1.0.md)。当前能力边界与许可状态分别见
-[`docs/known-limitations.md`](docs/known-limitations.md) 和 [`LICENSE.md`](LICENSE.md)。
+当前稳定版本为 **WCNS v1.1.0**；正在整理的 **v2.0_pre** 是功能完整、物理验证受限的内部
+前瞻源码版本。本项目采用本机独立开发，不启用外部 CI；质量卡口由本机串行/MPI CMake、
+CTest、算法规格和发布契约检查承担。对外发布和 WCNS 自有代码许可证决定均暂缓。
+
+`v2.0_pre` 包含原 v2 路线的 RANS/LES、低 Mach 预处理、定常/非定常 LU-SGS、三维载荷与
+可重启统计能力，但不运行 Case06 大网格、长期湍流或尚未提供的目标三维翼型。因此它证明
+通用算法路径可构建、可执行并与冻结公式一致，不宣称工程精度已经通过验证。范围和卡口见
+[`docs/v2.0-pre-development-plan.md`](docs/v2.0-pre-development-plan.md)，逐项支持见
+[`docs/v2.0-pre-capability-matrix.md`](docs/v2.0-pre-capability-matrix.md)，数学定义见
+[`算法补充.md`](算法补充.md)，使用方法和限制见
+[`docs/user-manual.md`](docs/user-manual.md) 与
+[`docs/known-limitations.md`](docs/known-limitations.md)。
 
 v1.1.0 的详细范围、P--U 阶段、自动卡口、人工判断及
 Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.md)；
 物理容许性、局部通量降阶、壁面载荷/热流、输运和性能公式见
 [`算法补充.md`](算法补充.md) 第 11 节；各阶段实现状态以对应设计和验收报告为准。
 
-v2.0.0 已进入分阶段开发：V、W、X、AA、Y、Z 已通过相应自动/人工卡口并合入
-`release/v2.0.0`。Z 已实现五种三维 LES、SGS 诊断、可重启接受步时间统计、展向载荷分箱，
-以及 BDF2 双时间 LU-SGS 耦合。完整 HIT、槽道、能谱与长时间统计仍属于服务器 S 级
-`pending`，短 smoke 不作为物理湍流验证。阶段 AB0 已完成 Case06 O 网格同一块面上
-壁面段与尾迹自连接段并存的守恒闭合及 1/2/4-rank dry-run；AB1 已按 NASA TMR 冻结
-$M=0.15$、$Re_c=6\times10^6$、$\alpha=10^\circ$ 主工况、SA/SST 远场量和参考数据。本机
-AB-L 自动卡口已通过并停在人工卡口；897×257 物理收敛保持 `S=pending`，在完整 v2 功能
-完成后转服务器执行。
-后续依次进入三维通用能力和用户提供的三维翼型/机翼目标算例。
-详细阶段 V--AE、
-自动卡口、人工放行和 Git 规则见
-[`docs/v2.0.0-development-plan.md`](docs/v2.0.0-development-plan.md)，计划算法见
-[`算法补充.md`](算法补充.md) 第 12 节，Case06 只读登记见
-[`docs/v2.0.0/case06-intake.md`](docs/v2.0.0/case06-intake.md)，AA 前置人工审查单见
-[`docs/v2.0.0/stage-aa-reorder-review.md`](docs/v2.0.0/stage-aa-reorder-review.md)。
-Case06 可执行模板、参考数据散列和 L/S 分层流程见
-[`cases/validation/case06_naca0012/README.md`](cases/validation/case06_naca0012/README.md)。
-AB-L 自动证据见
-[`docs/v2.0.0/stage-ab1-acceptance.md`](docs/v2.0.0/stage-ab1-acceptance.md)。
+V、W、X、AA、Y、Z、AB0 和 AB1 的既有设计与验收记录保留在开发仓库。原 AC--AE 中依赖
+服务器和目标算例的物理验证继续属于正式 `v2.0.0` 后续工作，不阻塞 `v2.0_pre` 精简源码
+目录；历史计划见 [`docs/v2.0.0-development-plan.md`](docs/v2.0.0-development-plan.md)。
 
 本开发仓库保留阶段设计、自动测试、人工算例及验收证据。v1.1.0 的确定性内部源码包由
 `tools/package_release.py` 从版本提交直接生成，并包含版本验收所需的 Case07；NACA0012 不在
@@ -63,7 +49,7 @@ Weiss--Smith、SA-neg、SST-2003m、实验级标准 k-epsilon 及阶段 Z 的五
 ## 构建与测试
 
 ```powershell
-cmake -S . -B build -G "MinGW Makefiles"
+cmake -S . -B build -G "MinGW Makefiles" -DWCNS_BUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 cmake --install build --prefix build\install
@@ -72,7 +58,7 @@ cmake --install build --prefix build\install
 启用 MPI（Windows/MinGW 下使用 Intel MPI）：
 
 ```powershell
-cmake -S . -B build-mpi -G "MinGW Makefiles" -DWCNS_ENABLE_MPI=ON
+cmake -S . -B build-mpi -G "MinGW Makefiles" -DWCNS_ENABLE_MPI=ON -DWCNS_BUILD_TESTS=ON
 cmake --build build-mpi
 ctest --test-dir build-mpi --output-on-failure
 ```

@@ -1,4 +1,4 @@
-# WCNS v1.1.0 与 v2.0.0 阶段 Z 已知限制
+# WCNS v2.0_pre 已知限制
 
 这些限制是当前实现边界，不应通过静默降阶、占位零值或忽略配置来规避。
 
@@ -6,8 +6,8 @@
 
 - 仅支持单组分、热完全理想气体和常数比热比。v2 分支已实现 SA-neg、modified SST-2003m
   和显式实验级标准 k-epsilon，但本机 L 级自动证据不能代替 TMR 细网格/槽道/hump 的服务器
-  S 级物理验证；Case06 NACA0012 已冻结 TMR 工况并进入 AB-L，但 897×257 的服务器 S 级
-  物理收敛仍待完整 v2 功能完成后执行。
+  S 级物理验证；Case06 NACA0012 已冻结 TMR 工况并通过 AB-L，但 897×257 没有执行时间步，
+  不属于 `v2.0_pre` 的物理精度证据。
 - schema 2 已实现定常 LU-SGS 以及非定常 BDF2/BDF1 双时间 LU-SGS；没有多重网格、Krylov
   或通用全隐式 Newton。并行前后扫的收敛轨迹可随分区改变，要求的是冻结停止判据和最终物理
   一致性，而不是每次内迭代逐位相等。
@@ -18,8 +18,8 @@
   Reynolds 应力模型、DES/DDES 或壁模 LES。
 - LES 只支持三维、黏性、非定常 BDF2 双时间 LU-SGS。已实现原始 Smagorinsky、尺度相似、
   混合/动态 Smagorinsky 和 WALE；本机证据限于公式、解析滤波、受限 Taylor--Green、边界、
-  重启和 1/2/4-rank 离散卡口。完整 HIT/槽道、能谱、数值耗散反推和长时间统计仍为服务器
-  S 级 `pending`。van-Driest 名称会被识别，但在生产 wall-$y^+$ 场接入每次残差前明确拒绝。
+  重启和 1/2/4-rank 离散卡口。完整 HIT/槽道、能谱、数值耗散反推和长时间统计没有在
+  `v2.0_pre` 执行。van-Driest 名称会被识别，但在生产 wall-$y^+$ 场接入每次残差前明确拒绝。
 - 源项仅包括均匀守恒源、体力和当前制造源；没有通用表达式解释器或运行时动态源项插件。
 - v1.1.0 已给出黏性制造解空间收敛和 SSPRK3 时间收敛证据，并用分类扫描覆盖代表性 CFL；
   这些结果不是对任意网格、状态或激波问题的稳定 CFL 上界。配置中的默认 CFL 仍不构成保证。
@@ -72,7 +72,7 @@
 
 ## 发布与平台
 
-- v1.1.0 的本机实测环境为 Windows 11、CMake 3.28、MinGW-w64 GCC 8.1、本机 Python
+- v2.0_pre 的本机实测环境为 Windows 11、CMake 3.28、MinGW-w64 GCC 8.1、本机 Python
   工具链和 Intel MPI 2021.10。本项目不配置外部 CI；Linux GCC/Clang、OpenMPI、
   ASan/UBSan 及其他未执行的外部平台组合属于未验证，而不是已知不兼容。
 - MinGW 构建的程序运行时需要相容的 `libgcc_s_sjlj-1.dll` 和 `libstdc++-6.dll`；MPI 版本

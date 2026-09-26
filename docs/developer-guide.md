@@ -1,8 +1,10 @@
 # WCNS 用户自定义开发指南
 
-本文面向需要修改或扩展 WCNS 的开发者，对应当前 `1.1.0`/schema 1 源码。目标不是只告诉读者“改哪个文件”，而是说明一次扩展必须穿过哪些数据、验证、并行、重启、输出和测试路径，避免新增代码在串行小算例中可运行、到多块/MPI/重启时失效。
+本文面向需要修改或扩展 WCNS 的开发者，对应 `v2.0_pre` 的 schema 1/2 统一源码。目标不是只告诉读者“改哪个文件”，而是说明一次扩展必须穿过哪些数据、验证、并行、重启、输出和测试路径，避免新增代码在串行小算例中可运行、到多块/MPI/重启时失效。
 
-精简的 `wcns_v3_release` 仓库按发布要求不携带开发仓库中的完整 `tests/`、人工算例结果和阶段记录。本文中涉及这些目录的回归方法仍用于说明扩展应达到的验证层级；需要复现项目完整历史矩阵时，应使用 `wcns_v3` 开发仓库。精简仓库中的 `examples/` 可用于最小端到端检查。
+精简的 `WCNS_v2.0_pre` 目录按发布要求不携带开发仓库中的 `tests/`、`cases/`、`examples/`、
+人工算例结果和阶段记录。本文中涉及这些目录的回归方法仍用于说明扩展应达到的验证层级；
+需要复现完整矩阵时，应使用 `wcns` 开发仓库。精简目录只能用用户自备网格和配置做端到端检查。
 
 先按 [`user-manual.md`](user-manual.md) 完成串行与 MPI 构建，并阅读[`算法补充.md`](../算法补充.md) 和 [`known-limitations.md`](known-limitations.md)。本项目目前没有稳定的对外 ABI；“接口”是源码扩展点，不是无需重编译的动态插件接口。
 
@@ -1133,16 +1135,17 @@ plan 的 `set_version` 只能改变消息头版本，不能改变 pairs、owner�
 
 涉及这些路径的提交至少运行 allocation probe、串行/MPI 数值等价、旧版本/错误长度/NaN
 注入以及对应性能组。详细公式、分配减少率和扩展效率定义见《算法补充》11.6；冻结阈值见
-[`v1.1.0/stage-t-design.md`](v1.1.0/stage-t-design.md)。
+开发仓库的 `docs/v1.1.0/stage-t-design.md`。
 
 ### 26.3 发布步骤
 
 1. 在独立 stage 分支提交设计、实现和机器可读证据；禁止把运行输出或用户未跟踪目录加入。
 2. 从空串行/MPI 目录配置 Release、编译、全量 CTest，并执行算法规格校验。
-3. 用 `tools/package_release.py` 从 `HEAD` 已跟踪 payload 生成确定性私有源码包；验证两次归档
-   SHA-256 一致和包内 `PACKAGE_CONTENTS.sha256`。
+3. v2.0_pre 用 `tools/package_v2_pre.py` 从 `HEAD` 已跟踪 payload 生成无算例源码目录；核验
+   `WCNS_SOURCE_REVISION` 和包内 `PACKAGE_CONTENTS.sha256`。
 4. 从没有 `.git` 的解包目录重新构建、安装、运行和重启，核对 manifest 的版本/来源提交。
 5. 运行发布矩阵、错误路径和固定性能协议，写阶段验收报告；候选标签只指向报告提交。
 6. 候选后的人工卡口通过前，不得合并 `main` 或创建正式版本标签。
 
-当前 v1.1.0 的完整发布卡口见 [`v1.1.0/stage-u-design.md`](v1.1.0/stage-u-design.md)。
+v2.0_pre 的完整发布卡口见 [`v2.0-pre-capability-matrix.md`](v2.0-pre-capability-matrix.md) 和
+[`v2.0-pre-validation.md`](v2.0-pre-validation.md)；历史 v1.1.0 卡口保存在开发仓库。

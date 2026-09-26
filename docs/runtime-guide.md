@@ -1,18 +1,18 @@
 # WCNS 运行、配置、输出与重启指南
 
-本文以 WCNS `1.1.0` 已发布能力为主，并记录 v2.0.0 阶段 Z 分支已实现、
-但仍受候选与服务器物理验证边界约束的 `schema_version = 2` 能力；正式入口仍为
-`wcns_run`，定位为简明速查。
+本文对应 WCNS `v2.0_pre`：`schema_version = 1` 兼容路径和 `schema_version = 2` 的
+RANS/LES、低 Mach 与隐式推进均已进入统一程序，但大型服务器物理验证仍未执行。正式入口为
+`wcns_run`，本文定位为简明速查。
 逐步用户手册见 [`user-manual.md`](user-manual.md)，源码扩展指南见
-[`developer-guide.md`](developer-guide.md)，完整配置模板见
-[`examples/full_case_template.wcns`](../examples/full_case_template.wcns)，算法数学约定见
+[`developer-guide.md`](developer-guide.md)，schema 2 配置摘要见
+[`config-reference-2.md`](config-reference-2.md)，算法数学约定见
 [`算法补充.md`](../算法补充.md)。配置文件采用严格的 UTF-8 `key = value` 格式：空行和以
 `#` 开头的行被忽略，键不可重复；未知键、缺失必填键、非法枚举、`NaN/Inf` 和空列表项均在
 分配流场前失败。
 
 ## 1. 构建与运行
 
-v1.1.0 本机已验证环境包括 Windows 11、CMake 3.28.0、MinGW-w64 GCC 8.1.0、本机 Python
+v2.0_pre 本机验收环境包括 Windows 11、CMake 3.28.0、MinGW-w64 GCC 8.1.0、本机 Python
 工具链和 Intel MPI 2021.10。CMake 最低声明版本为 3.20；未列出的编译器、操作系统和 MPI
 组合目前属于未验证环境，而不是已知不兼容。仓库不启用外部 CI，合并前应在本机执行适用的
 串行/MPI 构建、CTest 和算法规格检查。
@@ -21,7 +21,7 @@ v1.1.0 本机已验证环境包括 Windows 11、CMake 3.28.0、MinGW-w64 GCC 8.1
 中的 `mesh.path`）：
 
 ```powershell
-cmake -S . -B build -DWCNS_ENABLE_CGNS=ON -DWCNS_ENABLE_MPI=OFF -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DWCNS_ENABLE_CGNS=ON -DWCNS_ENABLE_MPI=OFF -DWCNS_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 cmake --install build --prefix build\install
 build\wcns_run.exe --config examples\freestream.wcns --dry-run
@@ -31,14 +31,14 @@ build\wcns_run.exe --config examples\freestream.wcns
 MPI 构建及运行：
 
 ```powershell
-cmake -S . -B build-mpi -DWCNS_ENABLE_CGNS=ON -DWCNS_ENABLE_MPI=ON -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build-mpi -DWCNS_ENABLE_CGNS=ON -DWCNS_ENABLE_MPI=ON -DWCNS_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-mpi --parallel 4
 mpiexec -n 4 build-mpi\wcns_run.exe --config examples\freestream.wcns
 ```
 
-安装后正式入口位于 `<prefix>\bin`，配置模板和文档位于 `<prefix>\share\wcns`。安装 smoke
-可先用 `wcns_generate_release_cgns` 生成 ADF 网格，再复制并修改 `freestream.wcns.in` 的
-占位符后执行 `wcns_run --config`。MinGW 二进制需要与构建器相容的
+安装后正式入口位于 `<prefix>\bin`，文档位于 `<prefix>\share\wcns`。开发仓库可用已有测试
+配置做安装 smoke；精简发布目录不含算例模板，用户应准备自己的 CGNS 和配置并先执行
+`wcns_run --config <case.wcns> --dry-run`。MinGW 二进制需要与构建器相容的
 `libgcc_s_sjlj-1.dll`、`libstdc++-6.dll`；MPI 构建另需 Intel MPI 的 `impi.dll` 和启动器
 在 `PATH` 中。安装规则不复制这些编译器/MPI 运行库。
 
@@ -55,7 +55,7 @@ mpiexec -n 4 build-mpi\wcns_run.exe --config examples\freestream.wcns
 
 | 键 | 可选值或含义 |
 |---|---|
-| `schema_version` | `1`，或 v2 开发分支的 `2` |
+| `schema_version` | `1`，或 v2.0_pre 的 `2` |
 | `case.name` | 文件名前缀；不安全字符在输出名中替换为 `_` |
 | `mesh.path` | 结构多块 CGNS 网格 |
 | `algorithm.profile` | `phenglei_wcns` 或 `scmm6_wcns`；两套度量/算子独立使用 |
@@ -93,7 +93,7 @@ preconditioner.type = none
 Weiss--Smith 也已实现。阶段 Z 另支持五种三维非定常 LES：`smagorinsky`、
 `scale_similarity`、`mixed_smagorinsky_similarity`、`dynamic_smagorinsky`、`wale`；LES
 强制黏性、BDF2 双时间 LU-SGS、`preconditioner.type=none`。模型专属必填键与限制见
-[`v2.0.0/config-schema-2-draft.md`](v2.0.0/config-schema-2-draft.md)。
+[`config-reference-2.md`](config-reference-2.md) 和用户手册。
 
 Weiss--Smith 首版只支持 Roe+LU-SGS，并只作用于定常伪时间或非定常双时间内迭代；物理
 BDF2 导数保持守恒。无粘界面发生非法中间状态时按冻结的确定性回退链处理并计数。SSPRK3
