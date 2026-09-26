@@ -13,7 +13,9 @@ CTest、算法规格和发布契约检查承担。对外发布和 WCNS 自有代
 [`docs/v2.0-pre-capability-matrix.md`](docs/v2.0-pre-capability-matrix.md)，数学定义见
 [`算法补充.md`](算法补充.md)，使用方法和限制见
 [`docs/user-manual.md`](docs/user-manual.md) 与
-[`docs/known-limitations.md`](docs/known-limitations.md)。
+[`docs/known-limitations.md`](docs/known-limitations.md)。代码复审和数值一致性证据见
+[`docs/v2.0-pre-code-review.md`](docs/v2.0-pre-code-review.md)，Linux 服务器迁移与运行步骤见
+[`docs/linux-server-guide.md`](docs/linux-server-guide.md)。
 
 v1.1.0 的详细范围、P--U 阶段、自动卡口、人工判断及
 Git 闭环见 [`docs/v1.1.0-development-plan.md`](docs/v1.1.0-development-plan.md)；

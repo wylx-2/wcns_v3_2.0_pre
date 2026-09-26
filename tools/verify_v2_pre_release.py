@@ -136,6 +136,28 @@ def main() -> int:
     )
     checks += require_text(
         root,
+        "docs/v2.0-pre-code-review.md",
+        (
+            "LU-SGS",
+            "零容差",
+            "107/107",
+            "224/224",
+            "linux-server-guide.md",
+        ),
+    )
+    checks += require_text(
+        root,
+        "docs/linux-server-guide.md",
+        (
+            "sha256sum -c PACKAGE_CONTENTS.sha256",
+            "WCNS_SOURCE_REVISION",
+            "WCNS_ENABLE_MPI=ON",
+            "--dry-run",
+            "run.max_wall_time",
+        ),
+    )
+    checks += require_text(
+        root,
         "tools/package_v2_pre.py",
         (
             'PACKAGE_NAME = "WCNS_v2.0_pre"',

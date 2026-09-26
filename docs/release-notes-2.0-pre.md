@@ -45,6 +45,11 @@ Case06、长期 LES 或目标三维翼型的生产物理验证版本，也不对
 缓存或 Git 元数据。目录内 `PACKAGE_CONTENTS.sha256` 可核验每个文件，
 `WCNS_SOURCE_REVISION` 记录来源提交。
 
+本轮发布整理另完成了代码与算法复审：移除 RANS/LES 热循环中的重复模型求值、逐单元字符串
+字段查找和 LU-SGS 按单元临时分配，并以旧/新候选 CGNS 零容差比较确认数值结果不变。详情见
+[`v2.0-pre-code-review.md`](v2.0-pre-code-review.md)。Linux 服务器上传、离线构建、MPI 预检、
+安全停止和续算步骤见 [`linux-server-guide.md`](linux-server-guide.md)。
+
 完整的本机命令、串行/MPI 计数和证据边界见
 [`v2.0-pre-validation.md`](v2.0-pre-validation.md)。
 

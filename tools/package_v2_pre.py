@@ -48,6 +48,8 @@ EXPLICIT_MAPPINGS = {
     Path("docs/known-limitations.md"): Path("docs/known-limitations.md"),
     Path("docs/release-validation.md"): Path("docs/release-validation.md"),
     Path("docs/release-notes-2.0-pre.md"): Path("docs/release-notes-2.0-pre.md"),
+    Path("docs/linux-server-guide.md"): Path("docs/linux-server-guide.md"),
+    Path("docs/v2.0-pre-code-review.md"): Path("docs/v2.0-pre-code-review.md"),
     Path("docs/v2.0-pre-capability-matrix.md"): Path(
         "docs/v2.0-pre-capability-matrix.md"
     ),

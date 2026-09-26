@@ -1,0 +1,172 @@
+# WCNS v2.0_pre Linux 服务器操作指南
+
+本指南面向不含算例的 `WCNS_v2.0_pre` 精简源码目录。它说明上传、完整性核验、串行/MPI
+编译、小规模预检、安全停止与重启。大型 Case06、长期湍流和目标三维翼型仍需另行制定资源
+预算与验收方案；不要在登录节点直接运行计算。
+
+## 1. 上传前准备
+
+在开发机上从 `WCNS_v2.0_pre` 的父目录打包，保留 UTF-8 文件名：
+
+```text
+tar -czf WCNS_v2.0_pre.tar.gz WCNS_v2.0_pre
+scp WCNS_v2.0_pre.tar.gz user@server:/work/user/wcns/
+```
+
+程序包不含 `cases/`、网格或运行结果。配置和 CGNS 网格应另行上传到独立算例目录，避免把
+输入、输出和源码混在一起。WCNS 自有代码尚无对外许可证；服务器副本仍限内部使用。
+
+## 2. 解包与完整性核验
+
+```bash
+cd /work/user/wcns
+tar -xzf WCNS_v2.0_pre.tar.gz
+cd WCNS_v2.0_pre
+sha256sum -c PACKAGE_CONTENTS.sha256
+cat WCNS_SOURCE_REVISION
+```
+
+散列必须全部显示 `OK`。若文件系统或传输工具改写了文件、缺少文件或出现额外来源不明的
+文件，应重新上传，不要在损坏目录上继续编译。`WCNS_SOURCE_REVISION` 用于把服务器结果追溯
+到开发仓库提交。
+
+## 3. 环境要求
+
+- CMake 3.20 或更高；
+- 支持 C++20 的 GCC 或 Clang；建议 GCC 10 以上或集群当前受支持版本；
+- MPI 构建需要同一工具链下的 MPI C++ 包装器和运行器，例如 OpenMPI 或 MPICH；
+- 默认 CGNS 4.4.0 ADF 源码已位于 `third_party/cgns/`，配置与编译不需要联网或 HDF5；
+- 精简包没有开发测试和 Python 验收脚本，`WCNS_BUILD_TESTS` 保持关闭。
+
+使用模块系统的示例应按服务器实际模块名调整：
+
+```bash
+module purge
+module load gcc/12 cmake/3.26 openmpi/4.1
+cmake --version
+c++ --version
+mpicxx --version
+mpirun --version
+```
+
+不要混用编译器和 MPI ABI，例如用 GCC 编译程序却在运行时加载由另一套编译器构建的 MPI。
+
+## 4. 独立构建与安装
+
+串行 Release：
+
+```bash
+cmake -S . -B build/serial \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWCNS_ENABLE_MPI=OFF \
+  -DWCNS_BUILD_TESTS=OFF \
+  -DWCNS_INSTALL_EXAMPLES=OFF
+cmake --build build/serial --parallel 4
+cmake --install build/serial --prefix install/serial
+```
+
+MPI Release：
+
+```bash
+cmake -S . -B build/mpi \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWCNS_ENABLE_MPI=ON \
+  -DWCNS_BUILD_TESTS=OFF \
+  -DWCNS_INSTALL_EXAMPLES=OFF \
+  -DMPI_CXX_COMPILER="$(command -v mpicxx)"
+cmake --build build/mpi --parallel 4
+cmake --install build/mpi --prefix install/mpi
+```
+
+配置日志必须确认找到了预期 MPI。安装后检查动态库来源：
+
+```bash
+ldd install/mpi/bin/wcns_run
+install/serial/bin/wcns_run --help || test "$?" -eq 1
+```
+
+`--help` 按程序约定打印帮助后返回 1；这不是构建失败。构建并行度应服从登录节点政策和作业
+配额，不应直接取整机核心数。
+
+## 5. 算例目录与小规模预检
+
+建议目录彼此隔离：
+
+```text
+/work/user/wcns/WCNS_v2.0_pre/       # 只读源码和构建
+/work/user/wcns/cases/my_case/       # 配置与网格
+/scratch/user/wcns/my_case/run-001/  # 本次输出
+```
+
+把配置中的 `mesh.file` 和 `output.directory` 改为服务器可访问路径。先做串行和少 rank 预检：
+
+```bash
+install/serial/bin/wcns_inspect_structured_mesh /work/user/wcns/cases/my_case/mesh.cgns
+install/serial/bin/wcns_run --config /work/user/wcns/cases/my_case/case.wcns --dry-run
+mpirun -np 2 install/mpi/bin/wcns_run \
+  --config /work/user/wcns/cases/my_case/case.wcns --dry-run
+```
+
+人工核对程序版本、来源提交、网格维数/块数、总单元数、边界类型、参考 Mach/Reynolds 数、
+湍流模型、Riemann 求解器、时间推进、rank 分区、输出目录和预计内存。随后只推进极少步，检查
+残差、容许性修复计数、模型量、壁面量、检查点和输出文件均有限且符合预期。正式大计算前，
+至少比较 1/2/4 rank 小规模终态或关键积分量。
+
+## 6. Slurm 作业模板
+
+以下模板只演示资源绑定；账户、分区、模块和路径必须按服务器修改：
+
+```bash
+#!/usr/bin/env bash
+#SBATCH --job-name=wcns-preflight
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --cpus-per-task=1
+#SBATCH --time=00:15:00
+#SBATCH --output=slurm-%j.out
+
+set -euo pipefail
+module purge
+module load gcc/12 cmake/3.26 openmpi/4.1
+
+source_root=/work/user/wcns/WCNS_v2.0_pre
+case_file=/work/user/wcns/cases/my_case/case.wcns
+export OMP_NUM_THREADS=1
+
+srun --ntasks="${SLURM_NTASKS}" --cpu-bind=cores \
+  "${source_root}/install/mpi/bin/wcns_run" --config "${case_file}"
+```
+
+WCNS 当前以 MPI 为主，`OMP_NUM_THREADS=1` 可防止数学库或运行库意外超额使用线程。先在单节点
+完成预检，再依据网格块数、每 rank 内存和 I/O 规模决定是否多节点运行。
+
+## 7. 安全停止、检查点与续算
+
+长作业必须启用检查点，并把 `run.max_wall_time` 设为比调度器时限短 5--10 分钟的秒数。
+程序在完整步边界响应该上限或 `SIGINT/SIGTERM`，写入安全检查点后以退出码 2 结束。不要使用
+`SIGKILL`；强制终止不能保证检查点原子完成。
+
+停止后核对 manifest 的 `stop_reason=wall_time_checkpoint` 或
+`stop_reason=user_signal_checkpoint`，并确认 `*.checkpoint.latest.cgns` 存在且没有 `.tmp`
+后缀。续算配置使用：
+
+```text
+restart.path = ../run-001/output/my_case.checkpoint.latest.cgns
+output.directory = ../run-002/output
+output.allow_existing = false
+```
+
+先对续算配置执行 `--dry-run`。网格和数值签名必须兼容；rank 数可以在合法分区范围内改变。
+
+## 8. 正式计算前卡口
+
+只有以下项目全部通过后才提交大型作业：
+
+1. 包散列、来源提交、编译器/MPI/动态库记录完整；
+2. 网格检查和串行/2-rank dry-run 通过，边界及模型配置经人工复核；
+3. 小步运行没有非有限值、异常 floor repair、异常壁面量或输出覆盖；
+4. 检查点安全停止和异 rank 续算至少演练一次；
+5. 作业的核时、内存、磁盘、检查点频率和最大墙钟有明确上限；
+6. Case06、长期 RANS/LES 和三维翼型分别有独立物理验收指标，不能把本机微型门禁当作工程
+   精度结论。
+
