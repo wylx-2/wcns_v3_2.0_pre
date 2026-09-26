@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(wcns VERSION 1.1.0 LANGUAGES C CXX)
+project(wcns VERSION 2.0.0 LANGUAGES C CXX)
+
+set(WCNS_PROGRAM_VERSION "2.0_pre" CACHE STRING "WCNS user-visible release label")
 
 include(GNUInstallDirs)
 
@@ -23,9 +25,10 @@ if(NOT WCNS_GIT_COMMIT)
     set(WCNS_GIT_COMMIT unknown)
 endif()
 
-option(WCNS_BUILD_TESTS "Build WCNS unit tests" ON)
+option(WCNS_BUILD_TESTS "Build WCNS unit tests" OFF)
 option(WCNS_ENABLE_CGNS "Enable CGNS mesh I/O" ON)
 option(WCNS_ENABLE_MPI "Enable MPI parallel execution" OFF)
+option(WCNS_INSTALL_EXAMPLES "Install example and case templates" OFF)
 
 add_library(wcns_core INTERFACE)
 add_library(wcns::core ALIAS wcns_core)
@@ -214,7 +217,7 @@ target_compile_definitions(
     wcns_runtime
     PRIVATE
         WCNS_GIT_COMMIT="${WCNS_GIT_COMMIT}"
-        WCNS_PROGRAM_VERSION="${PROJECT_VERSION}"
+        WCNS_PROGRAM_VERSION="${WCNS_PROGRAM_VERSION}"
 )
 
 if(WCNS_ENABLE_CGNS)
@@ -280,6 +283,12 @@ if(WCNS_ENABLE_CGNS)
 endif()
 
 if(WCNS_BUILD_TESTS)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+        message(FATAL_ERROR
+            "WCNS_BUILD_TESTS requires the full development source tree; "
+            "the v2.0_pre release directory intentionally omits tests"
+        )
+    endif()
     include(CTest)
     add_subdirectory(tests)
 endif()
@@ -289,9 +298,12 @@ if(WCNS_ENABLE_CGNS)
         TARGETS
             wcns_run
             wcns_generate_release_cgns
+            wcns_generate_couette_validation_cgns
             wcns_validate_release_case
             wcns_compare_metric_profiles
             wcns_inspect_structured_mesh
+            wcns_convert_tmr_p2d_to_cgns
+            wcns_convert_tmr_flatplate_p3d_to_cgns
             wcns_extract_rans_profile
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
@@ -309,12 +321,21 @@ install(
     DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/docs
     FILES_MATCHING PATTERN "*.md"
 )
-install(
-    DIRECTORY examples/
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/examples
-)
-install(
-    DIRECTORY cases/config/
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/cases/config
-    FILES_MATCHING PATTERN "*.wcns.in"
-)
+if(WCNS_INSTALL_EXAMPLES)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples"
+       OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cases/config")
+        message(FATAL_ERROR
+            "WCNS_INSTALL_EXAMPLES requires the full development source tree; "
+            "the v2.0_pre release directory intentionally omits examples and cases"
+        )
+    endif()
+    install(
+        DIRECTORY examples/
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/examples
+    )
+    install(
+        DIRECTORY cases/config/
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/cases/config
+        FILES_MATCHING PATTERN "*.wcns.in"
+    )
+endif()

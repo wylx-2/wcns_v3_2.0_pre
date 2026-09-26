@@ -56,6 +56,19 @@ if(WCNS_ENABLE_CGNS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
     add_test(
+        NAME wcns.v2_pre_release_contract
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_pre_release.py
+            --repository ${CMAKE_CURRENT_SOURCE_DIR}/..
+    )
+    add_test(
+        NAME wcns.v2_pre_package_safety
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_package_v2_pre.py
+            --packager ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package_v2_pre.py
+    )
+
+    add_test(
         NAME wcns.validation_budget
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test_validation_budget.py
