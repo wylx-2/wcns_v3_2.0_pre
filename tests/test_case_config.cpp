@@ -204,6 +204,26 @@ std::string valid_les_config(const std::string& model)
 void test_case_config()
 {
     {
+        const auto strict = wcns::CaseConfig::from_text(valid_config());
+        WCNS_REQUIRE(strict.restart_mode == wcns::RestartMode::Strict);
+
+        const auto algorithm_change = wcns::CaseConfig::from_text(
+            valid_config()
+            + "restart.path = source.checkpoint.latest.cgns\n"
+              "restart.mode = algorithm_change\n");
+        WCNS_REQUIRE(algorithm_change.restart_mode == wcns::RestartMode::AlgorithmChange);
+        WCNS_REQUIRE(algorithm_change.summary().find("restart.mode=algorithm_change")
+                     != std::string::npos);
+        WCNS_REQUIRE_THROWS(
+            wcns::CaseConfigurationError,
+            wcns::CaseConfig::from_text(valid_config() + "restart.mode = algorithm_change\n"));
+        WCNS_REQUIRE_THROWS(
+            wcns::CaseConfigurationError,
+            wcns::CaseConfig::from_text(valid_config()
+                                        + "restart.path = source.cgns\n"
+                                          "restart.mode = relaxed\n"));
+    }
+    {
         const std::array<std::string, 5> models {{
             "smagorinsky",
             "scale_similarity",

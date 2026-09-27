@@ -506,6 +506,12 @@ wcns::RuntimeOutputManager output(
 7. 测试网格、profile、气体、边界、源项、模型参数不匹配时在推进前失败；
 8. 连续 N 步与 K 步 checkpoint + N-K 步恢复逐场比较。
 
+生产入口有两种明确语义。`restart.mode=strict` 是默认连续续算，必须执行完整 restart signature、
+模型描述符、历史层和统计身份校验。`restart.mode=algorithm_change` 是显式状态导入：只强制格式、
+网格和守恒场有效性，匹配描述符时导入 RANS 输运字段，并重置隐式历史、定常收敛状态与时间
+统计。新增任何持久状态时必须分别决定这两条路径的保存、恢复或重建行为，并为严格拒绝、算法
+变更接受和导入场一致性各建门禁；不得通过削弱 strict 签名来实现热启动。
+
 当前 mesh signature 主要覆盖 base/zone 名、维数、extent 和坐标，不应把它当成所有 CGNS 拓扑语义的密码学证明。若扩展连接/边界语义，考虑把规范化拓扑也纳入签名。
 
 ## 18. 测试如何加入工程

@@ -82,6 +82,14 @@ enum class RunMode {
     Unsteady,
 };
 
+// Strict restarts reproduce a continuous run and therefore require an exact
+// numerical signature. Algorithm-change restarts import a compatible flow
+// state while deliberately discarding algorithm-dependent history.
+enum class RestartMode {
+    Strict,
+    AlgorithmChange,
+};
+
 enum class TimeIntegratorKind {
     SspRk3,
     LuSgs,
@@ -313,6 +321,7 @@ struct CaseConfig {
     OutputConfig output;
     TimeStatisticsConfig time_statistics;
     std::string restart_path;
+    RestartMode restart_mode = RestartMode::Strict;
 
     [[nodiscard]] static CaseConfig from_text(const std::string& text);
     [[nodiscard]] static CaseConfig from_file(const std::string& path);
@@ -336,6 +345,7 @@ private:
 [[nodiscard]] const char* partition_mode_name(PartitionMode mode);
 [[nodiscard]] const char* boundary_type_name(BoundaryType type);
 [[nodiscard]] const char* run_mode_name(RunMode mode);
+[[nodiscard]] const char* restart_mode_name(RestartMode mode);
 [[nodiscard]] const char* time_integrator_name(TimeIntegratorKind integrator);
 [[nodiscard]] const char* preconditioner_name(PreconditionerKind preconditioner);
 [[nodiscard]] const char* field_output_format_name(FieldOutputFormat format);

@@ -152,11 +152,17 @@ WCNS 当前以 MPI 为主，`OMP_NUM_THREADS=1` 可防止数学库或运行库�
 
 ```text
 restart.path = ../run-001/output/my_case.checkpoint.latest.cgns
+restart.mode = strict
 output.directory = ../run-002/output
 output.allow_existing = false
 ```
 
 先对续算配置执行 `--dry-run`。网格和数值签名必须兼容；rank 数可以在合法分区范围内改变。
+
+若服务器任务要从现有场切换重构、Riemann、湍流闭合、LU-SGS 或低 Mach 参数，应另建分支目录
+并设置 `restart.mode=algorithm_change`。该模式仍要求同一网格，但重置 BDF 历史、定常收敛状态
+和时间统计；RANS 字段布局不同时按新模型初始化。先进行 dry-run 和少量步数验收，再申请完整
+资源，不能把这种分支解释为原计算的无缝续算。
 
 ## 8. 正式计算前卡口
 
@@ -169,4 +175,3 @@ output.allow_existing = false
 5. 作业的核时、内存、磁盘、检查点频率和最大墙钟有明确上限；
 6. Case06、长期 RANS/LES 和三维翼型分别有独立物理验收指标，不能把本机微型门禁当作工程
    精度结论。
-

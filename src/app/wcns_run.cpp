@@ -496,7 +496,21 @@ int main(int argc, char** argv)
                 local_blocks, metrics, config.initial, gas, reference, floors);
         } else {
             const auto restart_name = resolve_mesh_path(command.config_path, config.restart_path);
-            simulation_initial = checkpoint.restore(restart_name).initial;
+            const auto restored = checkpoint.restore(restart_name);
+            simulation_initial = restored.initial;
+            if (mpi.rank() == 0
+                && config.restart_mode == wcns::RestartMode::AlgorithmChange) {
+                const auto model_state = wcns::turbulence_model_family(config.turbulence.kind)
+                        == wcns::TurbulenceModelFamily::RansTransport
+                    ? (restored.turbulence_state_restored ? "restored" : "reinitialized")
+                    : "not_applicable";
+                std::cout
+                    << "WCNS algorithm-change restart: conserved flow restored at step="
+                    << simulation_initial.step << " time=" << std::setprecision(17)
+                    << simulation_initial.time
+                    << "; implicit history, time statistics, and steady convergence state reset; "
+                    << "transported turbulence state=" << model_state << '\n';
+            }
         }
 
         const auto [minimum_temperature,

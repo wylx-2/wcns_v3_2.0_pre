@@ -18,6 +18,8 @@ Case06、长期 LES 或目标三维翼型的生产物理验证版本，也不对
 - RANS/LES 模型字段、SGS 应力/热流/能量传递、动态系数、滤宽及网格各向异性诊断；
 - 空间积分/截面统计，以及只按接受物理步 `accepted_dt` 加权并可重启的 Reynolds/Favre
   mean、RMS 和 covariance。
+- 双语义检查点恢复：默认 `strict` 保证签名一致的连续续算，显式 `algorithm_change` 在同一
+  网格上导入守恒状态后允许更换重构、Riemann、湍流、时间推进和预处理配置。
 
 ## 统计支持边界
 

@@ -11,6 +11,7 @@ namespace wcns {
 struct CheckpointRestoreResult {
     SimulationInitialState initial;
     Real previous_time_step = 0.0;
+    bool turbulence_state_restored = false;
 };
 
 class CheckpointService {

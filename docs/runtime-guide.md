@@ -335,12 +335,26 @@ step/time 的不可变文件仍按覆盖策略严格拒绝。
 
 ```text
 restart.path = output/run-a/case.checkpoint.latest.cgns
+restart.mode = strict
 ```
 
 程序先按原 zone 重读，再按当前 `StructuredPartitionPlan` 分发，因此可由 1 rank 检查点以
 2/4/8 rank 和新的合法叶块划分续算。profile、重构/Riemann、气体、参考量、边界、源项、
 黏性开关、网格或格式不兼容会在第一次推进前由所有 rank 一致失败；输出目录、输出调度、
 rank 数和 `t_end` 可以改变。Tecplot 流场不是检查点，不能用于重启。
+
+改变核心数值算法后从同一状态建立新分支时使用：
+
+```text
+restart.path = output/run-a/case.checkpoint.latest.cgns
+restart.mode = algorithm_change
+```
+
+该模式只把当前守恒状态作为权威；网格仍必须完全匹配。相同字段描述符的 RANS 输运量会保留，
+模型不同时按新配置初始化；BDF 历史、定常收敛基准和时间统计全部重置。checkpoint 的 step/time
+保留，非定常 LU-SGS 的第一新步使用 BDF1。它允许签名不同是显式行为，不具备严格续算的轨迹
+连续性保证，必须使用新输出目录并先执行 `--dry-run` 和小步检查。
+新分支写出 checkpoint 后，后续无缝续算应改回 `restart.mode=strict`。
 
 ## 7. 自定义字段和统计量
 

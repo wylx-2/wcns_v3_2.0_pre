@@ -46,6 +46,13 @@ statistics.time.weight = accepted_dt
 `drag/lift/span` 方向和严格递增的 `span_bin_edges`，各箱压力/黏性/总载荷必须回收到同一输出
 事件的整体载荷。面心分箱不切割跨箱面，生产箱边界应与网格截面对齐。
 
+## 检查点恢复模式
+
+`restart.mode` 可选 `strict`（默认）或 `algorithm_change`。前者恢复模型场、隐式历史、定常
+收敛状态和时间统计，并要求完整数值签名一致；后者在网格一致时导入当前守恒场，允许改变核心
+算法。`algorithm_change` 只在 RANS 字段描述符匹配时保留模型输运场，并始终重置隐式历史、
+收敛状态和时间统计。
+
 ## 关键拒绝项
 
 - 二维、定常、无黏或 SSPRK3 的 LES；
@@ -53,7 +60,8 @@ statistics.time.weight = accepted_dt
 - k--epsilon 未声明 `turbulence.experimental=true`，或使用 resolved wall；
 - LES 测试滤波比不等于 2，或模型专属参数出现在其他模型；
 - 未注册统计量、重复量、越界截面、非共面规则截面；
-- 与 checkpoint 中模型、滤波、积分器、统计身份或网格不一致的重启。
+- `strict` 模式下与 checkpoint 中模型、滤波、积分器、统计身份或网格不一致的重启；
+- `algorithm_change` 模式下网格不一致、格式不支持或导入守恒态在新热力学配置下无效。
 
 运行前始终执行：
 
@@ -61,4 +69,5 @@ statistics.time.weight = accepted_dt
 wcns_run --config <case.wcns> --dry-run
 ```
 
-dry-run 只证明读取、配置、网格、分区及工作区初始化成功，不是物理收敛证据。
+dry-run 会实际读取并校验指定 checkpoint；它只证明读取、配置、网格、分区及工作区初始化
+成功，不是物理收敛证据。

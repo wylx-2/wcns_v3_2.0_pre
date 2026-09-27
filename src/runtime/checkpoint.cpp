@@ -791,6 +791,7 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
 
 CheckpointRestoreResult CheckpointService::restore(const std::string& path) const
 {
+    const bool algorithm_change = config_.restart_mode == RestartMode::AlgorithmChange;
     const auto model_fields = model_checkpoint_fields(config_);
     RootCheckpointData root;
     std::string status;
@@ -798,14 +799,25 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
         try {
             CgnsFile file(path, CG_MODE_READ);
             const auto descriptors = read_descriptors(file.id());
-            if (required(descriptors, "WCNS_Version")
-                != std::to_string(checkpoint_version(config_))) {
+            const auto stored_version
+                = parse_size(required(descriptors, "WCNS_Version"), "version");
+            if ((!algorithm_change
+                 && stored_version != static_cast<std::size_t>(checkpoint_version(config_)))
+                || (algorithm_change
+                    && (stored_version < static_cast<std::size_t>(laminar_checkpoint_version)
+                        || stored_version
+                            > static_cast<std::size_t>(implicit_checkpoint_version)))) {
                 throw std::runtime_error("unsupported checkpoint version");
             }
-            if (config_.turbulence.kind != TurbulenceModelKind::None
-                && required(descriptors, "WCNS_TurbulenceDescriptor")
-                    != turbulence_descriptor_signature(config_)) {
-                throw std::runtime_error("checkpoint turbulence descriptor differs");
+            if (config_.turbulence.kind != TurbulenceModelKind::None) {
+                const auto descriptor = descriptors.find("WCNS_TurbulenceDescriptor");
+                const bool descriptor_matches = descriptor != descriptors.end()
+                    && descriptor->second == turbulence_descriptor_signature(config_);
+                root.restored.turbulence_state_restored
+                    = !model_fields.empty() && descriptor_matches;
+                if (!algorithm_change && !descriptor_matches) {
+                    throw std::runtime_error("checkpoint turbulence descriptor differs");
+                }
             }
             if (required(descriptors, "WCNS_MeshSignature") != mesh_signature_) {
                 throw std::runtime_error("checkpoint mesh signature differs");
@@ -820,7 +832,7 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                 && config_.time_algorithm.integrator == TimeIntegratorKind::SspRk3
                 && config_.preconditioner.kind == PreconditionerKind::None
                 && stored_signature == schema_one_signature;
-            if (stored_signature != config_.restart_signature()
+            if (!algorithm_change && stored_signature != config_.restart_signature()
                 && !schema_two_none_compatibility
                 && !(legacy_default_transport
                      && stored_signature == config_.legacy_v1_restart_signature())) {
@@ -829,9 +841,10 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
             }
             root.restored.initial.step = parse_size(required(descriptors, "WCNS_Step"), "step");
             root.restored.initial.time = parse_real(required(descriptors, "WCNS_Time"), "time");
-            root.restored.previous_time_step
+            const auto stored_time_step
                 = parse_real(required(descriptors, "WCNS_TimeStep"), "time step");
-            if (time_statistics_ != nullptr) {
+            root.restored.previous_time_step = algorithm_change ? 0.0 : stored_time_step;
+            if (!algorithm_change && time_statistics_ != nullptr) {
                 root.time_statistics = required(descriptors, "WCNS_TimeStatistics");
                 const auto restored_statistics
                     = AcceptedTimeStatistics::deserialize(root.time_statistics);
@@ -841,7 +854,8 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                         "checkpoint time-statistics identity differs");
                 }
             }
-            if (checkpoint_version(config_) == implicit_checkpoint_version) {
+            if (!algorithm_change
+                && checkpoint_version(config_) == implicit_checkpoint_version) {
                 root.implicit_history_valid
                     = required(descriptors, "WCNS_ImplicitHistoryValid") == "1";
                 root.implicit_history_time_step = parse_real(
@@ -852,15 +866,17 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                     throw std::runtime_error("checkpoint implicit history time step is invalid");
                 }
             }
-            root.restored.initial.steady.reference_initialized
-                = required(descriptors, "WCNS_SteadyInitialized") == "1";
-            root.restored.initial.steady.consecutive_passes
-                = parse_size(required(descriptors, "WCNS_Consecutive"), "consecutive count");
-            root.restored.initial.steady.reference_l2
-                = parse_real_list(required(descriptors, "WCNS_ReferenceL2"));
-            root.restored.initial.steady.reference_linf
-                = parse_real_list(required(descriptors, "WCNS_ReferenceLinf"));
-            if (!model_fields.empty()) {
+            if (!algorithm_change) {
+                root.restored.initial.steady.reference_initialized
+                    = required(descriptors, "WCNS_SteadyInitialized") == "1";
+                root.restored.initial.steady.consecutive_passes
+                    = parse_size(required(descriptors, "WCNS_Consecutive"), "consecutive count");
+                root.restored.initial.steady.reference_l2
+                    = parse_real_list(required(descriptors, "WCNS_ReferenceL2"));
+                root.restored.initial.steady.reference_linf
+                    = parse_real_list(required(descriptors, "WCNS_ReferenceLinf"));
+            }
+            if (!algorithm_change && !model_fields.empty()) {
                 const std::size_t expected_model_references
                     = root.restored.initial.steady.reference_initialized ? model_fields.size() : 0u;
                 root.restored.initial.steady.model_reference_l2 = parse_real_vector(
@@ -911,8 +927,10 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                                              zone_fields.mean[component].data()),
                                "cg_field_read checkpoint");
                 }
-                zone_fields.model.resize(model_fields.size());
-                for (std::size_t component = 0; component < model_fields.size(); ++component) {
+                const auto restored_model_count
+                    = root.restored.turbulence_state_restored ? model_fields.size() : 0u;
+                zone_fields.model.resize(restored_model_count);
+                for (std::size_t component = 0; component < restored_model_count; ++component) {
                     zone_fields.model[component].resize(count);
                     check_cgns(cg_field_read(file.id(),
                                              1,
@@ -940,7 +958,9 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                                    "cg_field_read implicit mean history");
                     }
                     zone_fields.previous_model.resize(model_fields.size());
-                    for (std::size_t component = 0; component < model_fields.size(); ++component) {
+                    const auto restored_model_count
+                        = root.restored.turbulence_state_restored ? model_fields.size() : 0u;
+                    for (std::size_t component = 0; component < restored_model_count; ++component) {
                         zone_fields.previous_model[component].resize(count);
                         check_cgns(cg_field_read(file.id(),
                                                  1,
@@ -984,7 +1004,9 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                             }
                         }
                     }
-                    for (std::size_t component = 0; component < model_fields.size(); ++component) {
+                    const auto restored_model_count
+                        = root.restored.turbulence_state_restored ? model_fields.size() : 0u;
+                    for (std::size_t component = 0; component < restored_model_count; ++component) {
                         for (int k = 0; k < extent.nk; ++k) {
                             for (int j = 0; j < extent.nj; ++j) {
                                 for (int i = 0; i < extent.ni; ++i) {
@@ -1041,8 +1063,9 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
                    << (root.restored.initial.steady.reference_initialized ? 1 : 0) << '\n'
                    << root.restored.initial.steady.consecutive_passes << '\n'
                    << real_list(root.restored.initial.steady.reference_l2) << '\n'
-                   << real_list(root.restored.initial.steady.reference_linf) << '\n';
-            if (!model_fields.empty()) {
+                   << real_list(root.restored.initial.steady.reference_linf) << '\n'
+                   << (root.restored.turbulence_state_restored ? 1 : 0) << '\n';
+            if (!algorithm_change && !model_fields.empty()) {
                 header << real_list(root.restored.initial.steady.model_reference_l2) << '\n'
                        << real_list(root.restored.initial.steady.model_reference_linf) << '\n';
             }
@@ -1058,7 +1081,7 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
     if (status.rfind("OK\n", 0) != 0) {
         throw std::runtime_error("invalid checkpoint restore broadcast");
     }
-    if (time_statistics_ != nullptr) {
+    if (!algorithm_change && time_statistics_ != nullptr) {
         auto serialized_statistics = mpi_.broadcast_string(
             mpi_.rank() == 0 ? std::move(root.time_statistics) : std::string {});
         auto restored_statistics
@@ -1090,7 +1113,9 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
     result.initial.steady.reference_l2 = parse_real_list(line);
     std::getline(header, line);
     result.initial.steady.reference_linf = parse_real_list(line);
-    if (!model_fields.empty()) {
+    std::getline(header, line);
+    result.turbulence_state_restored = line == "1";
+    if (!algorithm_change && !model_fields.empty()) {
         const std::size_t expected_model_references
             = result.initial.steady.reference_initialized ? model_fields.size() : 0u;
         std::getline(header, line);
@@ -1109,6 +1134,12 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
     for (const auto& leaf : partition_.leaves()) {
         if (leaf.owner != mpi_.rank()) continue;
         auto& block = *blocks.at(leaf.block);
+        if (algorithm_change) {
+            // Old multistep state is coupled to the source time algorithm.
+            // Leaving it invalid makes a destination BDF2 run take a BDF1
+            // startup step before constructing a new compatible history.
+            block.flow.implicit_history = {};
+        }
         const auto extent = block.cell_extent();
         const auto count = extent.size();
         if (offset + euler_components * count > payload.size()) {
@@ -1134,7 +1165,10 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
             }
         }
         offset += euler_components * count;
-        for (const auto& model_field : model_fields) {
+        const auto restored_model_count
+            = result.turbulence_state_restored ? model_fields.size() : 0u;
+        for (std::size_t component = 0; component < restored_model_count; ++component) {
+            const auto& model_field = model_fields[component];
             if (!block.turbulence.contains(model_field.descriptor.name)
                 || offset + count > payload.size()) {
                 throw std::runtime_error("turbulence checkpoint rank payload is truncated");

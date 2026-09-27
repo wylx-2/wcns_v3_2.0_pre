@@ -125,6 +125,13 @@ RunMode parse_run_mode(const std::string& value)
     throw CaseConfigurationError("unknown run mode: " + value);
 }
 
+RestartMode parse_restart_mode(const std::string& value)
+{
+    if (value == "strict") return RestartMode::Strict;
+    if (value == "algorithm_change") return RestartMode::AlgorithmChange;
+    throw CaseConfigurationError("unknown restart mode: " + value);
+}
+
 TimeIntegratorKind parse_time_integrator(const std::string& value)
 {
     if (value == "ssprk3") return TimeIntegratorKind::SspRk3;
@@ -517,6 +524,7 @@ const std::set<std::string>& fixed_keys()
         "output.checkpoint.write_initial",
         "output.checkpoint.write_final",
         "restart.path",
+        "restart.mode",
     };
     return keys;
 }
@@ -685,6 +693,15 @@ const char* run_mode_name(RunMode mode)
     case RunMode::Unsteady: return "unsteady";
     }
     throw CaseConfigurationError("invalid run mode");
+}
+
+const char* restart_mode_name(RestartMode mode)
+{
+    switch (mode) {
+    case RestartMode::Strict: return "strict";
+    case RestartMode::AlgorithmChange: return "algorithm_change";
+    }
+    throw std::invalid_argument("unknown restart mode");
 }
 
 const char* time_integrator_name(TimeIntegratorKind integrator)
@@ -2186,6 +2203,9 @@ CaseConfig CaseConfig::from_text(const std::string& text)
     if (const auto iterator = entries.find("restart.path"); iterator != entries.end()) {
         result.restart_path = iterator->second;
     }
+    if (const auto iterator = entries.find("restart.mode"); iterator != entries.end()) {
+        result.restart_mode = parse_restart_mode(iterator->second);
+    }
     result.digest_ = fnv1a(canonical_entries(entries));
     result.validate();
     return result;
@@ -2212,6 +2232,9 @@ void CaseConfig::validate() const
     }
     if (case_name.empty() || mesh_path.empty()) {
         throw CaseConfigurationError("case name and mesh path must not be empty");
+    }
+    if (restart_mode != RestartMode::Strict && restart_path.empty()) {
+        throw CaseConfigurationError("restart.mode=algorithm_change requires restart.path");
     }
     const auto gas_model = make_gas_model();
     static_cast<void>(make_reference_scales(gas_model));
@@ -2472,7 +2495,8 @@ std::string CaseConfig::summary() const
     }
     result << ',' << source_terms.summary() << ',' << run.summary() << ',' << output.summary()
            << ',' << time_statistics.summary()
-           << ",restart.path=" << (restart_path.empty() ? "<none>" : restart_path) << ",digest=0x"
+           << ",restart.path=" << (restart_path.empty() ? "<none>" : restart_path)
+           << ",restart.mode=" << restart_mode_name(restart_mode) << ",digest=0x"
            << std::hex << digest_ << ')';
     return result.str();
 }

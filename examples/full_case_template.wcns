@@ -276,3 +276,5 @@ output.checkpoint.write_final = true
 
 # 从检查点继续时取消下一行注释。相对路径以本配置文件目录为基准。
 # restart.path = output/previous/my_case.checkpoint.latest.cgns
+# 默认 strict 要求数值签名一致；改变核心算法并重算时显式使用下一行。
+# restart.mode = algorithm_change

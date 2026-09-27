@@ -378,6 +378,7 @@ output.checkpoint.enabled
 | `case.name` | 非空；输出文件名中非字母数字、`-`、`_` 字符会替换为 `_` |
 | `mesh.path` | 非空；相对路径以配置文件所在目录为基准 |
 | `restart.path` | 可选；相对路径同样以配置文件目录为基准 |
+| `restart.mode` | 可选，默认 `strict`；改变核心数值算法时显式设为 `algorithm_change` |
 | `output.directory` | 相对路径以启动程序时的当前工作目录为基准，不是配置目录 |
 
 为了避免路径基准混淆，推荐把网格与配置放在一个算例目录中，对 `mesh.path` 写短相对路径，
@@ -1168,10 +1169,41 @@ output.checkpoint.write_final = true
 
 ```text
 restart.path = ../run-a/output/my_case.checkpoint.latest.cgns
+restart.mode = strict
 output.directory = output/run-b
 ```
 
-可以改变 rank 数、合法的叶块分区、输出设置、`run.max_steps` 和非定常 `run.t_end`。也可改变case 名。初场配置仍是 schema 必填，但恢复时不会用于覆盖检查点状态。
+`strict` 是默认值，省略 `restart.mode` 与旧配置行为相同。它用于数学意义上的连续续算，可以改变
+rank 数、合法的叶块分区、输出设置、`run.cfl`、`run.max_steps` 和非定常 `run.t_end`，但要求
+profile、重构、Riemann、稳健化、气体、参考量、边界数据、源项、黏性开关、输运、湍流、时间
+推进和预处理签名兼容。
+
+如果要把已有状态作为新算法的起点，必须显式使用：
+
+```text
+restart.path = ../run-a/output/my_case.checkpoint.latest.cgns
+restart.mode = algorithm_change
+output.directory = output/algorithm-branch
+```
+
+此模式仍严格要求网格签名一致，并逐单元检查导入守恒量在新气体/参考配置下能转换为有限、正的
+热力学状态，但不比较旧的数值重启签名。因此可以更换 profile、重构、Riemann、稳健化、输运、
+湍流模型或系数、SSPRK3/LU-SGS、LU-SGS 参数和低 Mach 预处理。它不是连续续算，恢复规则为：
+
+- 五个当前时刻无量纲守恒量、checkpoint 的 step 和 time 被保留；`run.max_steps` 和非定常
+  `run.t_end` 必须大于恢复值，否则运行会立即到达停止条件；
+- RANS 输运字段只有在字段描述符完全相同时才恢复；模型变化时按新配置重新初始化。代数 LES
+  没有持久输运字段，由导入后的平均流按新模型重算；
+- LU-SGS/BDF2 历史一律丢弃；新的非定常 LU-SGS 分支先执行一个 BDF1 启动步，再建立 BDF2
+  历史；
+- 定常残差参考、连续通过计数和接受步时间统计一律重新开始；旧、新 history/statistics 文件
+  不自动拼接；
+- `initial.*` 不覆盖导入的内部守恒场，但仍可能为未显式给物理数据的远场/入口提供目标状态，
+  因此必须与新分支的边界物理含义一致。
+
+该模式有意允许物理及算法配置变化，用户必须人工确认量纲化基准、边界、源项和目标方程的改变
+是预期的。建议只改一组算法并先做小步分支；不要覆盖源运行目录。算法分支已经推进并写出新
+checkpoint 后，如需无缝继续该分支，应把后续配置改回 `restart.mode=strict`。
 
 ### 步骤 4：先 dry-run，再续算
 
@@ -1180,7 +1212,9 @@ mpiexec -n 4 build-user-mpi\wcns_run.exe --config run-b\restart.wcns --dry-run
 mpiexec -n 4 build-user-mpi\wcns_run.exe --config run-b\restart.wcns
 ```
 
-程序要求 profile、重构、Riemann、气体、参考量、边界数据、源项、黏性开关和网格签名兼容。当前网格签名覆盖 base/zone 名称、维数、尺寸和坐标；不要依赖它发现所有 BC/connectivity 语义变化，实际重启应保持原网格文件不变，只改变运行时分区。
+`--dry-run` 会实际打开、读取和校验检查点，因此也应作为算法变更分支的首个卡口。当前网格签名
+覆盖 base/zone 名称、维数、尺寸和坐标；不要依赖它发现所有 BC/connectivity 语义变化，实际
+重启应保持原网格文件不变，只改变运行时分区。
 
 历史/统计不会把源文件自动拼接到新文件。分析连续轨迹时按 checkpoint 的 step/time 合并两次运行的序列，并去掉重复的重启初始行。
 

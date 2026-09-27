@@ -35,6 +35,8 @@ V、W、X、AA、Y、Z、AB0 和 AB1 的既有设计与验收记录保留在开�
 Weiss--Smith、SA-neg、SST-2003m、实验级标准 k-epsilon 及阶段 Z 的五种 LES 候选实现。边界输出
 覆盖壁面量、压力/黏性分载荷和三维展向分箱；接受步时间统计覆盖 mean/RMS/covariance/Favre，
 并随可改变 rank 数的 CGNS checkpoint 连续恢复。v1.1 的 SSPRK 稳健化路径继续保留且默认关闭。
+检查点默认使用严格数值签名续算；显式 `restart.mode=algorithm_change` 可在同一网格上导入守恒
+状态并切换核心算法，同时重置多步历史、收敛基准和时间统计。
 逐步使用说明见 [`docs/user-manual.md`](docs/user-manual.md)，源码二次开发见
 [`docs/developer-guide.md`](docs/developer-guide.md)，可复制的完整配置见
 [`examples/full_case_template.wcns`](examples/full_case_template.wcns)；简明运行速查见

@@ -382,6 +382,16 @@ if(WCNS_ENABLE_CGNS)
         ${CMAKE_CURRENT_BINARY_DIR}/implicit_wrong_model_checkpoint_restart.wcns
         @ONLY
     )
+    set(WCNS_TWO_EQUATION_CASE algorithm-change-model-restart)
+    set(WCNS_TWO_EQUATION_OUTPUT_DIRECTORY
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit-algorithm-change-model-restart)
+    set(WCNS_TWO_EQUATION_RESTART_LINE
+        "restart.path = ${CMAKE_CURRENT_BINARY_DIR}/implicit-sst-checkpoint-source/implicit-sst-checkpoint-source.checkpoint.latest.cgns\nrestart.mode = algorithm_change")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/implicit_two_equation_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/implicit_algorithm_change_model_restart.wcns
+        @ONLY
+    )
     set(WCNS_TWO_EQUATION_MODE steady)
     set(WCNS_TWO_EQUATION_RUN_LINES "# rank-consistency pseudo-time")
     set(WCNS_TWO_EQUATION_CHECKPOINT false)
@@ -600,6 +610,11 @@ if(WCNS_ENABLE_CGNS)
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/checkpoint_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/restart_transport_invalid.wcns
+        @ONLY
+    )
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/algorithm_change_restart_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/algorithm_change_restart.wcns
         @ONLY
     )
     set(WCNS_TRANSPORT_LINES "# default v1.0 transport migration")
@@ -854,6 +869,17 @@ if(WCNS_ENABLE_CGNS)
     set_tests_properties(
         wcns.run.implicit_wrong_model_checkpoint_restart.serial
         PROPERTIES FIXTURES_REQUIRED implicit_sst_checkpoint
+    )
+    add_test(
+        NAME wcns.run.implicit_algorithm_change_model_restart.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/implicit_algorithm_change_model_restart.wcns
+    )
+    set_tests_properties(
+        wcns.run.implicit_algorithm_change_model_restart.serial
+        PROPERTIES
+            FIXTURES_REQUIRED implicit_sst_checkpoint
+            PASS_REGULAR_EXPRESSION "transported turbulence state=reinitialized"
     )
     foreach(two_equation_case IN ITEMS sst k_epsilon)
         add_test(
@@ -1424,6 +1450,30 @@ if(WCNS_ENABLE_CGNS)
     set_tests_properties(
         wcns.run.incompatible_transport_restart
         PROPERTIES FIXTURES_REQUIRED checkpoint_legacy_transport
+    )
+    add_test(
+        NAME wcns.run.algorithm_change_restart
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/algorithm_change_restart.wcns
+    )
+    set_tests_properties(
+        wcns.run.algorithm_change_restart
+        PROPERTIES
+            FIXTURES_REQUIRED checkpoint_legacy_transport
+            FIXTURES_SETUP algorithm_change_restart_files
+            PASS_REGULAR_EXPRESSION "WCNS algorithm-change restart: conserved flow restored"
+            RESOURCE_LOCK wcns_checkpoint_validation
+    )
+    add_test(
+        NAME wcns.run.algorithm_change_restart_state
+        COMMAND wcns_cgns_field_compare
+            ${CMAKE_CURRENT_BINARY_DIR}/checkpoint-validation/checkpoint-freestream.checkpoint.latest.cgns
+            ${CMAKE_CURRENT_BINARY_DIR}/algorithm-change-restart/algorithm-change-restart.checkpoint.latest.cgns
+            0
+    )
+    set_tests_properties(
+        wcns.run.algorithm_change_restart_state
+        PROPERTIES FIXTURES_REQUIRED algorithm_change_restart_files
     )
     add_test(
         NAME wcns.run.existing_output_rejection
