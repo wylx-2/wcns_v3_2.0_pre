@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create or verify the case-free WCNS v2.0_pre source directory."""
+"""Create or verify the compact WCNS v2.1 Linux source directory."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from pathlib import Path, PurePosixPath
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-PACKAGE_NAME = "WCNS_v2.0_pre"
-PROJECT_VERSION = "2.0.0"
-PROGRAM_VERSION = "2.0_pre"
+PACKAGE_NAME = "WCNS_v2.1"
+PROJECT_VERSION = "2.1.0"
+PROGRAM_VERSION = "2.1"
 
 DIRECTORY_PREFIXES = (
     Path("include"),
@@ -40,26 +40,25 @@ EXPLICIT_MAPPINGS = {
     Path("LICENSE.md"): Path("LICENSE.md"),
     Path("THIRD_PARTY_NOTICES.md"): Path("THIRD_PARTY_NOTICES.md"),
     Path("算法补充.md"): Path("算法补充.md"),
-    Path("docs/v2.0-pre-package-readme.md"): Path("README.md"),
+    Path("docs/v2.1-package-readme.md"): Path("README.md"),
     Path("docs/user-manual.md"): Path("docs/user-manual.md"),
     Path("docs/runtime-guide.md"): Path("docs/runtime-guide.md"),
     Path("docs/developer-guide.md"): Path("docs/developer-guide.md"),
     Path("docs/config-reference-2.md"): Path("docs/config-reference-2.md"),
+    Path("docs/all-speed-roe.md"): Path("docs/all-speed-roe.md"),
     Path("docs/known-limitations.md"): Path("docs/known-limitations.md"),
     Path("docs/release-validation.md"): Path("docs/release-validation.md"),
-    Path("docs/release-notes-2.0-pre.md"): Path("docs/release-notes-2.0-pre.md"),
+    Path("docs/release-notes-2.1.md"): Path("docs/release-notes-2.1.md"),
     Path("docs/linux-server-guide.md"): Path("docs/linux-server-guide.md"),
-    Path("docs/v2.0-pre-code-review.md"): Path("docs/v2.0-pre-code-review.md"),
-    Path("docs/v2.0-pre-capability-matrix.md"): Path(
-        "docs/v2.0-pre-capability-matrix.md"
+    Path("docs/v2.1-validation.md"): Path("docs/v2.1-validation.md"),
+    Path("examples/channel_retau180_from_t250_all_speed_roe.wcns"): Path(
+        "examples/channel_retau180_from_t250_all_speed_roe.wcns"
     ),
-    Path("docs/v2.0-pre-validation.md"): Path("docs/v2.0-pre-validation.md"),
 }
 
 FORBIDDEN_PARTS = {
     ".git",
     "cases",
-    "examples",
     "tests",
     "output",
     "tmp",
@@ -125,13 +124,13 @@ def tracked_payload() -> list[PayloadEntry]:
     missing = sorted(path for path in mappings if path not in tracked)
     if missing:
         raise RuntimeError(
-            "v2.0_pre payload contains files not committed in HEAD: "
+            "v2.1 payload contains files not committed in HEAD: "
             + ", ".join(path.as_posix() for path in missing)
         )
     absent = sorted(path for path in mappings if not (REPOSITORY / path).is_file())
     if absent:
         raise RuntimeError(
-            "v2.0_pre payload is missing from the worktree: "
+            "v2.1 payload is missing from the worktree: "
             + ", ".join(path.as_posix() for path in absent)
         )
 
@@ -139,9 +138,9 @@ def tracked_payload() -> list[PayloadEntry]:
     entries: list[PayloadEntry] = []
     for source, destination in mappings.items():
         if not safe_relative(destination) or forbidden(destination):
-            raise RuntimeError(f"forbidden v2.0_pre destination: {destination.as_posix()}")
+            raise RuntimeError(f"forbidden v2.1 destination: {destination.as_posix()}")
         if destination in destinations:
-            raise RuntimeError(f"duplicate v2.0_pre destination: {destination.as_posix()}")
+            raise RuntimeError(f"duplicate v2.1 destination: {destination.as_posix()}")
         destinations.add(destination)
         entries.append(PayloadEntry(source, destination))
     return sorted(entries, key=lambda item: item.destination.as_posix())
@@ -152,9 +151,9 @@ def require_clean_payload(entries: list[PayloadEntry]) -> None:
     command.extend(entry.source.as_posix() for entry in entries)
     result = subprocess.run(command, cwd=REPOSITORY, check=False)
     if result.returncode == 1:
-        raise RuntimeError("selected v2.0_pre files differ from HEAD; commit them before packaging")
+        raise RuntimeError("selected v2.1 files differ from HEAD; commit them before packaging")
     if result.returncode != 0:
-        raise RuntimeError("unable to verify v2.0_pre payload against HEAD")
+        raise RuntimeError("unable to verify v2.1 payload against HEAD")
 
 
 def require_version(cmake_text: str) -> None:
@@ -253,7 +252,7 @@ def verify_directory(directory: Path) -> dict[str, object]:
     require_version((directory / "CMakeLists.txt").read_text(encoding="utf-8"))
     readme = (directory / "README.md").read_text(encoding="utf-8")
     if PROGRAM_VERSION not in readme:
-        raise RuntimeError("package README does not identify v2.0_pre")
+        raise RuntimeError("package README does not identify v2.1")
     verify_markdown_links(directory)
     return {
         "directory": str(directory),
@@ -275,7 +274,7 @@ def create_directory(destination: Path) -> Path:
     require_version((REPOSITORY / "CMakeLists.txt").read_text(encoding="utf-8"))
     revision = run_git("rev-parse", "HEAD")
 
-    with tempfile.TemporaryDirectory(prefix="wcns-v2-pre-", dir=destination.parent) as temporary:
+    with tempfile.TemporaryDirectory(prefix="wcns-v2-1-", dir=destination.parent) as temporary:
         root = Path(temporary) / PACKAGE_NAME
         root.mkdir()
         for entry in entries:

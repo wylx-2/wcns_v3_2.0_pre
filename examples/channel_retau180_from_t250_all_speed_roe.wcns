@@ -1,0 +1,108 @@
+# WCNS v2.1 case05 分叉模板。替换 mesh.path、restart.path 和服务器墙钟后使用。
+# mesh.path 必须指向生成 t=250 checkpoint 时使用的原始网格；不可重新生成同名网格。
+schema_version = 1
+case.name = channel_retau180_all_speed_roe_from_t250
+mesh.path = grids/channel_36x48x36_beta1p75.cgns
+
+algorithm.profile = scmm6_wcns
+algorithm.reconstruction = mdcd_linear
+algorithm.reconstruction_variables = primitive
+algorithm.riemann = roe_all_speed
+algorithm.mdcd.disp = 0.0463783
+algorithm.mdcd.diss = 0.001
+
+gas.gamma = 1.4
+gas.specific_gas_constant = 1.0
+reference.velocity = 1.0
+reference.density = 1.0
+reference.temperature = 71.42857142857143
+reference.length = 1.0
+reference.viscosity = 0.0003588401476178181
+
+partition.mode = auto_split
+partition.allow_idle_ranks = false
+partition.max_load_ratio = 1.2
+partition.min_cells_per_active_direction = 8
+
+# algorithm_change 会从 checkpoint 导入守恒态；本段初场只用于完整配置校验。
+initial.type = turbulent_channel
+initial.y0 = -1.0
+initial.y1 = 1.0
+initial.x0 = 0.0
+initial.z0 = 0.0
+initial.period_x = 6.283185307179586
+initial.period_z = 3.141592653589793
+initial.re_tau = 180.0
+initial.bulk_velocity = 1.0
+initial.bulk_velocity_plus = 15.481978793165828
+initial.perturbation_amplitude = 0.05
+initial.rho = 1.0
+initial.temperature = 1.0
+
+boundary.default = no_slip_isothermal_wall
+boundary.bottom.type = no_slip_isothermal_wall
+boundary.bottom.wall_velocity_x = 0.0
+boundary.bottom.wall_velocity_y = 0.0
+boundary.bottom.wall_velocity_z = 0.0
+boundary.bottom.wall_temperature = 1.0
+boundary.top.type = no_slip_isothermal_wall
+boundary.top.wall_velocity_x = 0.0
+boundary.top.wall_velocity_y = 0.0
+boundary.top.wall_velocity_z = 0.0
+boundary.top.wall_temperature = 1.0
+
+source.enabled = true
+source.models = body_force
+source.body.ax = 0.004172026549973031
+source.body.ay = 0.0
+source.body.az = 0.0
+
+run.mode = unsteady
+run.viscous = true
+run.cfl = 0.3
+run.max_steps = 2000000
+# 绝对终点；从 t=250 再推进 50，应写 300，不是 50。
+run.t_end = 300.0
+# 必须比调度器墙钟少 5--10 分钟。
+run.max_wall_time = 82800
+
+output.directory = results/all-speed-roe-from-t250-segment01
+output.allow_existing = false
+output.dimensional = false
+
+output.field.enabled = true
+output.field.format = cgns
+output.field.every_steps = 0
+output.field.every_time = 5.0
+output.field.write_initial = true
+output.field.write_final = true
+output.field.quantities = rho,u,v,w,p,T,rho_u,rho_v,rho_w,rho_E,mach,viscosity,jacobian
+
+output.history.enabled = true
+output.history.format = txt
+output.history.every_steps = 100
+output.history.write_initial = true
+output.history.write_final = true
+
+output.statistics.enabled = true
+output.statistics.format = txt
+output.statistics.every_steps = 0
+output.statistics.every_time = 0.1
+output.statistics.write_initial = true
+output.statistics.write_final = true
+output.statistics.quantities = total_mass,total_momentum_x,total_momentum_y,total_momentum_z,total_energy
+output.statistics.yz_planes.enabled = true
+output.statistics.yz_planes.target_x_coordinates = 0.0,3.141592653589793
+output.statistics.channel_walls.enabled = true
+output.statistics.channel_walls.lower_patch = bottom
+output.statistics.channel_walls.upper_patch = top
+output.statistics.channel_walls.half_height = 1.0
+
+output.checkpoint.enabled = true
+output.checkpoint.every_steps = 0
+output.checkpoint.every_time = 5.0
+output.checkpoint.write_initial = false
+output.checkpoint.write_final = true
+
+restart.path = REPLACE_WITH_T250_CHECKPOINT.cgns
+restart.mode = algorithm_change

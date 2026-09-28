@@ -32,7 +32,8 @@ algorithm.reconstruction = weno_z
 # 可选：conservative | primitive | characteristic
 algorithm.reconstruction_variables = characteristic
 
-# 可选：rusanov | hllc | roe
+# 可选：rusanov | hllc | roe | roe_all_speed
+# roe_all_speed 是显式低马赫耗散修正，可直接配 SSPRK3；它不解除声学 CFL 限制。
 algorithm.riemann = hllc
 
 # SSPRK 事后物理容许性与局部离散支持降阶。默认关闭，关闭时保持 v1.0 数值路径。

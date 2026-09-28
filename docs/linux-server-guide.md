@@ -1,16 +1,16 @@
-# WCNS v2.0_pre Linux 服务器操作指南
+# WCNS v2.1 Linux 服务器操作指南
 
-本指南面向不含算例的 `WCNS_v2.0_pre` 精简源码目录。它说明上传、完整性核验、串行/MPI
+本指南面向不含网格/结果的 `WCNS_v2.1` 精简源码目录。它说明上传、完整性核验、串行/MPI
 编译、小规模预检、安全停止与重启。大型 Case06、长期湍流和目标三维翼型仍需另行制定资源
 预算与验收方案；不要在登录节点直接运行计算。
 
 ## 1. 上传前准备
 
-在开发机上从 `WCNS_v2.0_pre` 的父目录打包，保留 UTF-8 文件名：
+在开发机上从 `WCNS_v2.1` 的父目录打包，保留 UTF-8 文件名：
 
 ```text
-tar -czf WCNS_v2.0_pre.tar.gz WCNS_v2.0_pre
-scp WCNS_v2.0_pre.tar.gz user@server:/work/user/wcns/
+tar -czf WCNS_v2.1.tar.gz WCNS_v2.1
+scp WCNS_v2.1.tar.gz user@server:/work/user/wcns/
 ```
 
 程序包不含 `cases/`、网格或运行结果。配置和 CGNS 网格应另行上传到独立算例目录，避免把
@@ -20,8 +20,8 @@ scp WCNS_v2.0_pre.tar.gz user@server:/work/user/wcns/
 
 ```bash
 cd /work/user/wcns
-tar -xzf WCNS_v2.0_pre.tar.gz
-cd WCNS_v2.0_pre
+tar -xzf WCNS_v2.1.tar.gz
+cd WCNS_v2.1
 sha256sum -c PACKAGE_CONTENTS.sha256
 cat WCNS_SOURCE_REVISION
 ```
@@ -93,7 +93,7 @@ install/serial/bin/wcns_run --help || test "$?" -eq 1
 建议目录彼此隔离：
 
 ```text
-/work/user/wcns/WCNS_v2.0_pre/       # 只读源码和构建
+/work/user/wcns/WCNS_v2.1/           # 只读源码和构建
 /work/user/wcns/cases/my_case/       # 配置与网格
 /scratch/user/wcns/my_case/run-001/  # 本次输出
 ```
@@ -129,7 +129,7 @@ set -euo pipefail
 module purge
 module load gcc/12 cmake/3.26 openmpi/4.1
 
-source_root=/work/user/wcns/WCNS_v2.0_pre
+source_root=/work/user/wcns/WCNS_v2.1
 case_file=/work/user/wcns/cases/my_case/case.wcns
 export OMP_NUM_THREADS=1
 
@@ -164,7 +164,41 @@ output.allow_existing = false
 和时间统计；RANS 字段布局不同时按新模型初始化。先进行 dry-run 和少量步数验收，再申请完整
 资源，不能把这种分支解释为原计算的无缝续算。
 
-## 8. 正式计算前卡口
+## 8. 从 case05 t=250 分叉到显式 all-speed Roe
+
+发布包提供 `examples/channel_retau180_from_t250_all_speed_roe.wcns`。把它复制到
+case05 算例目录，保留 SCMM6、线性 MDCD、`diss=0.001` 和 SSPRK3，只替换真实网格/
+checkpoint 路径、唯一输出目录和墙钟：
+
+```bash
+cp examples/channel_retau180_from_t250_all_speed_roe.wcns \
+  /work/user/wcns/cases/case05/case05-all-speed-from-t250.wcns
+```
+
+必须确认下列配置：
+
+```text
+algorithm.profile = scmm6_wcns
+algorithm.reconstruction = mdcd_linear
+algorithm.riemann = roe_all_speed
+algorithm.mdcd.diss = 0.001
+run.cfl = 0.3
+restart.path = /absolute/path/to/t250.checkpoint.latest.cgns
+restart.mode = algorithm_change
+```
+
+`run.t_end` 是绝对终止时间；从 t=250 再计算 50 应写 `300`。首次切换算法必须用
+`algorithm_change` 并采用全新 `case.name/output.directory`。先分别执行串行和 4-rank dry-run，
+然后复制为 smoke 配置，把 `run.max_steps` 改为 2--5 并再次使用独立输出目录。启动摘要必须同时
+出现 `riemann_solver=roe_all_speed` 和 `time(integrator=ssprk3`；首步时间应接续约 250，且
+守恒量有限、Riemann 回退未异常增长。正式运行与后续 `strict` 续段见
+[`all-speed-roe.md`](all-speed-roe.md)。
+
+必须同时上传生成 t=250 checkpoint 时的原始网格，不能重新生成同名网格。已核验种子的 mesh
+signature 是 `18099232003167909757`；若 dry-run 报 `checkpoint mesh signature differs`，应
+更正 `mesh.path`，不得绕过签名检查。
+
+## 9. 正式计算前卡口
 
 只有以下项目全部通过后才提交大型作业：
 

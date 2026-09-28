@@ -19,6 +19,7 @@ enum class RiemannSolverKind {
     Rusanov,
     Hllc,
     Roe,
+    AllSpeedRoe,
 };
 
 enum class RiemannFallbackReason {

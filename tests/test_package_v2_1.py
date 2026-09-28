@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise v2.0_pre package path and integrity rejection rules."""
+"""Exercise v2.1 package path and integrity rejection rules."""
 
 from __future__ import annotations
 
@@ -27,9 +27,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packager", type=Path, required=True)
     args = parser.parse_args()
-    specification = importlib.util.spec_from_file_location("package_v2_pre", args.packager)
+    specification = importlib.util.spec_from_file_location("package_v2_1", args.packager)
     if specification is None or specification.loader is None:
-        raise RuntimeError("cannot import v2.0_pre packager")
+        raise RuntimeError("cannot import v2.1 packager")
     package = importlib.util.module_from_spec(specification)
     sys.modules[specification.name] = package
     specification.loader.exec_module(package)
@@ -44,11 +44,11 @@ def main() -> int:
         root = Path(temporary) / package.PACKAGE_NAME
         root.mkdir()
         (root / "CMakeLists.txt").write_text(
-            'project(wcns VERSION 2.0.0 LANGUAGES CXX)\n'
-            'set(WCNS_PROGRAM_VERSION "2.0_pre")\n',
+            'project(wcns VERSION 2.1.0 LANGUAGES CXX)\n'
+            'set(WCNS_PROGRAM_VERSION "2.1")\n',
             encoding="utf-8",
         )
-        (root / "README.md").write_text("WCNS v2.0_pre\n", encoding="utf-8")
+        (root / "README.md").write_text("WCNS v2.1\n", encoding="utf-8")
         (root / "WCNS_SOURCE_REVISION").write_text("a" * 40 + "\n", encoding="ascii")
         content = (root / "CMakeLists.txt", root / "README.md", root / "WCNS_SOURCE_REVISION")
         lines = [f"{digest(path)}  {path.name}" for path in content]
@@ -62,7 +62,7 @@ def main() -> int:
         (root / "README.md").write_text("tampered\n", encoding="utf-8")
         expect_failure(lambda: package.verify_directory(root), "tampered payload")
 
-        (root / "README.md").write_text("WCNS v2.0_pre\n", encoding="utf-8")
+        (root / "README.md").write_text("WCNS v2.1\n", encoding="utf-8")
         (root / "guide.md").write_text("[missing](missing.md)\n", encoding="utf-8")
         content = content + (root / "guide.md",)
         lines = [f"{digest(path)}  {path.name}" for path in content]
@@ -75,7 +75,7 @@ def main() -> int:
         unsafe.write_text(f"{'0' * 64}  ../escape\n", encoding="utf-8")
         expect_failure(lambda: package.parse_manifest(unsafe), "manifest path traversal")
 
-    print("v2.0_pre package safety rules verified")
+    print("v2.1 package safety rules verified")
     return 0
 
 

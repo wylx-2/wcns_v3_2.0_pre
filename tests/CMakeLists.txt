@@ -63,16 +63,16 @@ if(WCNS_ENABLE_CGNS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
     add_test(
-        NAME wcns.v2_pre_release_contract
+        NAME wcns.v2_1_release_contract
         COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_pre_release.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_1_release.py
             --repository ${CMAKE_CURRENT_SOURCE_DIR}/..
     )
     add_test(
-        NAME wcns.v2_pre_package_safety
+        NAME wcns.v2_1_package_safety
         COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/test_package_v2_pre.py
-            --packager ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package_v2_pre.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_package_v2_1.py
+            --packager ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package_v2_1.py
     )
 
     add_test(
@@ -119,6 +119,11 @@ if(WCNS_ENABLE_CGNS)
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/freestream_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/freestream_case.wcns
+        @ONLY
+    )
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/all_speed_roe_ssprk3_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/all_speed_roe_ssprk3_case.wcns
         @ONLY
     )
     set(WCNS_IMPLICIT_CASE implicit-freestream-steady)
@@ -668,6 +673,17 @@ if(WCNS_ENABLE_CGNS)
         NAME wcns.run.freestream.serial
         COMMAND wcns_run
             --config ${CMAKE_CURRENT_BINARY_DIR}/freestream_case.wcns
+    )
+    add_test(
+        NAME wcns.run.all_speed_roe_ssprk3.serial
+        COMMAND wcns_run
+            --config ${CMAKE_CURRENT_BINARY_DIR}/all_speed_roe_ssprk3_case.wcns
+    )
+    set_tests_properties(
+        wcns.run.all_speed_roe_ssprk3.serial
+        PROPERTIES
+            FIXTURES_REQUIRED cgns_files
+            PASS_REGULAR_EXPRESSION "riemann_solver=roe_all_speed;.*time[(]integrator=ssprk3"
     )
     foreach(implicit_case IN ITEMS steady dual_time)
         add_test(

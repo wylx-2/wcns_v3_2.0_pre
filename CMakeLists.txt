@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(wcns VERSION 2.0.0 LANGUAGES C CXX)
+project(wcns VERSION 2.1.0 LANGUAGES C CXX)
 
-set(WCNS_PROGRAM_VERSION "2.0_pre" CACHE STRING "WCNS user-visible release label")
+set(WCNS_PROGRAM_VERSION "2.1" CACHE STRING "WCNS user-visible release label")
 
 include(GNUInstallDirs)
 
@@ -286,7 +286,7 @@ if(WCNS_BUILD_TESTS)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
         message(FATAL_ERROR
             "WCNS_BUILD_TESTS requires the full development source tree; "
-            "the v2.0_pre release directory intentionally omits tests"
+            "the compact release directory intentionally omits tests"
         )
     endif()
     include(CTest)
@@ -321,12 +321,16 @@ install(
     DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/docs
     FILES_MATCHING PATTERN "*.md"
 )
+install(
+    FILES examples/channel_retau180_from_t250_all_speed_roe.wcns
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/config-templates
+)
 if(WCNS_INSTALL_EXAMPLES)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples"
        OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cases/config")
         message(FATAL_ERROR
             "WCNS_INSTALL_EXAMPLES requires the full development source tree; "
-            "the v2.0_pre release directory intentionally omits examples and cases"
+            "the compact release directory intentionally omits full examples and cases"
         )
     endif()
     install(

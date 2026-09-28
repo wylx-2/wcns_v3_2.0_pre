@@ -1,6 +1,6 @@
 # WCNS 用户手册
 
-本文面向第一次接触本程序的算例使用者，对应 WCNS `v2.0_pre` 的 schema 1/2 统一程序；
+本文面向第一次接触本程序的算例使用者，对应 WCNS `v2.1` 的 schema 1/2 统一程序；
 schema 2 的 RANS/LES、低 Mach 和隐式推进已可执行，但仍受大型服务器物理验证边界约束。
 生产入口为 `wcns_run`。按本文顺序操作，可以从源码构建程序、准备
 CGNS 网格、填写配置、完成串行或 MPI 计算、识别停止状态、读取输出并从检查点续算。
@@ -428,9 +428,15 @@ schema 1 继续使用原配置，不应添加上述键。
 | `algorithm.flux_difference` | `profile`, `conservative_two_point` | 默认 `profile`；强激波正性困难时才显式选用守恒两点差分 |
 | `algorithm.reconstruction` | `zero_order`, `linear5`, `weno_js`, `weno_z`, `mdcd_linear`, `mdcd_hybrid` | 间断优先从 `weno_z`/`mdcd_hybrid` 开始；`zero_order` 主要用于调试和高耗散基线 |
 | `algorithm.reconstruction_variables` | `conservative`, `primitive`, `characteristic` | 强间断通常用 `characteristic` |
-| `algorithm.riemann` | `rusanov`, `hllc`, `roe` | Rusanov 更耗散；HLLC/Roe 分辨率更高 |
+| `algorithm.riemann` | `rusanov`, `hllc`, `roe`, `roe_all_speed` | `roe_all_speed` 降低低 Mach Roe 速度跳跃耗散，可配 SSPRK3 |
 
 六种重构都保持六点标量模板和三层 cell-centered ghost。`zero_order` 不缩小模板：同一面六点为 `(q[j-2],q[j-1],q[j],q[j+1],q[j+2],q[j+3])` 时，左值严格取第 3 点 `q[j]`，右值严格取第 4 点 `q[j+1]`。非法重构状态会按确定性策略回退，HLLC/Roe 的非法中间状态也会回退；历史文件记录累计回退数。回退不是静默成功，数量异常增大时应检查网格、CFL、初边值和正性。
+
+`roe_all_speed` 只修正 Roe 耗散的两支声学波强度，不改变物理通量、物理特征速度或 SSPRK3
+更新，所以 schema 1 可直接选择它，schema 2 使用
+`time.integrator=ssprk3 + preconditioner.type=none`。它仍受声学 CFL 限制，不能按对流速度放大
+显式时间步。Weiss--Smith 是独立的 `roe + lu_sgs` 伪时间预处理路径。公式、限制和从
+checkpoint 改算法分叉见 [`all-speed-roe.md`](all-speed-roe.md)。
 
 `algorithm.flux_difference=profile` 严格使用 profile 冻结的高阶通量差分：
 `phenglei_wcns` 使用其 D4/D2 路径，`scmm6_wcns` 使用其 D6/D4 路径。

@@ -488,6 +488,17 @@ void test_case_config()
         WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
                             wcns::CaseConfig::from_text(explicit_with_lu_key));
 
+        auto all_speed_explicit = valid_v2_config();
+        const auto all_speed_riemann = all_speed_explicit.find("algorithm.riemann = hllc");
+        all_speed_explicit.replace(all_speed_riemann,
+                                   std::string("algorithm.riemann = hllc").size(),
+                                   "algorithm.riemann = roe_all_speed");
+        const auto all_speed = wcns::CaseConfig::from_text(all_speed_explicit);
+        WCNS_REQUIRE(all_speed.riemann.scheme == "roe_all_speed");
+        WCNS_REQUIRE(all_speed.time_algorithm.integrator
+                     == wcns::TimeIntegratorKind::SspRk3);
+        WCNS_REQUIRE(all_speed.preconditioner.kind == wcns::PreconditionerKind::None);
+
         auto missing_physical_step = valid_lu_sgs_config(true);
         const auto step = missing_physical_step.find("time.physical.step = 0.01\n");
         missing_physical_step.erase(step, std::string("time.physical.step = 0.01\n").size());
@@ -507,6 +518,12 @@ void test_case_config()
         const auto low_mach = wcns::CaseConfig::from_text(preconditioned);
         WCNS_REQUIRE(low_mach.preconditioner.kind == wcns::PreconditionerKind::WeissSmith);
         WCNS_REQUIRE_NEAR(low_mach.preconditioner.mach_cutoff, 0.002, 0.0);
+        const auto ordinary_roe = preconditioned.find("algorithm.riemann = roe");
+        preconditioned.replace(ordinary_roe,
+                               std::string("algorithm.riemann = roe").size(),
+                               "algorithm.riemann = roe_all_speed");
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(preconditioned));
     }
     {
         const auto config = wcns::CaseConfig::from_text(valid_config());

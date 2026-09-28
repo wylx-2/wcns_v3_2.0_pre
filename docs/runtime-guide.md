@@ -1,6 +1,6 @@
 # WCNS 运行、配置、输出与重启指南
 
-本文对应 WCNS `v2.0_pre`：`schema_version = 1` 兼容路径和 `schema_version = 2` 的
+本文对应 WCNS `v2.1`：`schema_version = 1` 兼容路径和 `schema_version = 2` 的
 RANS/LES、低 Mach 与隐式推进均已进入统一程序，但大型服务器物理验证仍未执行。正式入口为
 `wcns_run`，本文定位为简明速查。
 逐步用户手册见 [`user-manual.md`](user-manual.md)，源码扩展指南见
@@ -12,7 +12,7 @@ RANS/LES、低 Mach 与隐式推进均已进入统一程序，但大型服务器
 
 ## 1. 构建与运行
 
-v2.0_pre 本机验收环境包括 Windows 11、CMake 3.28.0、MinGW-w64 GCC 8.1.0、本机 Python
+v2.1 本机验收环境包括 Windows 11、CMake 3.28.0、MinGW-w64 GCC 8.1.0、本机 Python
 工具链和 Intel MPI 2021.10。CMake 最低声明版本为 3.20；未列出的编译器、操作系统和 MPI
 组合目前属于未验证环境，而不是已知不兼容。仓库不启用外部 CI，合并前应在本机执行适用的
 串行/MPI 构建、CTest 和算法规格检查。
@@ -55,13 +55,13 @@ mpiexec -n 4 build-mpi\wcns_run.exe --config examples\freestream.wcns
 
 | 键 | 可选值或含义 |
 |---|---|
-| `schema_version` | `1`，或 v2.0_pre 的 `2` |
+| `schema_version` | `1`，或 v2.1 的 `2` |
 | `case.name` | 文件名前缀；不安全字符在输出名中替换为 `_` |
 | `mesh.path` | 结构多块 CGNS 网格 |
 | `algorithm.profile` | `phenglei_wcns` 或 `scmm6_wcns`；两套度量/算子独立使用 |
 | `algorithm.reconstruction` | `weno_js`、`weno_z`、`mdcd_linear`、`mdcd_hybrid` |
 | `algorithm.reconstruction_variables` | `conservative`、`primitive`、`characteristic` |
-| `algorithm.riemann` | `rusanov`、`hllc`、`roe` |
+| `algorithm.riemann` | `rusanov`、`hllc`、`roe`、`roe_all_speed` |
 | `robustness.enabled` | 默认 `false`；开启 SSPRK 候选物理容许性检查和局部逐面降阶 |
 | `robustness.max_local_recomputations` | 每个 RK 阶段最大局部重算轮数，默认 `3` |
 | `robustness.max_step_retries` | 最大整步缩步重试数，默认 `4` |
@@ -96,7 +96,9 @@ Weiss--Smith 也已实现。阶段 Z 另支持五种三维非定常 LES：`smago
 [`config-reference-2.md`](config-reference-2.md) 和用户手册。
 
 Weiss--Smith 首版只支持 Roe+LU-SGS，并只作用于定常伪时间或非定常双时间内迭代；物理
-BDF2 导数保持守恒。无粘界面发生非法中间状态时按冻结的确定性回退链处理并计数。SSPRK3
+BDF2 导数保持守恒。v2.1 的 `roe_all_speed` 是另一条显式空间通量路径，可配 SSPRK3，但不
+改变声学谱半径或 CFL；详见 [`all-speed-roe.md`](all-speed-roe.md)。无粘界面发生非法中间
+状态时按冻结的确定性回退链处理并计数。SSPRK3
 稳健化开启后按
 “原方案、同重构 primitive、linear5/primitive、zero_order/conservative+Rusanov”的有效去重
 梯子升级真实残差直接支持及一层转置支持保护面；候选始终在独立缓冲区验证，失败整步不推进时间。详细数学定义见

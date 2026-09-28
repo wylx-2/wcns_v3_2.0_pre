@@ -534,13 +534,17 @@ private:
 
 class RoeStrategy final : public IRiemannSolver {
 public:
-    explicit RoeStrategy(RiemannSolverParameters parameters)
+    RoeStrategy(RiemannSolverParameters parameters, bool all_speed)
         : parameters_(parameters)
+        , all_speed_(all_speed)
     {
         parameters_.validate();
     }
 
-    [[nodiscard]] std::string_view name() const noexcept override { return "roe"; }
+    [[nodiscard]] std::string_view name() const noexcept override
+    {
+        return all_speed_ ? "roe_all_speed" : "roe";
+    }
 
     [[nodiscard]] RiemannResult solve(const PressurePrimitiveState& left,
                                       const PressurePrimitiveState& right,
@@ -551,10 +555,12 @@ public:
         const auto normal = checked_unit_normal(unit_normal);
         floors.validate();
         const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
+        const std::string requested(name());
         const auto fallback = [&](RiemannFallbackReason reason) {
             auto result = HllcStrategy(parameters_).solve(left, right, normal, gas, floors);
-            result.fallback_path.insert(result.fallback_path.begin(), {"roe", "hllc", reason});
-            result.requested_solver = "roe";
+            result.fallback_path.insert(
+                result.fallback_path.begin(), {requested, "hllc", reason});
+            result.requested_solver = requested;
             result.fallback_reason = reason;
             return result;
         };
@@ -570,7 +576,24 @@ public:
                 const auto index = static_cast<std::size_t>(component);
                 jump[index] = right_conservative[index] - left_conservative[index];
             }
-            const auto strengths = project_characteristic(jump, basis);
+            auto strengths = project_characteristic(jump, basis);
+            if (all_speed_) {
+                // Rieper-type low-Mach Roe fix: scale only the velocity-jump
+                // contribution to the two acoustic wave strengths.  The
+                // physical Euler flux and physical wave speeds are unchanged,
+                // so this remains an explicit conservative spatial flux.
+                const Real speed = std::sqrt(average.velocity.x * average.velocity.x
+                                             + average.velocity.y * average.velocity.y
+                                             + average.velocity.z * average.velocity.z);
+                const Real velocity_factor = std::min(1.0, speed / average.sound_speed);
+                const Real roe_density = std::sqrt(left[0]) * std::sqrt(right[0]);
+                const Real delta_normal_velocity
+                    = normal_velocity(right, normal) - normal_velocity(left, normal);
+                const Real acoustic_correction = (1.0 - velocity_factor) * roe_density
+                    * delta_normal_velocity / (2.0 * average.sound_speed);
+                strengths[0] += acoustic_correction;
+                strengths[4] -= acoustic_correction;
+            }
             std::array<Real, euler_components> eigenvalues {{
                 average.normal_velocity - average.sound_speed,
                 average.normal_velocity,
@@ -602,8 +625,8 @@ public:
             return {
                 flux,
                 std::abs(average.normal_velocity) + average.sound_speed,
-                "roe",
-                "roe",
+                requested,
+                requested,
                 RiemannFallbackReason::None,
                 {},
             };
@@ -614,6 +637,7 @@ public:
 
 private:
     RiemannSolverParameters parameters_ {};
+    bool all_speed_ = false;
 };
 
 } // namespace
@@ -788,7 +812,13 @@ RiemannSolverRegistry::with_builtins(const RiemannSolverParameters& parameters)
     result.register_solver("hllc",
                            [parameters] { return std::make_unique<HllcStrategy>(parameters); });
     result.register_solver("roe",
-                           [parameters] { return std::make_unique<RoeStrategy>(parameters); });
+                           [parameters] {
+                               return std::make_unique<RoeStrategy>(parameters, false);
+                           });
+    result.register_solver("roe_all_speed",
+                           [parameters] {
+                               return std::make_unique<RoeStrategy>(parameters, true);
+                           });
     return result;
 }
 
@@ -798,6 +828,7 @@ std::string_view riemann_solver_name(RiemannSolverKind kind)
     case RiemannSolverKind::Rusanov: return "rusanov";
     case RiemannSolverKind::Hllc: return "hllc";
     case RiemannSolverKind::Roe: return "roe";
+    case RiemannSolverKind::AllSpeedRoe: return "roe_all_speed";
     }
     throw std::invalid_argument("unknown Riemann solver kind");
 }
