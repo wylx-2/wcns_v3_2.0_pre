@@ -1,4 +1,4 @@
-# WCNS v2.1 已知限制
+# WCNS v2.2 已知限制
 
 这些限制是当前实现边界，不应通过静默降阶、占位零值或忽略配置来规避。
 
@@ -11,11 +11,14 @@
 - schema 2 已实现定常 LU-SGS 以及非定常 BDF2/BDF1 双时间 LU-SGS；没有多重网格、Krylov
   或通用全隐式 Newton。并行前后扫的收敛轨迹可随分区改变，要求的是冻结停止判据和最终物理
   一致性，而不是每次内迭代逐位相等。
-- Weiss--Smith 低 Mach 预处理首版只支持 Roe+LU-SGS，并只进入伪时间系统；Rusanov/HLLC
+- Weiss--Smith 低 Mach 预处理首版只支持 Roe+LU-SGS，并只进入伪时间系统；Rusanov/HLL/HLLC
   没有预处理版本。微型渐近/解析门禁不能替代大型低 Mach 外流的独立物理验证。
-- 显式 `roe_all_speed` 只修正 Roe 声学波强度中的速度跳跃耗散，物理谱半径保持
-  $|u_n|+a$；它可配 SSPRK3，但不会解除低 Mach 显式声学 CFL 刚性。本机仅完成公式、单元、
-  微型 SSPRK3 与算法变更重启测试，尚未完成长期槽道或大型外流精度验证。
+- v2.2 的显式 `roe_all_speed` 按 Li--Gu 公式修改声学特征值并加入压力跳跃修正；默认
+  $M_{ref},c_1,c_2=(0.1,0.02,0.05)$ 来自 LES 标定，不是任意强激波的通用最优参数。
+  `roe_all_speed_rieper` 仅用于复现 v2.1。本机只完成公式、单元、微型 SSPRK3 与算法变更
+  重启测试，尚未完成长期槽道或大型外流精度验证。
+- `roe_rotated` 已按报告实现二维/三维旋转耗散，但当前是全局逐面选择，没有报告建议的
+  激波传感器混合逻辑；在长期光滑流或复杂激波上使用前必须另作服务器物理验证。
 - 严格配置支持常黏度或 Sutherland 以及正 Prandtl 数；默认仍是 `Pr=0.72`、
   `mu/mu_ref=1` 的常黏度。RANS 与 LES 可提供模型应力/热流；尚无其他温度相关物性、变比热、
   Reynolds 应力模型、DES/DDES 或壁模 LES。
@@ -76,7 +79,7 @@
 
 ## 发布与平台
 
-- v2.1 的本机实测环境为 Windows 11、CMake 3.28、MinGW-w64 GCC 8.1、本机 Python
+- v2.2 的本机实测环境为 Windows 11、CMake、MinGW-w64 GCC 8.1、本机 Python
   工具链和 Intel MPI 2021.10。本项目不配置外部 CI；Linux GCC/Clang、OpenMPI、
   ASan/UBSan 及其他未执行的外部平台组合属于未验证，而不是已知不兼容。
 - MinGW 构建的程序运行时需要相容的 `libgcc_s_sjlj-1.dll` 和 `libstdc++-6.dll`；MPI 版本

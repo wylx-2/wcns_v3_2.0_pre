@@ -1,8 +1,8 @@
 # WCNS 用户自定义开发指南
 
-本文面向需要修改或扩展 WCNS 的开发者，对应 `v2.1` 的 schema 1/2 统一源码。目标不是只告诉读者“改哪个文件”，而是说明一次扩展必须穿过哪些数据、验证、并行、重启、输出和测试路径，避免新增代码在串行小算例中可运行、到多块/MPI/重启时失效。
+本文面向需要修改或扩展 WCNS 的开发者，对应 `v2.2` 的 schema 1/2 统一源码。目标不是只告诉读者“改哪个文件”，而是说明一次扩展必须穿过哪些数据、验证、并行、重启、输出和测试路径，避免新增代码在串行小算例中可运行、到多块/MPI/重启时失效。
 
-精简的 `WCNS_v2.1` 目录按发布要求不携带开发仓库中的 `tests/`、`cases/`、完整示例、
+精简的 `WCNS_v2.2` 目录按发布要求不携带开发仓库中的 `tests/`、`cases/`、完整示例、
 人工算例结果和阶段记录；只保留一个 t=250 分叉配置模板。本文中涉及这些目录的回归方法仍用于说明扩展应达到的验证层级；
 需要复现完整矩阵时，应使用 `wcns` 开发仓库。精简目录只能用用户自备网格和配置做端到端检查。
 
@@ -208,10 +208,11 @@ public:
 在 `RiemannSolverRegistry::with_builtins()` 注册。当前无粘和粘性 WCNS solver 构造函数都在内部创建 built-in registry，所以标准入口必须修改这一注册路径，或重构构造函数接受注入的registry。`algorithm.riemann` 是字符串，注册后即可由 schema 选择。
 
 若有新参数：扩展 `RiemannSolverParameters`、验证、summary/restart signature 和配置 parser。
-当前 `roe_all_speed` 是 Rieper 型显式空间耗散修正：只缩放两支声学波强度中的法向速度跳跃，
-不改变 Roe 物理特征速度，因此可配 SSPRK3但仍受声学 CFL 限制。Weiss--Smith 则是完整的
+当前 `roe_all_speed` 是 Li--Gu 型显式通量，修改声学特征值并加入压力跳跃项；
+`roe_all_speed_rieper` 保留 v2.1 只缩放声学波强度的实现。Weiss--Smith 则是完整的
 Roe+LU-SGS 伪时间预处理。新增低 Mach 算法必须先明确属于哪一类，并定义适用 Mach、时间
-尺度、回退行为及解析/收敛验收，不能复用名称掩盖方程差异。
+尺度、回退行为及解析/收敛验收，不能复用名称掩盖方程差异。HLL 与旋转 Roe 的实现约定见
+[`riemann-solvers-v2.2.md`](riemann-solvers-v2.2.md)。
 
 ### 6.3 测试
 
@@ -1151,11 +1152,11 @@ plan 的 `set_version` 只能改变消息头版本，不能改变 pairs、owner�
 
 1. 在独立 stage 分支提交设计、实现和机器可读证据；禁止把运行输出或用户未跟踪目录加入。
 2. 从空串行/MPI 目录配置 Release、编译、全量 CTest，并执行算法规格校验。
-3. v2.1 用 `tools/package_v2_1.py` 从 `HEAD` 已跟踪 payload 生成精简源码目录；核验
+3. v2.2 用 `tools/package_v2_2.py` 从 `HEAD` 已跟踪 payload 生成精简源码目录；核验
    `WCNS_SOURCE_REVISION` 和包内 `PACKAGE_CONTENTS.sha256`。
 4. 从没有 `.git` 的解包目录重新构建、安装、运行和重启，核对 manifest 的版本/来源提交。
 5. 运行发布矩阵、错误路径和固定性能协议，写阶段验收报告；候选标签只指向报告提交。
 6. 候选后的人工卡口通过前，不得合并 `main` 或创建正式版本标签。
 
-v2.1 的增量发布卡口见 [`release-notes-2.1.md`](release-notes-2.1.md) 和
-[`v2.1-validation.md`](v2.1-validation.md)；v2.0_pre 与 v1.1.0 历史卡口保存在开发仓库。
+v2.2 的增量发布卡口见 [`release-notes-2.2.md`](release-notes-2.2.md) 和
+[`v2.2-validation.md`](v2.2-validation.md)；旧版本历史卡口保存在开发仓库。

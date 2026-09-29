@@ -1,4 +1,4 @@
-# WCNS v2.1 case05 分叉模板。替换 mesh.path、restart.path 和服务器墙钟后使用。
+# WCNS v2.2 Li--Gu all-speed Roe case05 分叉模板。替换 mesh.path、restart.path 和服务器墙钟后使用。
 # mesh.path 必须指向生成 t=250 checkpoint 时使用的原始网格；不可重新生成同名网格。
 schema_version = 1
 case.name = channel_retau180_all_speed_roe_from_t250
@@ -8,6 +8,9 @@ algorithm.profile = scmm6_wcns
 algorithm.reconstruction = mdcd_linear
 algorithm.reconstruction_variables = primitive
 algorithm.riemann = roe_all_speed
+algorithm.roe_all_speed.reference_mach = 0.1
+algorithm.roe_all_speed.dissipation_scale = 0.02
+algorithm.roe_all_speed.pressure_coefficient = 0.05
 algorithm.mdcd.disp = 0.0463783
 algorithm.mdcd.diss = 0.001
 

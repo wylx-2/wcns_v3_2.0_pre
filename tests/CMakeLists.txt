@@ -63,16 +63,16 @@ if(WCNS_ENABLE_CGNS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
     add_test(
-        NAME wcns.v2_1_release_contract
+        NAME wcns.v2_2_release_contract
         COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_1_release.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_2_release.py
             --repository ${CMAKE_CURRENT_SOURCE_DIR}/..
     )
     add_test(
-        NAME wcns.v2_1_package_safety
+        NAME wcns.v2_2_package_safety
         COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/test_package_v2_1.py
-            --packager ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package_v2_1.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_package_v2_2.py
+            --packager ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package_v2_2.py
     )
 
     add_test(
@@ -124,6 +124,16 @@ if(WCNS_ENABLE_CGNS)
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/data/all_speed_roe_ssprk3_case.wcns.in
         ${CMAKE_CURRENT_BINARY_DIR}/all_speed_roe_ssprk3_case.wcns
+        @ONLY
+    )
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/hll_ssprk3_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/hll_ssprk3_case.wcns
+        @ONLY
+    )
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/rotated_roe_ssprk3_case.wcns.in
+        ${CMAKE_CURRENT_BINARY_DIR}/rotated_roe_ssprk3_case.wcns
         @ONLY
     )
     set(WCNS_IMPLICIT_CASE implicit-freestream-steady)
@@ -685,6 +695,17 @@ if(WCNS_ENABLE_CGNS)
             FIXTURES_REQUIRED cgns_files
             PASS_REGULAR_EXPRESSION "riemann_solver=roe_all_speed;.*time[(]integrator=ssprk3"
     )
+    foreach(riemann_smoke IN ITEMS hll rotated_roe)
+        add_test(
+            NAME wcns.run.${riemann_smoke}_ssprk3.serial
+            COMMAND wcns_run
+                --config ${CMAKE_CURRENT_BINARY_DIR}/${riemann_smoke}_ssprk3_case.wcns
+        )
+        set_tests_properties(
+            wcns.run.${riemann_smoke}_ssprk3.serial
+            PROPERTIES FIXTURES_REQUIRED cgns_files
+        )
+    endforeach()
     foreach(implicit_case IN ITEMS steady dual_time)
         add_test(
             NAME wcns.run.implicit_freestream.${implicit_case}.serial

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the source/document contracts required by WCNS v2.1."""
+"""Check the source/document contracts required by WCNS v2.2."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ def main() -> int:
 
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
     contracts = (
-        r"project\s*\(\s*wcns\s+VERSION\s+2\.1\.0",
-        r'set\s*\(\s*WCNS_PROGRAM_VERSION\s+"2\.1"',
+        r"project\s*\(\s*wcns\s+VERSION\s+2\.2\.0",
+        r'set\s*\(\s*WCNS_PROGRAM_VERSION\s+"2\.2"',
         r'option\s*\(\s*WCNS_BUILD_TESTS\s+"[^"]+"\s+OFF\s*\)',
         r'option\s*\(\s*WCNS_INSTALL_EXAMPLES\s+"[^"]+"\s+OFF\s*\)',
     )
@@ -42,10 +42,15 @@ def main() -> int:
         root,
         "src/solver/riemann_solver.cpp",
         (
+            '"hll"',
+            '"roe_rotated"',
             '"roe_all_speed"',
+            '"roe_all_speed_rieper"',
+            "all_speed_factor",
+            "pressure_correction",
+            "dissipation_scale",
             "acoustic_correction",
-            "velocity_factor",
-            "average.sound_speed",
+            "directional_jump",
         ),
     )
     checks += require_text(
@@ -71,6 +76,9 @@ def main() -> int:
         (
             '"time.integrator"',
             '"preconditioner.type"',
+            '"algorithm.roe_all_speed.reference_mach"',
+            '"algorithm.roe_all_speed.dissipation_scale"',
+            '"algorithm.roe_all_speed.pressure_coefficient"',
             '"statistics.time.weight"',
             '"output.boundary.span_bin_edges"',
             '"output.statistics.xz_planes.enabled"',
@@ -126,6 +134,7 @@ def main() -> int:
             "### 12.1 Favre 平均 RANS 系统",
             "### 12.7 Weiss--Smith 型低 Mach 预处理",
             "### 12.7.1 显式 all-speed Roe 耗散修正",
+            "### 12.7.2 HLL 与旋转 Roe",
             "### 12.9 壁面量与时间统计",
             "### 12.12 可压缩 Favre 滤波 LES 系统",
             "### 12.13 Smagorinsky、尺度相似、动态与 WALE 模型",
@@ -138,21 +147,28 @@ def main() -> int:
         "docs/all-speed-roe.md",
         (
             "roe_all_speed",
+            "roe_all_speed_rieper",
+            "Li--Gu",
             "SSPRK3",
-            "声学 CFL",
             "algorithm_change",
             "t=250",
         ),
     )
     checks += require_text(
         root,
-        "docs/release-notes-2.1.md",
+        "docs/riemann-solvers-v2.2.md",
         (
-            "all-speed Roe",
+            "HLL",
+            "旋转 Roe",
             "roe_all_speed",
-            "高 Mach",
-            "v2.1-validation.md",
+            "roe_all_speed_rieper",
+            "v2.1",
         ),
+    )
+    checks += require_text(
+        root,
+        "docs/release-notes-2.2.md",
+        ("Li--Gu", "roe_rotated", "algorithm_change", "v2.2-validation.md"),
     )
     checks += require_text(
         root,
@@ -167,9 +183,9 @@ def main() -> int:
     )
     checks += require_text(
         root,
-        "tools/package_v2_1.py",
+        "tools/package_v2_2.py",
         (
-            'PACKAGE_NAME = "WCNS_v2.1"',
+            'PACKAGE_NAME = "WCNS_v2.2"',
             '"cases"',
             '"tests"',
             '".cgns"',
@@ -179,7 +195,7 @@ def main() -> int:
         ),
     )
 
-    print(f"v2.1 release contracts verified: {checks} checks")
+    print(f"v2.2 release contracts verified: {checks} checks")
     return 0
 
 

@@ -493,11 +493,23 @@ void test_case_config()
         all_speed_explicit.replace(all_speed_riemann,
                                    std::string("algorithm.riemann = hllc").size(),
                                    "algorithm.riemann = roe_all_speed");
+        all_speed_explicit += "algorithm.roe_all_speed.reference_mach = 0.08\n"
+                              "algorithm.roe_all_speed.dissipation_scale = 0.03\n"
+                              "algorithm.roe_all_speed.pressure_coefficient = 0.06\n";
         const auto all_speed = wcns::CaseConfig::from_text(all_speed_explicit);
         WCNS_REQUIRE(all_speed.riemann.scheme == "roe_all_speed");
+        WCNS_REQUIRE_NEAR(all_speed.riemann.parameters.all_speed.reference_mach, 0.08, 0.0);
+        WCNS_REQUIRE_NEAR(all_speed.riemann.parameters.all_speed.dissipation_scale, 0.03, 0.0);
+        WCNS_REQUIRE_NEAR(all_speed.riemann.parameters.all_speed.pressure_coefficient, 0.06, 0.0);
         WCNS_REQUIRE(all_speed.time_algorithm.integrator
                      == wcns::TimeIntegratorKind::SspRk3);
         WCNS_REQUIRE(all_speed.preconditioner.kind == wcns::PreconditionerKind::None);
+
+        auto misplaced_all_speed_parameter = valid_v2_config();
+        misplaced_all_speed_parameter
+            += "algorithm.roe_all_speed.reference_mach = 0.08\n";
+        WCNS_REQUIRE_THROWS(wcns::CaseConfigurationError,
+                            wcns::CaseConfig::from_text(misplaced_all_speed_parameter));
 
         auto missing_physical_step = valid_lu_sgs_config(true);
         const auto step = missing_physical_step.find("time.physical.step = 0.01\n");

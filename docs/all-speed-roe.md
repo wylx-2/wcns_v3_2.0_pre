@@ -1,153 +1,133 @@
-# 显式 all-speed Roe：算法、配置与 t=250 分叉
+# v2.2 显式 all-speed Roe：Li--Gu 实现、兼容模式与 t=250 分叉
 
-WCNS v2.1 的 `roe_all_speed` 是 Rieper 型低马赫 Roe 耗散修正。它仍离散原始守恒 Euler/
-Navier--Stokes 方程，只改变界面 Roe 耗散中法向速度跳跃对两支声学波的贡献。因此它可以直接
-用于显式 SSPRK3，也可以作为未启用 Weiss--Smith 时的普通空间通量用于 LU-SGS。
+## 1. v2.1 审查结论
 
-它和 `roe + preconditioner.type=weiss_smith` 不是同一种算法。后者改变伪时间系统、特征速度和
-LU-SGS 更新，只允许 LU-SGS；`roe_all_speed` 不使用预处理矩阵，也不改变物理时间导数。
+v2.1 的 `roe_all_speed` 实际采用 Rieper 型修正：普通 Roe 特征值、中央通量和 CFL 谱半径
+不变，只把两支声学波强度中的法向速度跳跃乘以局部 Mach 因子。它与 `test_pdf_3.pdf`
+第 5 章 5.3.2 节的 Li--Gu 全速度 Roe **不一致**。后者还要求：
 
-## 1. 离散定义
+1. 用 $\widetilde a'=f(M)\widetilde a$ 修改两支声学特征值；
+2. 加入抑制低 Mach 压力棋盘振荡的压力跳跃项；
+3. 显式给出参考 Mach 数 $M_{ref}$、Roe 耗散系数 $c_1$ 和压力系数 $c_2$。
 
-单位法向为 $\boldsymbol n$ 时，数值通量仍写成
+v2.2 将 `roe_all_speed` 改为下面的 Li--Gu 实现；v2.1 算法以
+`roe_all_speed_rieper` 保留。旧 checkpoint 若从原 `roe_all_speed` 切换到 v2.2 的同名算法，
+必须使用 `restart.mode=algorithm_change`，不能把二者视为严格相同的离散。
 
-$$
-\widehat{\boldsymbol F}_n=
-\frac12\left(\boldsymbol F_n(\boldsymbol Q_L)+\boldsymbol F_n(\boldsymbol Q_R)\right)
--\frac12\widetilde{\boldsymbol R}|\widetilde{\boldsymbol\Lambda}|
-\boldsymbol\alpha^{AS}.
-$$
+## 2. Li--Gu 离散定义
 
-波速保持普通 Roe 的
-$\widetilde u_n-\widetilde a,\widetilde u_n,\widetilde u_n,\widetilde u_n,
-\widetilde u_n+\widetilde a$，并继续使用相同的 Harten 熵修正。令
+单位面法向为 $\boldsymbol n$，Roe 平均法向速度、声速和密度分别为
+$\widetilde u_n,\widetilde a,\widetilde\rho$。定义
 
 $$
-\Delta u_n=(\boldsymbol u_R-\boldsymbol u_L)\cdot\boldsymbol n,
-\qquad
-z=\min\left(1,\frac{\|\widetilde{\boldsymbol u}\|}{\widetilde a}\right),
+M=\max\left(\frac{|\widetilde u_n|}{\widetilde a},M_{ref}\right),
 $$
 
-其中速度和声速均为 Roe 平均。$z$ 使用三维欧氏速度模，是原始二维低马赫 Roe 修正的旋转
-不变三维扩展。普通 Roe 的两支声学波强度为
+以及
 
 $$
-\alpha_- = \frac{\Delta p}{2\widetilde a^2}
--\frac{\widetilde\rho\Delta u_n}{2\widetilde a},
-\qquad
-\alpha_+ = \frac{\Delta p}{2\widetilde a^2}
-+\frac{\widetilde\rho\Delta u_n}{2\widetilde a}.
+f(M)=\min\left[
+1,
+M\sqrt{\frac{4+(1-M^2)^2}{1+M^2}}
+\right],
+\qquad \widetilde a'=f(M)\widetilde a.
 $$
 
-all-speed 版本只作
+当 $M\ge 1$ 时直接取 $f=1$，避免不必要的大数中间量。Roe--Pike 左右特征向量保持不变，
+五个特征值改为
 
 $$
-\alpha_-^{AS} = \frac{\Delta p}{2\widetilde a^2}
--z\frac{\widetilde\rho\Delta u_n}{2\widetilde a},
-\qquad
-\alpha_+^{AS} = \frac{\Delta p}{2\widetilde a^2}
-+z\frac{\widetilde\rho\Delta u_n}{2\widetilde a}.
+\widetilde u_n-\widetilde a',\quad
+\widetilde u_n,\quad\widetilde u_n,\quad\widetilde u_n,\quad
+\widetilde u_n+\widetilde a'.
 $$
 
-实现中等价地对普通特征投影增加
+令 $\widehat U=(U_L+U_R)/2$、$\widehat p=p(\widehat U)$，并定义
 
 $$
-\delta\alpha_-=(1-z)\frac{\widetilde\rho\Delta u_n}{2\widetilde a},
-\qquad
-\delta\alpha_+=-\delta\alpha_-.
+\widehat Q=\widehat U+(0,0,0,0,\widehat p)^T.
 $$
 
-其余三支波强度、中央物理通量、熵修正和回退判据不变。$z=1$ 时逐项恢复普通 Roe；异常 Roe
-平均仍按 `roe_all_speed -> hllc -> rusanov` 回退并记录真实请求算法名。
+v2.2 的最终法向通量严格按第 5 章式 (5.92) 实现：
 
-## 2. 能做什么、不能做什么
+$$
+\widehat F_n=
+\frac{F_n(U_L)+F_n(U_R)}{2}
+-c_1\widetilde R|\widetilde\Lambda^{AS}|\widetilde L(U_R-U_L)
+-[1-f(M)]\frac{c_2(p_R-p_L)}
+{M_{ref}\widetilde\rho\widetilde a}\widehat Q.
+$$
 
-- 低 Mach 区域削弱 Roe 中随声速放大的速度跳跃耗散，避免把低速涡结构过度抹平。
-- 物理 Euler 特征速度及返回给时间步控制器的谱半径仍为
-  $|\widetilde u_n|+\widetilde a$，所以显式 SSPRK3 的声学 CFL 限制仍然存在。
-- 该修正不是不可压缩投影、压力修正或伪时间预处理，不会让低 Mach 显式计算获得与对流速度
-  成比例的时间步。
-- 高 Mach 区域严格退化为普通 Roe；跨声速处仍保留普通 Roe 的熵修正。
-- 本机小网格卡口证明代码路径可执行和离散性质符合上述公式，不替代槽道长期统计或外流精度
-  验证。
+默认值采用该章标定值
 
-算法依据为 F. Rieper, “A low-Mach number fix for Roe's approximate Riemann solver”,
-Journal of Computational Physics 230 (2011) 5263--5287,
-<https://doi.org/10.1016/j.jcp.2011.03.025>。WCNS 的三维局部 Mach 定义采用上述旋转不变扩展，
-因此复现实验时必须记录程序版本和数值签名，不能与论文中其他局部 Mach 定义混写。
+$$
+M_{ref}=0.1,\qquad c_1=0.02,\qquad c_2=0.05.
+$$
 
-## 3. 配置方法
+Li--Gu 路径按文档中的 $|\widetilde\Lambda^{AS}|$ 直接取绝对值，不额外施加普通 Roe 的
+Harten 熵修正。返回给时间推进器的谱半径为
 
-schema 1 的显式路径只需选择新通量；时间推进本来就是 SSPRK3：
+$$
+\rho_A=|\widetilde u_n|+\widetilde a'.
+$$
+
+因此它可与 SSPRK3 直接组合，而且低 Mach 声学刚性会减小；但稳定步长仍必须由程序返回的
+谱半径和实际网格共同确定，不能手工按流速任意放大。非法 Roe 平均按
+`roe_all_speed -> hllc -> rusanov` 回退。
+
+## 3. 配置
+
+schema 2 推荐显式写出：
 
 ```text
-schema_version = 1
 algorithm.riemann = roe_all_speed
-```
+algorithm.roe_all_speed.reference_mach = 0.1
+algorithm.roe_all_speed.dissipation_scale = 0.02
+algorithm.roe_all_speed.pressure_coefficient = 0.05
 
-schema 2 应明确写出：
-
-```text
-schema_version = 2
-algorithm.riemann = roe_all_speed
 time.integrator = ssprk3
 preconditioner.type = none
 ```
 
-不要同时设置 `preconditioner.type=weiss_smith`。Weiss--Smith 仍只允许
-`algorithm.riemann=roe + time.integrator=lu_sgs`。
+三个参数分别对应 $M_{ref},c_1,c_2$，并进入配置摘要和 restart signature。它们只允许在
+`algorithm.riemann=roe_all_speed` 时出现。取 `c1=0.5` 且局部 $M\ge1$ 时，压力修正消失，
+通量恢复未施加熵修正的标准 Roe 形式。报告给出的 `c1=0.02` 是 LES 标定值，不应未经验证
+直接用于强激波生产计算。
 
-## 4. 从 case05 的 t=250 checkpoint 建立新分支
-
-源码包中的 `examples/channel_retau180_from_t250_all_speed_roe.wcns` 冻结了 SCMM6、
-线性 MDCD、`diss=0.001`、all-speed Roe 和 SSPRK3。使用前只替换模板末尾的 checkpoint
-路径，并按服务器作业时限修改 `run.max_wall_time`。核心差异必须是：
+如需复现 v2.1 的 Rieper 路径：
 
 ```text
-algorithm.profile = scmm6_wcns
-algorithm.reconstruction = mdcd_linear
-algorithm.reconstruction_variables = primitive
-algorithm.riemann = roe_all_speed
-algorithm.mdcd.disp = 0.0463783
-algorithm.mdcd.diss = 0.001
+algorithm.riemann = roe_all_speed_rieper
+time.integrator = ssprk3
+preconditioner.type = none
+```
 
-run.cfl = 0.3
+Rieper 兼容路径仍保持普通 Roe 的声学谱半径与 Harten 熵修正。Weiss--Smith 则是另一套
+`algorithm.riemann=roe + time.integrator=lu_sgs` 伪时间预处理，不能与上述两个显式通量混用。
+
+## 4. 从 case05 的 t=250 checkpoint 分叉
+
+`examples/channel_retau180_from_t250_all_speed_roe.wcns` 已配置 SCMM6、线性 MDCD、
+`diss=0.001`、Li--Gu all-speed Roe 和 SSPRK3。替换 checkpoint 路径后，第一次启动必须使用：
+
+```text
 run.t_end = 300.0
-
 restart.path = REPLACE_WITH_T250_CHECKPOINT.cgns
 restart.mode = algorithm_change
 ```
 
-`run.t_end` 是绝对物理终止时间，不是“从 checkpoint 再计算多久”；t=250 起算而希望再推进
-50，应写 300。因为 Riemann 算法已改变，第一次必须使用 `algorithm_change`，它保留 checkpoint
-中的 step/time 和守恒状态，但重置时间统计及算法历史。必须使用新的 `case.name` 和
-`output.directory`，不能覆盖普通 Roe 分支。
+`run.t_end` 是绝对物理终止时间；从 250 再推进 50 应写 300。新分支产生首个 checkpoint 后，
+参数不再变化的后续续段改用 `strict`。每个不同 Riemann/参数组合必须使用独立 `case.name` 和
+`output.directory`。
 
-`mesh.path` 必须指向生成该 checkpoint 时使用的**原始 CGNS 网格文件**。网格签名包含 base/
-zone 身份和逐点坐标；重新生成的同名、同尺寸网格也可能签名不同。现有 t=250 checkpoint 的
-签名为 `18099232003167909757`。v2.1 已用这份 checkpoint 及其原始网格完成真实 dry-run，恢复
-到 `step=1047500, time=250`；若日志报 `checkpoint mesh signature differs`，应找回原始网格，
-不得关闭校验或强制导入。
+checkpoint 必须与生成它的原始 CGNS 网格配套。现有 t=250 种子的网格签名为
+`18099232003167909757`；同尺寸的重建网格也可能签名不同，不得关闭校验。服务器上先依次执行
+串行 dry-run、MPI dry-run 和 2--5 步 smoke，再恢复正式墙钟和步数。
 
-服务器顺序为：
+## 5. v2.2 小规模卡口
 
-```bash
-install/serial/bin/wcns_run --config case05-all-speed-from-t250.wcns --dry-run
-mpirun -np 4 install/mpi/bin/wcns_run --config case05-all-speed-from-t250.wcns --dry-run
-mpirun -np 4 install/mpi/bin/wcns_run --config case05-all-speed-from-t250-smoke.wcns
-```
-
-短测配置应把 `run.max_steps` 暂时改为 2--5，并使用独立输出目录。核对启动摘要同时出现
-`riemann_solver=roe_all_speed` 和 `time(integrator=ssprk3`，首个 checkpoint 的 time 仍从
-约 250 延续，且没有非有限值或异常回退。短测通过后再恢复正式步数/墙钟。新分支自产生第一个
-checkpoint 后，后续不再改算法的续段改用 `restart.mode=strict`。
-
-## 5. v2.1 本机卡口
-
-- 单元：均匀流一致性、低 Mach 通量确实不同于普通 Roe、物理谱半径不变、高 Mach 与普通 Roe
-  逐分量一致、法向反转对称、Sod/高 Mach 状态有限。
-- 配置：`roe_all_speed + ssprk3 + preconditioner.none` 可解析。
-- 运行：小型二维低 Mach 均匀流用 SSPRK3 推进并保持有限。
-- 重启：从普通 HLLC checkpoint 以 `algorithm_change` 切到 `roe_all_speed`，逐值核对导入守恒场。
-- 实际种子：case05 的 64-rank t=250 Roe checkpoint 配原始网格 dry-run 成功，恢复
-  `step=1047500, time=250` 和 mesh signature `18099232003167909757`。
+- 逐式检查 $f(M)$、修正谱半径和压力跳跃项；
+- 均匀流一致性、法向反转、低 Mach 有限性及 `c1=0.5` 的高 Mach Roe 恢复；
+- Rieper 兼容路径保持 v2.1 的谱半径和声学波强度行为；
+- schema 2 参数解析、非法组合拒绝、SSPRK3 小网格运行及算法变更重启；
+- 不把这些小规模结果解释为长期槽道统计或大型翼型物理验证。

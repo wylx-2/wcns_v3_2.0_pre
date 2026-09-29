@@ -1,16 +1,16 @@
-# WCNS v2.1 Linux 服务器操作指南
+# WCNS v2.2 Linux 服务器操作指南
 
-本指南面向不含网格/结果的 `WCNS_v2.1` 精简源码目录。它说明上传、完整性核验、串行/MPI
+本指南面向不含网格/结果的 `WCNS_v2.2` 精简源码目录。它说明上传、完整性核验、串行/MPI
 编译、小规模预检、安全停止与重启。大型 Case06、长期湍流和目标三维翼型仍需另行制定资源
 预算与验收方案；不要在登录节点直接运行计算。
 
 ## 1. 上传前准备
 
-在开发机上从 `WCNS_v2.1` 的父目录打包，保留 UTF-8 文件名：
+在开发机上从 `WCNS_v2.2` 的父目录打包，保留 UTF-8 文件名：
 
 ```text
-tar -czf WCNS_v2.1.tar.gz WCNS_v2.1
-scp WCNS_v2.1.tar.gz user@server:/work/user/wcns/
+tar -czf WCNS_v2.2.tar.gz WCNS_v2.2
+scp WCNS_v2.2.tar.gz user@server:/work/user/wcns/
 ```
 
 程序包不含 `cases/`、网格或运行结果。配置和 CGNS 网格应另行上传到独立算例目录，避免把
@@ -20,8 +20,8 @@ scp WCNS_v2.1.tar.gz user@server:/work/user/wcns/
 
 ```bash
 cd /work/user/wcns
-tar -xzf WCNS_v2.1.tar.gz
-cd WCNS_v2.1
+tar -xzf WCNS_v2.2.tar.gz
+cd WCNS_v2.2
 sha256sum -c PACKAGE_CONTENTS.sha256
 cat WCNS_SOURCE_REVISION
 ```
@@ -93,7 +93,7 @@ install/serial/bin/wcns_run --help || test "$?" -eq 1
 建议目录彼此隔离：
 
 ```text
-/work/user/wcns/WCNS_v2.1/           # 只读源码和构建
+/work/user/wcns/WCNS_v2.2/           # 只读源码和构建
 /work/user/wcns/cases/my_case/       # 配置与网格
 /scratch/user/wcns/my_case/run-001/  # 本次输出
 ```
@@ -129,7 +129,7 @@ set -euo pipefail
 module purge
 module load gcc/12 cmake/3.26 openmpi/4.1
 
-source_root=/work/user/wcns/WCNS_v2.1
+source_root=/work/user/wcns/WCNS_v2.2
 case_file=/work/user/wcns/cases/my_case/case.wcns
 export OMP_NUM_THREADS=1
 
@@ -181,6 +181,9 @@ cp examples/channel_retau180_from_t250_all_speed_roe.wcns \
 algorithm.profile = scmm6_wcns
 algorithm.reconstruction = mdcd_linear
 algorithm.riemann = roe_all_speed
+algorithm.roe_all_speed.reference_mach = 0.1
+algorithm.roe_all_speed.dissipation_scale = 0.02
+algorithm.roe_all_speed.pressure_coefficient = 0.05
 algorithm.mdcd.diss = 0.001
 run.cfl = 0.3
 restart.path = /absolute/path/to/t250.checkpoint.latest.cgns

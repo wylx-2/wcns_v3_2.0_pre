@@ -1,6 +1,6 @@
 # WCNS schema 2 配置参考
 
-本文件是 `v2.1` 的稳定配置入口。完整逐键说明和示例见《用户手册》；运行时严格拒绝未知
+本文件是 `v2.2` 的稳定配置入口。完整逐键说明和示例见《用户手册》；运行时严格拒绝未知
 键、重复键、非有限值、模型无关参数和不支持组合。
 
 ## 模型与推进组合
@@ -11,15 +11,19 @@
 | `time.integrator` | `ssprk3`, `lu_sgs` | 定常/非定常均可使用 LU-SGS；非定常 LU-SGS 必须双时间 |
 | `time.physical.scheme` | `bdf2` | 无历史首步自动使用 BDF1 |
 | `preconditioner.type` | `none`, `weiss_smith` | Weiss--Smith 只允许 Roe+LU-SGS |
-| `algorithm.riemann` | `roe`, `roe_all_speed`, `rusanov`, `hllc` | `roe_all_speed` 可配 SSPRK3，但仍受声学 CFL 限制 |
+| `algorithm.riemann` | `rusanov`, `hll`, `hllc`, `roe`, `roe_all_speed`, `roe_all_speed_rieper`, `roe_rotated` | 显式 all-speed 路径可配 SSPRK3；旋转 Roe 当前为全局逐面选择 |
 
 SA-neg 使用 resolved wall；SST-2003m 使用 resolved wall；标准高 Reynolds 数 k--epsilon 只允许
 wall function 且当前保持实验支持等级。LES 的测试滤波比固定为 2；动态平均固定为
 `local_box3_tensor`。Smagorinsky/混合模型的生产 wall damping 当前只允许 `none`；请求
 `van_driest` 会明确失败。
 
-`roe_all_speed` 是显式 Rieper 型 Roe 耗散修正，应配 `preconditioner.type=none`；它不等于
-Weiss--Smith。完整公式和配置示例见 [`all-speed-roe.md`](all-speed-roe.md)。
+`roe_all_speed` 是 v2.2 的 Li--Gu 型全速度 Roe，参数键为
+`algorithm.roe_all_speed.reference_mach`、`dissipation_scale` 和 `pressure_coefficient`，默认
+分别为 `0.1, 0.02, 0.05`。`roe_all_speed_rieper` 保留 v2.1 算法。两者都应配
+`preconditioner.type=none`，且不等于 Weiss--Smith。完整公式见
+[`all-speed-roe.md`](all-speed-roe.md)，全部 Riemann 求解器对照见
+[`riemann-solvers-v2.2.md`](riemann-solvers-v2.2.md)。
 
 ## 统计
 
@@ -59,7 +63,7 @@ statistics.time.weight = accepted_dt
 ## 关键拒绝项
 
 - 二维、定常、无黏或 SSPRK3 的 LES；
-- Weiss--Smith 与 Rusanov/HLLC/`roe_all_speed` 或 SSPRK3；
+- Weiss--Smith 与 Roe 以外的任一 Riemann 求解器或 SSPRK3；
 - k--epsilon 未声明 `turbulence.experimental=true`，或使用 resolved wall；
 - LES 测试滤波比不等于 2，或模型专属参数出现在其他模型；
 - 未注册统计量、重复量、越界截面、非共面规则截面；

@@ -2,15 +2,16 @@
 
 一个面向结构多块网格、CGNS 和 MPI 并行设计的小型高阶 CFD 程序。
 
-当前内部版本为 **WCNS v2.1**。它在 v2.0_pre 上新增可与 SSPRK3 直接组合的显式
-`roe_all_speed`，并保留 RANS/LES、Weiss--Smith+LU-SGS、三维载荷和可重启统计。本项目采用
+当前内部版本为 **WCNS v2.2**。它补齐 HLL 与二维/三维旋转 Roe，并将 `roe_all_speed`
+更新为与指定报告第五章一致的 Li--Gu 公式；v2.1 的 Rieper 算法以
+`roe_all_speed_rieper` 保留。RANS/LES、Weiss--Smith+LU-SGS、三维载荷和可重启统计继续保留。本项目采用
 本机独立开发，不启用外部 CI；质量卡口由本机构建、CTest、算法规格和发布契约检查承担。
 对外发布和 WCNS 自有代码许可证决定均暂缓。
 
-`v2.1` 仍属于物理验证受限的内部版本：没有在本机运行 Case06 大网格或目标三维翼型；新增
-all-speed Roe 只完成公式、单元、小网格 SSPRK3 和算法变更重启卡口，不宣称长期低马赫湍流
-精度已经通过验证。显式 all-speed Roe 的公式、配置和从 t=250 分叉步骤见
-[`docs/all-speed-roe.md`](docs/all-speed-roe.md)。v2.0_pre 的范围和卡口见
+`v2.2` 仍属于物理验证受限的内部版本：没有在本机运行 Case06 大网格或目标三维翼型；新增
+Riemann 路径只完成公式、单元、小网格 SSPRK3 和算法变更重启卡口，不宣称长期低马赫湍流
+或复杂激波精度已经通过验证。全速度 Roe 见 [`docs/all-speed-roe.md`](docs/all-speed-roe.md)，
+求解器覆盖审查见 [`docs/riemann-solvers-v2.2.md`](docs/riemann-solvers-v2.2.md)。v2.0_pre 的范围和卡口见
 [`docs/v2.0-pre-development-plan.md`](docs/v2.0-pre-development-plan.md)，逐项支持见
 [`docs/v2.0-pre-capability-matrix.md`](docs/v2.0-pre-capability-matrix.md)，数学定义见
 [`算法补充.md`](算法补充.md)，使用方法和限制见
@@ -28,12 +29,12 @@ V、W、X、AA、Y、Z、AB0 和 AB1 的既有设计与验收记录保留在开�
 服务器和目标算例的物理验证继续属于正式 `v2.0.0` 后续工作，不阻塞 `v2.0_pre` 精简源码
 目录；历史计划见 [`docs/v2.0.0-development-plan.md`](docs/v2.0.0-development-plan.md)。
 
-本开发仓库保留阶段设计、自动测试、人工算例及验收证据。v2.1 的确定性 Linux 源码包由
-`tools/package_v2_1.py` 从版本提交直接生成，只附带 t=250 分叉配置模板，不包含网格、结果或
+本开发仓库保留阶段设计、自动测试、人工算例及验收证据。v2.2 的确定性 Linux 源码包由
+`tools/package_v2_2.py` 从版本提交直接生成，只附带 t=250 分叉配置模板，不包含网格、结果或
 完整算例。历史上的独立 `wcns_v3_release` 精简仓库不再作为版本来源真值。
 
 当前程序具备 CGNS 结构多块网格读取、两套独立高阶几何 profile、确定性运行时剖分与 MPI halo、
-六种界面重构、Rusanov/HLLC/Roe/显式 all-speed Roe、层流 Navier--Stokes、SSPRK3、定常/
+六种界面重构、Rusanov/HLL/HLLC/Roe/Li--Gu 与 Rieper all-speed Roe/旋转 Roe、层流 Navier--Stokes、SSPRK3、定常/
 非定常 LU-SGS、Roe/Weiss--Smith、SA-neg、SST-2003m、实验级标准 k-epsilon 及阶段 Z 的五种
 LES 候选实现。边界输出
 覆盖壁面量、压力/黏性分载荷和三维展向分箱；接受步时间统计覆盖 mean/RMS/covariance/Favre，

@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(wcns VERSION 2.1.0 LANGUAGES C CXX)
+project(wcns VERSION 2.2.0 LANGUAGES C CXX)
 
-set(WCNS_PROGRAM_VERSION "2.1" CACHE STRING "WCNS user-visible release label")
+set(WCNS_PROGRAM_VERSION "2.2" CACHE STRING "WCNS user-visible release label")
 
 include(GNUInstallDirs)
 

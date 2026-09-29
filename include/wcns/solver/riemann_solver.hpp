@@ -17,9 +17,12 @@ namespace wcns {
 
 enum class RiemannSolverKind {
     Rusanov,
+    Hll,
     Hllc,
     Roe,
     AllSpeedRoe,
+    RieperAllSpeedRoe,
+    RotatedRoe,
 };
 
 enum class RiemannFallbackReason {
@@ -30,11 +33,20 @@ enum class RiemannFallbackReason {
     NonFiniteFlux,
 };
 
+struct LiGuAllSpeedRoeParameters {
+    Real reference_mach = 0.1;
+    Real dissipation_scale = 0.02;
+    Real pressure_coefficient = 0.05;
+
+    void validate() const;
+};
+
 struct RiemannSolverParameters {
     Real entropy_fix_coefficient = 0.1;
     Real denominator_tolerance = 1.0e-12;
     bool weiss_smith = false;
     WeissSmithParameters preconditioner {};
+    LiGuAllSpeedRoeParameters all_speed {};
 
     void validate() const;
 };

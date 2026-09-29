@@ -32,9 +32,12 @@ algorithm.reconstruction = weno_z
 # 可选：conservative | primitive | characteristic
 algorithm.reconstruction_variables = characteristic
 
-# 可选：rusanov | hllc | roe | roe_all_speed
-# roe_all_speed 是显式低马赫耗散修正，可直接配 SSPRK3；它不解除声学 CFL 限制。
+# 可选：rusanov | hll | hllc | roe | roe_all_speed | roe_all_speed_rieper | roe_rotated
+# roe_all_speed 是 v2.2 Li--Gu 公式；以下三个参数仅在选用它时取消注释。
 algorithm.riemann = hllc
+# algorithm.roe_all_speed.reference_mach = 0.1
+# algorithm.roe_all_speed.dissipation_scale = 0.02
+# algorithm.roe_all_speed.pressure_coefficient = 0.05
 
 # SSPRK 事后物理容许性与局部离散支持降阶。默认关闭，关闭时保持 v1.0 数值路径。
 # 开启后依次尝试：原方案 -> 同方案 primitive -> linear5/primitive

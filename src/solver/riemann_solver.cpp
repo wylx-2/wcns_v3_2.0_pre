@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -40,6 +41,40 @@ Real normal_velocity(const PressurePrimitiveState& state, Normal3 normal)
 bool finite_state(const ConservativeState& state)
 {
     return std::all_of(state.begin(), state.end(), [](Real value) { return std::isfinite(value); });
+}
+
+Real dot(Normal3 lhs, Normal3 rhs)
+{
+    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+}
+
+Normal3 cross(Normal3 lhs, Normal3 rhs)
+{
+    return {
+        lhs.y * rhs.z - lhs.z * rhs.y,
+        lhs.z * rhs.x - lhs.x * rhs.z,
+        lhs.x * rhs.y - lhs.y * rhs.x,
+    };
+}
+
+Normal3 normalized(Normal3 vector)
+{
+    const Real magnitude = std::sqrt(dot(vector, vector));
+    if (!std::isfinite(magnitude) || magnitude <= std::numeric_limits<Real>::epsilon()) {
+        throw PhysicsError("cannot normalize a degenerate direction");
+    }
+    return {vector.x / magnitude, vector.y / magnitude, vector.z / magnitude};
+}
+
+ConservativeState conservative_jump(const ConservativeState& left,
+                                     const ConservativeState& right)
+{
+    ConservativeState result {};
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        result[index] = right[index] - left[index];
+    }
+    return result;
 }
 
 Matrix5 shifted_matrix(const Matrix5& matrix, Real shift)
@@ -143,6 +178,7 @@ Matrix5 absolute_preconditioned_jacobian(
 }
 
 struct RoeAverage {
+    Real density = 0.0;
     Normal3 velocity {};
     Real normal_velocity = 0.0;
     Real enthalpy = 0.0;
@@ -166,6 +202,7 @@ RoeAverage roe_average(const PressurePrimitiveState& left,
         return (root_left * left_value + root_right * right_value) / denominator;
     };
     RoeAverage result;
+    result.density = root_left * root_right;
     result.velocity = {
         average(left[1], right[1]),
         average(left[2], right[2]),
@@ -407,6 +444,95 @@ public:
     }
 };
 
+class HllStrategy final : public IRiemannSolver {
+public:
+    explicit HllStrategy(RiemannSolverParameters parameters)
+        : parameters_(parameters)
+    {
+        parameters_.validate();
+    }
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "hll"; }
+
+    [[nodiscard]] RiemannResult solve(const PressurePrimitiveState& left,
+                                      const PressurePrimitiveState& right,
+                                      Normal3 unit_normal,
+                                      const GasModel& gas,
+                                      const NumericalFloors& floors) const override
+    {
+        const auto normal = checked_unit_normal(unit_normal);
+        floors.validate();
+        const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
+        const auto left_conservative = to_conservative(left, ideal);
+        const auto right_conservative = to_conservative(right, ideal);
+        const auto left_flux = euler_flux(left, normal, ideal);
+        const auto right_flux = euler_flux(right, normal, ideal);
+        const Real un_left = normal_velocity(left, normal);
+        const Real un_right = normal_velocity(right, normal);
+
+        try {
+            const auto average = roe_average(left, right, normal, ideal);
+            const Real speed_left = std::min(
+                un_left - sound_speed(left, ideal),
+                average.normal_velocity - average.sound_speed);
+            const Real speed_right = std::max(
+                un_right + sound_speed(right, ideal),
+                average.normal_velocity + average.sound_speed);
+            const Real spectral_radius = std::max(std::abs(speed_left), std::abs(speed_right));
+            const Real denominator = speed_right - speed_left;
+            const Real scale = std::max({1.0, std::abs(speed_left), std::abs(speed_right)});
+            if (!std::isfinite(speed_left) || !std::isfinite(speed_right)
+                || !std::isfinite(denominator) || speed_left >= speed_right
+                || denominator <= parameters_.denominator_tolerance * scale) {
+                return rusanov_result(left,
+                                      right,
+                                      normal,
+                                      gas,
+                                      floors,
+                                      "hll",
+                                      RiemannFallbackReason::InvalidWaveSpeed);
+            }
+            if (speed_left >= 0.0) {
+                return {left_flux, spectral_radius, "hll", "hll", RiemannFallbackReason::None, {}};
+            }
+            if (speed_right <= 0.0) {
+                return {
+                    right_flux, spectral_radius, "hll", "hll", RiemannFallbackReason::None, {}};
+            }
+
+            ConservativeState flux {};
+            for (int component = 0; component < euler_components; ++component) {
+                const auto index = static_cast<std::size_t>(component);
+                flux[index] = (speed_right * left_flux[index] - speed_left * right_flux[index]
+                               + speed_left * speed_right
+                                   * (right_conservative[index] - left_conservative[index]))
+                    / denominator;
+            }
+            if (!finite_state(flux)) {
+                return rusanov_result(left,
+                                      right,
+                                      normal,
+                                      gas,
+                                      floors,
+                                      "hll",
+                                      RiemannFallbackReason::NonFiniteFlux);
+            }
+            return {flux, spectral_radius, "hll", "hll", RiemannFallbackReason::None, {}};
+        } catch (const PhysicsError&) {
+            return rusanov_result(left,
+                                  right,
+                                  normal,
+                                  gas,
+                                  floors,
+                                  "hll",
+                                  RiemannFallbackReason::InvalidWaveSpeed);
+        }
+    }
+
+private:
+    RiemannSolverParameters parameters_ {};
+};
+
 class HllcStrategy final : public IRiemannSolver {
 public:
     explicit HllcStrategy(RiemannSolverParameters parameters)
@@ -532,18 +658,29 @@ private:
     RiemannSolverParameters parameters_ {};
 };
 
+enum class RoeVariant {
+    Standard,
+    LiGuAllSpeed,
+    RieperAllSpeed,
+};
+
 class RoeStrategy final : public IRiemannSolver {
 public:
-    RoeStrategy(RiemannSolverParameters parameters, bool all_speed)
+    RoeStrategy(RiemannSolverParameters parameters, RoeVariant variant)
         : parameters_(parameters)
-        , all_speed_(all_speed)
+        , variant_(variant)
     {
         parameters_.validate();
     }
 
     [[nodiscard]] std::string_view name() const noexcept override
     {
-        return all_speed_ ? "roe_all_speed" : "roe";
+        switch (variant_) {
+        case RoeVariant::Standard: return "roe";
+        case RoeVariant::LiGuAllSpeed: return "roe_all_speed";
+        case RoeVariant::RieperAllSpeed: return "roe_all_speed_rieper";
+        }
+        return "roe";
     }
 
     [[nodiscard]] RiemannResult solve(const PressurePrimitiveState& left,
@@ -571,13 +708,9 @@ public:
             const auto right_flux = euler_flux(right, normal, ideal);
             const auto average = roe_average(left, right, normal, ideal);
             const auto basis = make_roe_characteristic_basis(left, right, normal, gas, floors, 3);
-            ConservativeState jump {};
-            for (int component = 0; component < euler_components; ++component) {
-                const auto index = static_cast<std::size_t>(component);
-                jump[index] = right_conservative[index] - left_conservative[index];
-            }
+            const auto jump = conservative_jump(left_conservative, right_conservative);
             auto strengths = project_characteristic(jump, basis);
-            if (all_speed_) {
+            if (variant_ == RoeVariant::RieperAllSpeed) {
                 // Rieper-type low-Mach Roe fix: scale only the velocity-jump
                 // contribution to the two acoustic wave strengths.  The
                 // physical Euler flux and physical wave speeds are unchanged,
@@ -586,20 +719,41 @@ public:
                                              + average.velocity.y * average.velocity.y
                                              + average.velocity.z * average.velocity.z);
                 const Real velocity_factor = std::min(1.0, speed / average.sound_speed);
-                const Real roe_density = std::sqrt(left[0]) * std::sqrt(right[0]);
                 const Real delta_normal_velocity
                     = normal_velocity(right, normal) - normal_velocity(left, normal);
-                const Real acoustic_correction = (1.0 - velocity_factor) * roe_density
+                const Real acoustic_correction = (1.0 - velocity_factor) * average.density
                     * delta_normal_velocity / (2.0 * average.sound_speed);
                 strengths[0] += acoustic_correction;
                 strengths[4] -= acoustic_correction;
             }
+            Real acoustic_speed = average.sound_speed;
+            Real flux_dissipation_scale = 0.5;
+            Real all_speed_factor = 1.0;
+            if (variant_ == RoeVariant::LiGuAllSpeed) {
+                // Li--Gu all-speed Roe, test_pdf_3.pdf equations (5.83) and
+                // (5.92).  The eigenvectors remain the Roe--Pike vectors;
+                // only the two acoustic eigenvalues are changed.
+                const Real local_normal_mach
+                    = std::abs(average.normal_velocity) / average.sound_speed;
+                const Real mach
+                    = std::max(local_normal_mach, parameters_.all_speed.reference_mach);
+                if (mach < 1.0) {
+                    const Real mach_squared = mach * mach;
+                    all_speed_factor
+                        = mach
+                        * std::sqrt((4.0 + (1.0 - mach_squared) * (1.0 - mach_squared))
+                                    / (1.0 + mach_squared));
+                }
+                all_speed_factor = std::min(1.0, all_speed_factor);
+                acoustic_speed = all_speed_factor * average.sound_speed;
+                flux_dissipation_scale = parameters_.all_speed.dissipation_scale;
+            }
             std::array<Real, euler_components> eigenvalues {{
-                average.normal_velocity - average.sound_speed,
+                average.normal_velocity - acoustic_speed,
                 average.normal_velocity,
                 average.normal_velocity,
                 average.normal_velocity,
-                average.normal_velocity + average.sound_speed,
+                average.normal_velocity + acoustic_speed,
             }};
             const Real delta
                 = parameters_.entropy_fix_coefficient
@@ -608,7 +762,7 @@ public:
             ConservativeState scaled_strengths {};
             for (int wave = 0; wave < euler_components; ++wave) {
                 Real magnitude = std::abs(eigenvalues[static_cast<std::size_t>(wave)]);
-                if (magnitude < delta) {
+                if (variant_ != RoeVariant::LiGuAllSpeed && magnitude < delta) {
                     magnitude = 0.5 * (magnitude * magnitude / delta + delta);
                 }
                 scaled_strengths[static_cast<std::size_t>(wave)]
@@ -618,13 +772,33 @@ public:
             ConservativeState flux {};
             for (int component = 0; component < euler_components; ++component) {
                 const auto index = static_cast<std::size_t>(component);
-                flux[index]
-                    = 0.5 * (left_flux[index] + right_flux[index]) - 0.5 * dissipation[index];
+                flux[index] = 0.5 * (left_flux[index] + right_flux[index])
+                    - flux_dissipation_scale * dissipation[index];
+            }
+            if (variant_ == RoeVariant::LiGuAllSpeed) {
+                ConservativeState averaged_conservative {};
+                for (int component = 0; component < euler_components; ++component) {
+                    const auto index = static_cast<std::size_t>(component);
+                    averaged_conservative[index]
+                        = 0.5 * (left_conservative[index] + right_conservative[index]);
+                }
+                const Real averaged_pressure = to_primitive(averaged_conservative, ideal)[4];
+                ConservativeState pressure_vector = averaged_conservative;
+                pressure_vector[4] += averaged_pressure;
+                const Real pressure_correction
+                    = (1.0 - all_speed_factor) * parameters_.all_speed.pressure_coefficient
+                    * (right[4] - left[4])
+                    / (parameters_.all_speed.reference_mach * average.density
+                       * average.sound_speed);
+                for (int component = 0; component < euler_components; ++component) {
+                    const auto index = static_cast<std::size_t>(component);
+                    flux[index] -= pressure_correction * pressure_vector[index];
+                }
             }
             if (!finite_state(flux)) return fallback(RiemannFallbackReason::NonFiniteFlux);
             return {
                 flux,
-                std::abs(average.normal_velocity) + average.sound_speed,
+                std::abs(average.normal_velocity) + acoustic_speed,
                 requested,
                 requested,
                 RiemannFallbackReason::None,
@@ -637,7 +811,144 @@ public:
 
 private:
     RiemannSolverParameters parameters_ {};
-    bool all_speed_ = false;
+    RoeVariant variant_ = RoeVariant::Standard;
+};
+
+class RotatedRoeStrategy final : public IRiemannSolver {
+public:
+    explicit RotatedRoeStrategy(RiemannSolverParameters parameters)
+        : parameters_(parameters)
+    {
+        parameters_.validate();
+    }
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "roe_rotated"; }
+
+    [[nodiscard]] RiemannResult solve(const PressurePrimitiveState& left,
+                                      const PressurePrimitiveState& right,
+                                      Normal3 unit_normal,
+                                      const GasModel& gas,
+                                      const NumericalFloors& floors) const override
+    {
+        const auto normal = checked_unit_normal(unit_normal);
+        floors.validate();
+        const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
+        const auto fallback = [&](RiemannFallbackReason reason) {
+            auto result = HllcStrategy(parameters_).solve(left, right, normal, gas, floors);
+            result.fallback_path.insert(
+                result.fallback_path.begin(), {"roe_rotated", "hllc", reason});
+            result.requested_solver = "roe_rotated";
+            result.fallback_reason = reason;
+            return result;
+        };
+
+        try {
+            const auto left_conservative = to_conservative(left, ideal);
+            const auto right_conservative = to_conservative(right, ideal);
+            const auto left_flux = euler_flux(left, normal, ideal);
+            const auto right_flux = euler_flux(right, normal, ideal);
+            const auto jump = conservative_jump(left_conservative, right_conservative);
+            const auto average = roe_average(left, right, normal, ideal);
+            const Normal3 velocity_jump {
+                right[1] - left[1],
+                right[2] - left[2],
+                right[3] - left[3],
+            };
+            const Real jump_norm = std::sqrt(dot(velocity_jump, velocity_jump));
+            const Real velocity_scale = std::max(
+                {1.0,
+                 std::abs(left[1]),
+                 std::abs(left[2]),
+                 std::abs(left[3]),
+                 std::abs(right[1]),
+                 std::abs(right[2]),
+                 std::abs(right[3])});
+            const Normal3 first = jump_norm > parameters_.denominator_tolerance * velocity_scale
+                ? normalized(velocity_jump)
+                : normal;
+
+            const std::array<Real, 3> absolute_components {
+                std::abs(first.x), std::abs(first.y), std::abs(first.z)};
+            const auto least_aligned = static_cast<std::size_t>(std::distance(
+                absolute_components.begin(),
+                std::min_element(absolute_components.begin(), absolute_components.end())));
+            const std::array<Normal3, 3> coordinate_axes {{
+                {1.0, 0.0, 0.0},
+                {0.0, 1.0, 0.0},
+                {0.0, 0.0, 1.0},
+            }};
+            const Normal3 second = normalized(cross(coordinate_axes[least_aligned], first));
+            const Normal3 third = normalized(cross(first, second));
+            const std::array<Normal3, 3> directions {{first, second, third}};
+
+            const Real pressure_jump = right[4] - left[4];
+            const ConservativeState roe_enthalpy_state {{
+                average.density,
+                average.density * average.velocity.x,
+                average.density * average.velocity.y,
+                average.density * average.velocity.z,
+                average.density * average.enthalpy,
+            }};
+            ConservativeState dissipation {};
+            Real spectral_radius = 0.0;
+            for (const auto direction : directions) {
+                const Real weight = std::abs(dot(normal, direction));
+                if (weight <= std::numeric_limits<Real>::epsilon()) continue;
+                const Real directional_velocity = dot(average.velocity, direction);
+                const Real directional_jump = dot(velocity_jump, direction);
+                const Real velocity_magnitude = std::abs(directional_velocity);
+                const Real sign = directional_velocity > 0.0
+                    ? 1.0
+                    : (directional_velocity < 0.0 ? -1.0 : 0.0);
+                const Real t = 2.0 * sign
+                    * std::min(velocity_magnitude, average.sound_speed);
+                const Real s
+                    = 2.0 * std::max(0.0, average.sound_speed - velocity_magnitude);
+                const Real delta_velocity = t * directional_jump / (2.0 * average.sound_speed)
+                    + s * pressure_jump
+                        / (2.0 * average.density * average.sound_speed * average.sound_speed);
+                const Real delta_pressure = 0.5 * s * average.density * directional_jump
+                    + t * pressure_jump / (2.0 * average.sound_speed);
+                const ConservativeState direction_vector {{
+                    0.0,
+                    direction.x,
+                    direction.y,
+                    direction.z,
+                    directional_velocity,
+                }};
+                for (int component = 0; component < euler_components; ++component) {
+                    const auto index = static_cast<std::size_t>(component);
+                    dissipation[index] += weight
+                        * (velocity_magnitude * jump[index]
+                           + delta_velocity * roe_enthalpy_state[index]
+                           + delta_pressure * direction_vector[index]);
+                }
+                spectral_radius
+                    += weight * (velocity_magnitude + average.sound_speed);
+            }
+
+            ConservativeState flux {};
+            for (int component = 0; component < euler_components; ++component) {
+                const auto index = static_cast<std::size_t>(component);
+                flux[index]
+                    = 0.5 * (left_flux[index] + right_flux[index]) - 0.5 * dissipation[index];
+            }
+            if (!finite_state(flux) || !std::isfinite(spectral_radius)) {
+                return fallback(RiemannFallbackReason::NonFiniteFlux);
+            }
+            return {flux,
+                    spectral_radius,
+                    "roe_rotated",
+                    "roe_rotated",
+                    RiemannFallbackReason::None,
+                    {}};
+        } catch (const PhysicsError&) {
+            return fallback(RiemannFallbackReason::InvalidRoeAverage);
+        }
+    }
+
+private:
+    RiemannSolverParameters parameters_ {};
 };
 
 } // namespace
@@ -749,6 +1060,24 @@ std::vector<std::string> RiemannSolverRegistry::names() const
     return result;
 }
 
+void LiGuAllSpeedRoeParameters::validate() const
+{
+    if (!std::isfinite(reference_mach) || reference_mach <= 0.0 || reference_mach > 1.0) {
+        throw std::invalid_argument(
+            "Li-Gu all-speed Roe reference Mach number must lie in (0,1]");
+    }
+    if (!std::isfinite(dissipation_scale) || dissipation_scale <= 0.0
+        || dissipation_scale > 1.0) {
+        throw std::invalid_argument(
+            "Li-Gu all-speed Roe dissipation scale must lie in (0,1]");
+    }
+    if (!std::isfinite(pressure_coefficient) || pressure_coefficient < 0.0
+        || pressure_coefficient > 1.0) {
+        throw std::invalid_argument(
+            "Li-Gu all-speed Roe pressure coefficient must lie in [0,1]");
+    }
+}
+
 void RiemannSolverParameters::validate() const
 {
     if (!std::isfinite(entropy_fix_coefficient) || entropy_fix_coefficient <= 0.0) {
@@ -760,6 +1089,7 @@ void RiemannSolverParameters::validate() const
             "Riemann denominator tolerance must be finite and lie in (0,1)");
     }
     preconditioner.validate();
+    all_speed.validate();
 }
 
 void RiemannConfig::validate() const
@@ -789,6 +1119,13 @@ std::string RiemannConfig::summary() const
            << "riemann_solver=" << scheme
            << ";roe_entropy_fix=" << parameters.entropy_fix_coefficient
            << ";riemann_denominator_tolerance=" << parameters.denominator_tolerance;
+    if (scheme == "roe_all_speed") {
+        stream << ";all_speed_reference_mach=" << parameters.all_speed.reference_mach
+               << ";all_speed_dissipation_scale="
+               << parameters.all_speed.dissipation_scale
+               << ";all_speed_pressure_coefficient="
+               << parameters.all_speed.pressure_coefficient;
+    }
     if (parameters.weiss_smith) {
         stream << ";preconditioner=weiss_smith"
                << ";preconditioner_mach_cutoff=" << parameters.preconditioner.mach_cutoff
@@ -800,7 +1137,7 @@ std::string RiemannConfig::summary() const
 
 std::string RiemannConfig::restart_signature() const
 {
-    return "riemann_config_v1;" + summary();
+    return "riemann_config_v2;" + summary();
 }
 
 RiemannSolverRegistry
@@ -809,15 +1146,28 @@ RiemannSolverRegistry::with_builtins(const RiemannSolverParameters& parameters)
     parameters.validate();
     RiemannSolverRegistry result;
     result.register_solver("rusanov", [] { return std::make_unique<RusanovStrategy>(); });
+    result.register_solver("hll",
+                           [parameters] { return std::make_unique<HllStrategy>(parameters); });
     result.register_solver("hllc",
                            [parameters] { return std::make_unique<HllcStrategy>(parameters); });
     result.register_solver("roe",
                            [parameters] {
-                               return std::make_unique<RoeStrategy>(parameters, false);
+                               return std::make_unique<RoeStrategy>(parameters,
+                                                                    RoeVariant::Standard);
                            });
     result.register_solver("roe_all_speed",
                            [parameters] {
-                               return std::make_unique<RoeStrategy>(parameters, true);
+                               return std::make_unique<RoeStrategy>(parameters,
+                                                                    RoeVariant::LiGuAllSpeed);
+                           });
+    result.register_solver("roe_all_speed_rieper",
+                           [parameters] {
+                               return std::make_unique<RoeStrategy>(parameters,
+                                                                    RoeVariant::RieperAllSpeed);
+                           });
+    result.register_solver("roe_rotated",
+                           [parameters] {
+                               return std::make_unique<RotatedRoeStrategy>(parameters);
                            });
     return result;
 }
@@ -826,9 +1176,12 @@ std::string_view riemann_solver_name(RiemannSolverKind kind)
 {
     switch (kind) {
     case RiemannSolverKind::Rusanov: return "rusanov";
+    case RiemannSolverKind::Hll: return "hll";
     case RiemannSolverKind::Hllc: return "hllc";
     case RiemannSolverKind::Roe: return "roe";
     case RiemannSolverKind::AllSpeedRoe: return "roe_all_speed";
+    case RiemannSolverKind::RieperAllSpeedRoe: return "roe_all_speed_rieper";
+    case RiemannSolverKind::RotatedRoe: return "roe_rotated";
     }
     throw std::invalid_argument("unknown Riemann solver kind");
 }
@@ -865,7 +1218,7 @@ std::string RiemannSolver::summary() const
 
 std::string RiemannSolver::restart_signature() const
 {
-    return "riemann_v3;" + summary();
+    return "riemann_v4;" + summary();
 }
 
 RiemannResult RiemannSolver::solve(const PressurePrimitiveState& left,

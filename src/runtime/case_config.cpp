@@ -288,6 +288,9 @@ const std::set<std::string>& fixed_keys()
         "algorithm.reconstruction",
         "algorithm.reconstruction_variables",
         "algorithm.riemann",
+        "algorithm.roe_all_speed.reference_mach",
+        "algorithm.roe_all_speed.dissipation_scale",
+        "algorithm.roe_all_speed.pressure_coefficient",
         "algorithm.flux_difference",
         "algorithm.mdcd.disp",
         "algorithm.mdcd.diss",
@@ -1504,7 +1507,7 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         throw CaseConfigurationError("unsupported configuration schema version");
     }
     result.schema_version = static_cast<int>(version);
-    const std::array<const char*, 43> v2_keys {{
+    const std::array<const char*, 46> v2_keys {{
         "turbulence.model",
         "turbulence.experimental",
         "turbulence.prandtl",
@@ -1543,6 +1546,9 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         "preconditioner.type",
         "preconditioner.mach_cutoff",
         "preconditioner.viscous_cutoff",
+        "algorithm.roe_all_speed.reference_mach",
+        "algorithm.roe_all_speed.dissipation_scale",
+        "algorithm.roe_all_speed.pressure_coefficient",
         "statistics.time.enabled",
         "statistics.time.start",
         "statistics.time.end",
@@ -1821,6 +1827,28 @@ CaseConfig CaseConfig::from_text(const std::string& text)
     result.reconstruction.nonlinear.mdcd_dissipation = optional_real(
         entries, "algorithm.mdcd.diss", result.reconstruction.nonlinear.mdcd_dissipation);
     result.riemann.scheme = require(entries, "algorithm.riemann");
+    const bool has_all_speed_parameters
+        = entries.find("algorithm.roe_all_speed.reference_mach") != entries.end()
+        || entries.find("algorithm.roe_all_speed.dissipation_scale") != entries.end()
+        || entries.find("algorithm.roe_all_speed.pressure_coefficient") != entries.end();
+    if (has_all_speed_parameters && result.riemann.scheme != "roe_all_speed") {
+        throw CaseConfigurationError(
+            "algorithm.roe_all_speed parameters require algorithm.riemann=roe_all_speed");
+    }
+    if (result.riemann.scheme == "roe_all_speed") {
+        result.riemann.parameters.all_speed.reference_mach = optional_real(
+            entries,
+            "algorithm.roe_all_speed.reference_mach",
+            result.riemann.parameters.all_speed.reference_mach);
+        result.riemann.parameters.all_speed.dissipation_scale = optional_real(
+            entries,
+            "algorithm.roe_all_speed.dissipation_scale",
+            result.riemann.parameters.all_speed.dissipation_scale);
+        result.riemann.parameters.all_speed.pressure_coefficient = optional_real(
+            entries,
+            "algorithm.roe_all_speed.pressure_coefficient",
+            result.riemann.parameters.all_speed.pressure_coefficient);
+    }
     result.robustness.enabled
         = optional_bool(entries, "robustness.enabled", result.robustness.enabled);
     if (const auto iterator = entries.find("robustness.max_local_recomputations");

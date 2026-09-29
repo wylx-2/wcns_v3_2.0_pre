@@ -103,7 +103,13 @@ void test_stage_l_algorithm_registries()
     auto riemann_registry = RiemannSolverRegistry::with_builtins();
     WCNS_REQUIRE(riemann_registry.names()
                  == std::vector<std::string>(
-                     {"hllc", "roe", "roe_all_speed", "rusanov"}));
+                     {"hll",
+                      "hllc",
+                      "roe",
+                      "roe_all_speed",
+                      "roe_all_speed_rieper",
+                      "roe_rotated",
+                      "rusanov"}));
     riemann_registry.register_solver("custom_central",
                                      [] { return std::make_unique<CustomCentralRiemann>(); });
     WCNS_REQUIRE_THROWS(std::invalid_argument,
@@ -389,7 +395,7 @@ void test_reconstruction_positivity_fallback()
     WCNS_REQUIRE(diagnostics.fallback_events[0].to_strategy == "first_order:primitive");
 }
 
-// 验收四种 Riemann 求解器的相容性、接触保持、迎风极限和法向反转对称性。
+// 验收内置 Riemann 求解器的相容性、接触保持、迎风极限和法向反转对称性。
 void test_stage_l_riemann_solvers()
 {
     using namespace wcns;
@@ -401,9 +407,12 @@ void test_stage_l_riemann_solvers()
     const auto exact = euler_flux(uniform, normal, ideal);
     for (const auto kind :
          {RiemannSolverKind::Rusanov,
+          RiemannSolverKind::Hll,
           RiemannSolverKind::Hllc,
           RiemannSolverKind::Roe,
-          RiemannSolverKind::AllSpeedRoe}) {
+          RiemannSolverKind::AllSpeedRoe,
+          RiemannSolverKind::RieperAllSpeedRoe,
+          RiemannSolverKind::RotatedRoe}) {
         const RiemannSolver solver(kind);
         const auto result = solver.solve(uniform, uniform, normal, gas, floors);
         WCNS_REQUIRE(result.requested_solver == solver.name());
@@ -500,8 +509,17 @@ void test_stage_l_riemann_solvers()
     const auto supersonic_hllc
         = RiemannSolver(RiemannSolverKind::Hllc)
               .flux(supersonic_left, supersonic_right, {1.0, 0.0, 0.0}, gas, floors);
+    const auto supersonic_hll = RiemannSolver(RiemannSolverKind::Hll)
+                                    .flux(supersonic_left,
+                                          supersonic_right,
+                                          {1.0, 0.0, 0.0},
+                                          gas,
+                                          floors);
     for (int component = 0; component < euler_components; ++component) {
         WCNS_REQUIRE_NEAR(supersonic_hllc[static_cast<std::size_t>(component)],
+                          supersonic_exact[static_cast<std::size_t>(component)],
+                          0.0);
+        WCNS_REQUIRE_NEAR(supersonic_hll[static_cast<std::size_t>(component)],
                           supersonic_exact[static_cast<std::size_t>(component)],
                           0.0);
     }
@@ -518,10 +536,11 @@ void test_stage_l_riemann_solvers()
                       ordinary_roe.spectral_radius,
                       5.0e-13);
 
-    const auto all_speed_low_mach = RiemannSolver(RiemannSolverKind::AllSpeedRoe).solve(
+    const auto all_speed_low_mach
+        = RiemannSolver(RiemannSolverKind::RieperAllSpeedRoe).solve(
         low_mach_left, low_mach_right, {1.0, 0.0, 0.0}, gas, floors);
-    WCNS_REQUIRE(all_speed_low_mach.requested_solver == "roe_all_speed");
-    WCNS_REQUIRE(all_speed_low_mach.used_solver == "roe_all_speed");
+    WCNS_REQUIRE(all_speed_low_mach.requested_solver == "roe_all_speed_rieper");
+    WCNS_REQUIRE(all_speed_low_mach.used_solver == "roe_all_speed_rieper");
     WCNS_REQUIRE_NEAR(all_speed_low_mach.spectral_radius,
                       ordinary_result.spectral_radius,
                       5.0e-13);
@@ -540,7 +559,7 @@ void test_stage_l_riemann_solvers()
     const auto ordinary_velocity_jump = RiemannSolver(RiemannSolverKind::Roe).solve(
         low_mach_left, velocity_jump_right, {1.0, 0.0, 0.0}, gas, floors);
     const auto all_speed_velocity_jump
-        = RiemannSolver(RiemannSolverKind::AllSpeedRoe)
+        = RiemannSolver(RiemannSolverKind::RieperAllSpeedRoe)
               .solve(low_mach_left,
                      velocity_jump_right,
                      {1.0, 0.0, 0.0},
@@ -570,8 +589,13 @@ void test_stage_l_riemann_solvers()
         WCNS_REQUIRE(ratio < 0.02);
     }
 
-    const auto all_speed_supersonic = RiemannSolver(RiemannSolverKind::AllSpeedRoe).solve(
-        supersonic_left, supersonic_right, {1.0, 0.0, 0.0}, gas, floors);
+    const auto all_speed_supersonic
+        = RiemannSolver(RiemannSolverKind::RieperAllSpeedRoe)
+              .solve(supersonic_left,
+                     supersonic_right,
+                     {1.0, 0.0, 0.0},
+                     gas,
+                     floors);
     for (int component = 0; component < euler_components; ++component) {
         WCNS_REQUIRE_NEAR(
             all_speed_supersonic.flux_per_unit_area[static_cast<std::size_t>(component)],
@@ -582,14 +606,111 @@ void test_stage_l_riemann_solvers()
                       ordinary_roe.spectral_radius,
                       5.0e-13);
 
+    RiemannSolverParameters li_gu_parameters;
+    li_gu_parameters.all_speed.reference_mach = 0.1;
+    li_gu_parameters.all_speed.dissipation_scale = 0.02;
+    li_gu_parameters.all_speed.pressure_coefficient = 0.05;
+    const RiemannSolver li_gu(RiemannSolverKind::AllSpeedRoe, li_gu_parameters);
+    const auto li_gu_low_mach = li_gu.solve(
+        low_mach_left, low_mach_right, {1.0, 0.0, 0.0}, gas, floors);
+    WCNS_REQUIRE(li_gu_low_mach.requested_solver == "roe_all_speed");
+    WCNS_REQUIRE(li_gu_low_mach.used_solver == "roe_all_speed");
+    WCNS_REQUIRE(li_gu_low_mach.spectral_radius < ordinary_result.spectral_radius);
+    WCNS_REQUIRE(li_gu.summary().find("all_speed_reference_mach=0.10000000000000001")
+                 != std::string::npos);
+
+    const Real root_left = std::sqrt(low_mach_left[0]);
+    const Real root_right = std::sqrt(low_mach_right[0]);
+    const Real root_sum = root_left + root_right;
+    const Real roe_un
+        = (root_left * low_mach_left[1] + root_right * low_mach_right[1]) / root_sum;
+    const auto low_mach_left_conservative = to_conservative(low_mach_left, ideal);
+    const auto low_mach_right_conservative = to_conservative(low_mach_right, ideal);
+    const Real left_enthalpy
+        = (low_mach_left_conservative[4] + low_mach_left[4]) / low_mach_left[0];
+    const Real right_enthalpy
+        = (low_mach_right_conservative[4] + low_mach_right[4]) / low_mach_right[0];
+    const Real roe_enthalpy
+        = (root_left * left_enthalpy + root_right * right_enthalpy) / root_sum;
+    const Real roe_sound = std::sqrt(
+        (gas.gamma() - 1.0) * (roe_enthalpy - 0.5 * roe_un * roe_un));
+    const Real mach = std::max(std::abs(roe_un) / roe_sound, 0.1);
+    const Real mach_squared = mach * mach;
+    const Real factor = mach
+        * std::sqrt((4.0 + (1.0 - mach_squared) * (1.0 - mach_squared))
+                    / (1.0 + mach_squared));
+    WCNS_REQUIRE_NEAR(li_gu_low_mach.spectral_radius,
+                      std::abs(roe_un) + factor * roe_sound,
+                      2.0e-13);
+
+    auto no_pressure_parameters = li_gu_parameters;
+    no_pressure_parameters.all_speed.pressure_coefficient = 0.0;
+    const auto no_pressure = RiemannSolver(RiemannSolverKind::AllSpeedRoe,
+                                           no_pressure_parameters)
+                                 .solve(low_mach_left,
+                                        low_mach_right,
+                                        {1.0, 0.0, 0.0},
+                                        gas,
+                                        floors);
+    ConservativeState averaged_conservative {};
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        averaged_conservative[index] = 0.5
+            * (low_mach_left_conservative[index] + low_mach_right_conservative[index]);
+    }
+    auto pressure_vector = averaged_conservative;
+    pressure_vector[4] += to_primitive(averaged_conservative, ideal)[4];
+    const Real expected_pressure_coefficient = (1.0 - factor) * 0.05
+        * (low_mach_right[4] - low_mach_left[4])
+        / (0.1 * std::sqrt(low_mach_left[0] * low_mach_right[0]) * roe_sound);
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        WCNS_REQUIRE_NEAR(li_gu_low_mach.flux_per_unit_area[index]
+                              - no_pressure.flux_per_unit_area[index],
+                          -expected_pressure_coefficient * pressure_vector[index],
+                          2.0e-13);
+    }
+
+    auto high_mach_recovery_parameters = li_gu_parameters;
+    high_mach_recovery_parameters.all_speed.dissipation_scale = 0.5;
+    const auto li_gu_supersonic
+        = RiemannSolver(RiemannSolverKind::AllSpeedRoe, high_mach_recovery_parameters)
+              .solve(supersonic_left,
+                     supersonic_right,
+                     {1.0, 0.0, 0.0},
+                     gas,
+                     floors);
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        WCNS_REQUIRE_NEAR(li_gu_supersonic.flux_per_unit_area[index],
+                          ordinary_roe.flux_per_unit_area[index],
+                          5.0e-13);
+    }
+
+    const PressurePrimitiveState aligned_left {1.0, 4.0, 0.2, -0.1, 1.0};
+    const PressurePrimitiveState aligned_right {0.9, 3.7, 0.2, -0.1, 0.8};
+    const auto aligned_roe = RiemannSolver(RiemannSolverKind::Roe).solve(
+        aligned_left, aligned_right, {1.0, 0.0, 0.0}, gas, floors);
+    const auto aligned_rotated = RiemannSolver(RiemannSolverKind::RotatedRoe).solve(
+        aligned_left, aligned_right, {1.0, 0.0, 0.0}, gas, floors);
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        WCNS_REQUIRE_NEAR(aligned_rotated.flux_per_unit_area[index],
+                          aligned_roe.flux_per_unit_area[index],
+                          2.0e-12);
+    }
+
     const PressurePrimitiveState left {1.0, 0.9, -0.3, 0.1, 1.2};
     const PressurePrimitiveState right {0.7, -0.2, 0.4, -0.1, 0.6};
     const Normal3 reverse_normal {-normal.x, -normal.y, -normal.z};
     for (const auto kind :
          {RiemannSolverKind::Rusanov,
+          RiemannSolverKind::Hll,
           RiemannSolverKind::Hllc,
           RiemannSolverKind::Roe,
-          RiemannSolverKind::AllSpeedRoe}) {
+          RiemannSolverKind::AllSpeedRoe,
+          RiemannSolverKind::RieperAllSpeedRoe,
+          RiemannSolverKind::RotatedRoe}) {
         const RiemannSolver solver(kind);
         const auto forward = solver.flux(left, right, normal, gas, floors);
         const auto reverse = solver.flux(right, left, reverse_normal, gas, floors);
@@ -603,7 +724,7 @@ void test_stage_l_riemann_solvers()
     RiemannConfig config;
     config.scheme = "hllc";
     config.validate(RiemannSolverRegistry::with_builtins(config.parameters));
-    WCNS_REQUIRE(config.restart_signature().find("riemann_config_v1;") == 0);
+    WCNS_REQUIRE(config.restart_signature().find("riemann_config_v2;") == 0);
     config.scheme = "missing";
     WCNS_REQUIRE_THROWS(std::invalid_argument,
                         config.validate(RiemannSolverRegistry::with_builtins(config.parameters)));
@@ -729,9 +850,12 @@ void test_stage_l_algorithm_benchmarks()
     const PressurePrimitiveState sod_right {0.125, 0.0, 0.0, 0.0, 0.1};
     const PressurePrimitiveState high_mach_left {1.0, 50.0, 0.0, 0.0, 1.0};
     const PressurePrimitiveState high_mach_right {0.8, 45.0, 0.0, 0.0, 0.7};
-    for (const auto kind : {RiemannSolverKind::Hllc,
+    for (const auto kind : {RiemannSolverKind::Hll,
+                            RiemannSolverKind::Hllc,
                             RiemannSolverKind::Roe,
-                            RiemannSolverKind::AllSpeedRoe}) {
+                            RiemannSolverKind::AllSpeedRoe,
+                            RiemannSolverKind::RieperAllSpeedRoe,
+                            RiemannSolverKind::RotatedRoe}) {
         const RiemannSolver solver(kind);
         for (const auto result :
              {solver.solve(sod_left, sod_right, {1.0, 0.0, 0.0}, gas, floors),
