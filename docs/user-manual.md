@@ -1,11 +1,11 @@
 # WCNS 用户手册
 
-本文面向第一次接触本程序的算例使用者，对应 WCNS `v2.2` 的 schema 1/2 统一程序；
+本文面向第一次接触本程序的算例使用者，对应 WCNS `v2.3` 的 schema 1/2 统一程序；
 schema 2 的 RANS/LES、低 Mach 和隐式推进已可执行，但仍受大型服务器物理验证边界约束。
 生产入口为 `wcns_run`。按本文顺序操作，可以从源码构建程序、准备
 CGNS 网格、填写配置、完成串行或 MPI 计算、识别停止状态、读取输出并从检查点续算。
 
-本手册描述的是当前程序已经实现的行为。数学定义见[`算法补充.md`](../算法补充.md)，源码扩展见[`developer-guide.md`](developer-guide.md)，实现边界见[`known-limitations.md`](known-limitations.md)，schema 2 摘要见 [`config-reference-2.md`](config-reference-2.md)。精简发布目录不附带算例或完整配置模板。
+本手册描述的是当前程序已经实现的行为。数学定义见[`算法补充.md`](../算法补充.md)，源码扩展见[`developer-guide.md`](developer-guide.md)，实现边界见[`known-limitations.md`](known-limitations.md)，schema 2 摘要见 [`config-reference-2.md`](config-reference-2.md)。精简发布目录不附带算例，但提供逐键注释的 `examples/full_case_template_v2.3.wcns`。
 
 ## 1. 开始前必须知道的约定
 
@@ -197,7 +197,7 @@ build-user-serial\wcns_generate_release_cgns.exe rectangle `
 ### 步骤 3：复制完整模板
 
 ```powershell
-Copy-Item examples\full_case_template.wcns work\quickstart\quickstart.wcns
+Copy-Item examples\full_case_template_v2.3.wcns work\quickstart\quickstart.wcns
 ```
 
 编辑下列值：

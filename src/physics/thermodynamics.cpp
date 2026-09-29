@@ -308,8 +308,12 @@ Real thermodynamic_total_enthalpy(const TemperaturePrimitiveState& state,
                                   int dimension)
 {
     const auto primitive = pressure_primitive(state, gas, reference, floors, dimension);
-    const auto conservative = thermodynamic_conservative(state, gas, reference, floors, dimension);
-    return (conservative[4] + primitive[4]) / primitive[0];
+    const Real velocity_squared = primitive[1] * primitive[1] + primitive[2] * primitive[2]
+        + primitive[3] * primitive[3];
+    // The state has already been validated by pressure_primitive.  Evaluating
+    // H directly avoids converting and validating the same state a second time.
+    return gas.gamma() * primitive[4] / ((gas.gamma() - 1.0) * primitive[0])
+        + 0.5 * velocity_squared;
 }
 
 } // namespace wcns

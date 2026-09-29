@@ -46,6 +46,44 @@ Real normal_velocity(const PrimitiveState& state, Normal3 normal)
         + state[velocity_z] * normal.z;
 }
 
+ConservativeState to_conservative_unchecked(const PrimitiveState& primitive,
+                                            const IdealGas& gas)
+{
+    const Real rho = primitive[primitive_density];
+    const Real u = primitive[velocity_x];
+    const Real v = primitive[velocity_y];
+    const Real w = primitive[velocity_z];
+    const Real kinetic = 0.5 * rho * (u * u + v * v + w * w);
+    return {
+        rho,
+        rho * u,
+        rho * v,
+        rho * w,
+        primitive[pressure] / (gas.gamma - 1.0) + kinetic,
+    };
+}
+
+ConservativeState euler_flux_unchecked(const PrimitiveState& primitive,
+                                       const ConservativeState& conservative,
+                                       Normal3 normal)
+{
+    const Real rho = primitive[primitive_density];
+    const Real pressure_value = primitive[pressure];
+    const Real un = normal_velocity(primitive, normal);
+    return {
+        rho * un,
+        conservative[momentum_x] * un + pressure_value * normal.x,
+        conservative[momentum_y] * un + pressure_value * normal.y,
+        conservative[momentum_z] * un + pressure_value * normal.z,
+        (conservative[total_energy] + pressure_value) * un,
+    };
+}
+
+Real sound_speed_unchecked(const PrimitiveState& primitive, const IdealGas& gas)
+{
+    return std::sqrt(gas.gamma * primitive[pressure] / primitive[primitive_density]);
+}
+
 } // namespace
 
 void IdealGas::validate() const
@@ -60,18 +98,7 @@ ConservativeState to_conservative(const PrimitiveState& primitive, const IdealGa
 {
     gas.validate();
     validate_primitive(primitive, gas);
-    const Real rho = primitive[primitive_density];
-    const Real u = primitive[velocity_x];
-    const Real v = primitive[velocity_y];
-    const Real w = primitive[velocity_z];
-    const Real kinetic = 0.5 * rho * (u * u + v * v + w * w);
-    return {
-        rho,
-        rho * u,
-        rho * v,
-        rho * w,
-        primitive[pressure] / (gas.gamma - 1.0) + kinetic,
-    };
+    return to_conservative_unchecked(primitive, gas);
 }
 
 PrimitiveState to_primitive(const ConservativeState& conservative, const IdealGas& gas)
@@ -97,7 +124,7 @@ Real sound_speed(const PrimitiveState& primitive, const IdealGas& gas)
 {
     gas.validate();
     validate_primitive(primitive, gas);
-    return std::sqrt(gas.gamma * primitive[pressure] / primitive[primitive_density]);
+    return sound_speed_unchecked(primitive, gas);
 }
 
 ConservativeState
@@ -106,17 +133,7 @@ euler_flux(const PrimitiveState& primitive, Normal3 unit_normal, const IdealGas&
     gas.validate();
     validate_primitive(primitive, gas);
     const auto normal = checked_normal(unit_normal);
-    const auto conservative = to_conservative(primitive, gas);
-    const Real rho = primitive[primitive_density];
-    const Real p = primitive[pressure];
-    const Real un = normal_velocity(primitive, normal);
-    return {
-        rho * un,
-        rho * primitive[velocity_x] * un + p * normal.x,
-        rho * primitive[velocity_y] * un + p * normal.y,
-        rho * primitive[velocity_z] * un + p * normal.z,
-        (conservative[total_energy] + p) * un,
-    };
+    return euler_flux_unchecked(primitive, to_conservative_unchecked(primitive, gas), normal);
 }
 
 ConservativeState rusanov_flux(const PrimitiveState& left,
@@ -126,12 +143,15 @@ ConservativeState rusanov_flux(const PrimitiveState& left,
 {
     gas.validate();
     const auto normal = checked_normal(unit_normal);
-    const auto left_conservative = to_conservative(left, gas);
-    const auto right_conservative = to_conservative(right, gas);
-    const auto left_flux = euler_flux(left, normal, gas);
-    const auto right_flux = euler_flux(right, normal, gas);
-    const Real speed = std::max(std::abs(normal_velocity(left, normal)) + sound_speed(left, gas),
-                                std::abs(normal_velocity(right, normal)) + sound_speed(right, gas));
+    validate_primitive(left, gas);
+    validate_primitive(right, gas);
+    const auto left_conservative = to_conservative_unchecked(left, gas);
+    const auto right_conservative = to_conservative_unchecked(right, gas);
+    const auto left_flux = euler_flux_unchecked(left, left_conservative, normal);
+    const auto right_flux = euler_flux_unchecked(right, right_conservative, normal);
+    const Real speed
+        = std::max(std::abs(normal_velocity(left, normal)) + sound_speed_unchecked(left, gas),
+                   std::abs(normal_velocity(right, normal)) + sound_speed_unchecked(right, gas));
     ConservativeState result {};
     for (int component = 0; component < euler_components; ++component) {
         const auto index = static_cast<std::size_t>(component);

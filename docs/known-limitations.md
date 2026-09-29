@@ -1,4 +1,4 @@
-# WCNS v2.2 已知限制
+# WCNS v2.3 已知限制
 
 这些限制是当前实现边界，不应通过静默降阶、占位零值或忽略配置来规避。
 
@@ -79,7 +79,7 @@
 
 ## 发布与平台
 
-- v2.2 的本机实测环境为 Windows 11、CMake、MinGW-w64 GCC 8.1、本机 Python
+- v2.3 的本机实测环境为 Windows 11、CMake、MinGW-w64 GCC 8.1、本机 Python
   工具链和 Intel MPI 2021.10。本项目不配置外部 CI；Linux GCC/Clang、OpenMPI、
   ASan/UBSan 及其他未执行的外部平台组合属于未验证，而不是已知不兼容。
 - MinGW 构建的程序运行时需要相容的 `libgcc_s_sjlj-1.dll` 和 `libstdc++-6.dll`；MPI 版本

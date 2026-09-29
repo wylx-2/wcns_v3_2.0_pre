@@ -38,6 +38,44 @@ Real normal_velocity(const PressurePrimitiveState& state, Normal3 normal)
     return state[1] * normal.x + state[2] * normal.y + state[3] * normal.z;
 }
 
+struct EulerFaceData {
+    ConservativeState conservative {};
+    ConservativeState flux {};
+    Real normal_velocity = 0.0;
+    Real sound_speed = 0.0;
+    Real enthalpy = 0.0;
+};
+
+EulerFaceData make_face_data(const PressurePrimitiveState& state,
+                             Normal3 normal,
+                             const IdealGas& gas)
+{
+    // to_conservative() performs the public-state and gas validation once.
+    // The old Riemann paths called it again through euler_flux(), and then
+    // repeated the same validation in sound_speed().
+    EulerFaceData result;
+    result.conservative = to_conservative(state, gas);
+    const Real rho = state[0];
+    const Real pressure = state[4];
+    result.normal_velocity = normal_velocity(state, normal);
+    result.sound_speed = std::sqrt(gas.gamma * pressure / rho);
+    result.enthalpy = (result.conservative[4] + pressure) / rho;
+    result.flux = {{
+        rho * result.normal_velocity,
+        result.conservative[1] * result.normal_velocity + pressure * normal.x,
+        result.conservative[2] * result.normal_velocity + pressure * normal.y,
+        result.conservative[3] * result.normal_velocity + pressure * normal.z,
+        (result.conservative[4] + pressure) * result.normal_velocity,
+    }};
+    if (!std::isfinite(result.sound_speed) || !std::isfinite(result.enthalpy)
+        || !std::all_of(result.flux.begin(), result.flux.end(), [](Real value) {
+               return std::isfinite(value);
+           })) {
+        throw PhysicsError("Euler face data is non-finite");
+    }
+    return result;
+}
+
 bool finite_state(const ConservativeState& state)
 {
     return std::all_of(state.begin(), state.end(), [](Real value) { return std::isfinite(value); });
@@ -187,11 +225,11 @@ struct RoeAverage {
 
 RoeAverage roe_average(const PressurePrimitiveState& left,
                        const PressurePrimitiveState& right,
+                       const EulerFaceData& left_data,
+                       const EulerFaceData& right_data,
                        Normal3 normal,
                        const IdealGas& gas)
 {
-    const auto left_conservative = to_conservative(left, gas);
-    const auto right_conservative = to_conservative(right, gas);
     const Real root_left = std::sqrt(left[0]);
     const Real root_right = std::sqrt(right[0]);
     const Real denominator = root_left + root_right;
@@ -208,9 +246,7 @@ RoeAverage roe_average(const PressurePrimitiveState& left,
         average(left[2], right[2]),
         average(left[3], right[3]),
     };
-    const Real left_enthalpy = (left_conservative[4] + left[4]) / left[0];
-    const Real right_enthalpy = (right_conservative[4] + right[4]) / right[0];
-    result.enthalpy = average(left_enthalpy, right_enthalpy);
+    result.enthalpy = average(left_data.enthalpy, right_data.enthalpy);
     result.normal_velocity = result.velocity.x * normal.x + result.velocity.y * normal.y
         + result.velocity.z * normal.z;
     const Real speed_squared = result.velocity.x * result.velocity.x
@@ -223,20 +259,103 @@ RoeAverage roe_average(const PressurePrimitiveState& left,
     return result;
 }
 
-RiemannResult rusanov_result(const PressurePrimitiveState& left,
-                             const PressurePrimitiveState& right,
-                             Normal3 normal,
-                             const GasModel& gas,
-                             const NumericalFloors& floors,
+struct RoePikeStrengths {
+    Real acoustic_minus = 0.0;
+    Real entropy = 0.0;
+    Normal3 shear_momentum {};
+    Real acoustic_plus = 0.0;
+};
+
+RoePikeStrengths roe_pike_strengths(const ConservativeState& jump,
+                                    const RoeAverage& average,
+                                    Normal3 normal,
+                                    Real gamma)
+{
+    const Real density_jump = jump[0];
+    const Normal3 momentum_jump {jump[1], jump[2], jump[3]};
+    const Real normal_momentum_jump = dot(momentum_jump, normal);
+    const Real velocity_dot_momentum = dot(average.velocity, momentum_jump);
+    const Real kinetic = 0.5 * dot(average.velocity, average.velocity);
+    const Real inverse_sound_squared
+        = 1.0 / (average.sound_speed * average.sound_speed);
+    const Real pressure_over_sound_squared = (gamma - 1.0) * inverse_sound_squared
+        * (jump[4] - velocity_dot_momentum + kinetic * density_jump);
+    const Real normal_wave = (normal_momentum_jump
+                              - average.normal_velocity * density_jump)
+        / average.sound_speed;
+    const Normal3 tangential_velocity {
+        average.velocity.x - average.normal_velocity * normal.x,
+        average.velocity.y - average.normal_velocity * normal.y,
+        average.velocity.z - average.normal_velocity * normal.z,
+    };
+    const Normal3 tangential_momentum_jump {
+        momentum_jump.x - normal_momentum_jump * normal.x,
+        momentum_jump.y - normal_momentum_jump * normal.y,
+        momentum_jump.z - normal_momentum_jump * normal.z,
+    };
+    return {
+        0.5 * (pressure_over_sound_squared - normal_wave),
+        density_jump - pressure_over_sound_squared,
+        {
+            tangential_momentum_jump.x - tangential_velocity.x * density_jump,
+            tangential_momentum_jump.y - tangential_velocity.y * density_jump,
+            tangential_momentum_jump.z - tangential_velocity.z * density_jump,
+        },
+        0.5 * (pressure_over_sound_squared + normal_wave),
+    };
+}
+
+ConservativeState roe_pike_dissipation(const RoePikeStrengths& strengths,
+                                       const RoeAverage& average,
+                                       Normal3 normal,
+                                       Real acoustic_minus_magnitude,
+                                       Real contact_magnitude,
+                                       Real acoustic_plus_magnitude)
+{
+    const Real minus = acoustic_minus_magnitude * strengths.acoustic_minus;
+    const Real entropy = contact_magnitude * strengths.entropy;
+    const Real plus = acoustic_plus_magnitude * strengths.acoustic_plus;
+    const Real mass = minus + entropy + plus;
+    const Real acoustic_momentum = average.sound_speed * (plus - minus);
+    const Normal3 shear {
+        contact_magnitude * strengths.shear_momentum.x,
+        contact_magnitude * strengths.shear_momentum.y,
+        contact_magnitude * strengths.shear_momentum.z,
+    };
+    const Normal3 tangential_velocity {
+        average.velocity.x - average.normal_velocity * normal.x,
+        average.velocity.y - average.normal_velocity * normal.y,
+        average.velocity.z - average.normal_velocity * normal.z,
+    };
+    const Real kinetic = 0.5 * dot(average.velocity, average.velocity);
+    return {{
+        mass,
+        average.velocity.x * mass + normal.x * acoustic_momentum + shear.x,
+        average.velocity.y * mass + normal.y * acoustic_momentum + shear.y,
+        average.velocity.z * mass + normal.z * acoustic_momentum + shear.z,
+        (average.enthalpy - average.normal_velocity * average.sound_speed) * minus
+            + kinetic * entropy
+            + (average.enthalpy + average.normal_velocity * average.sound_speed) * plus
+            + dot(tangential_velocity, shear),
+    }};
+}
+
+RiemannResult rusanov_result(const EulerFaceData& left,
+                             const EulerFaceData& right,
                              std::string requested,
                              RiemannFallbackReason reason)
 {
-    const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
     const Real spectral_radius
-        = std::max(std::abs(normal_velocity(left, normal)) + sound_speed(left, ideal),
-                   std::abs(normal_velocity(right, normal)) + sound_speed(right, ideal));
+        = std::max(std::abs(left.normal_velocity) + left.sound_speed,
+                   std::abs(right.normal_velocity) + right.sound_speed);
+    ConservativeState flux {};
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        flux[index] = 0.5 * (left.flux[index] + right.flux[index])
+            - 0.5 * spectral_radius * (right.conservative[index] - left.conservative[index]);
+    }
     RiemannResult result {
-        rusanov_flux(left, right, normal, ideal),
+        flux,
         spectral_radius,
         requested,
         "rusanov",
@@ -247,6 +366,21 @@ RiemannResult rusanov_result(const PressurePrimitiveState& left,
         result.fallback_path.push_back({std::move(requested), "rusanov", reason});
     }
     return result;
+}
+
+RiemannResult rusanov_result(const PressurePrimitiveState& left,
+                             const PressurePrimitiveState& right,
+                             Normal3 normal,
+                             const GasModel& gas,
+                             const NumericalFloors& floors,
+                             std::string requested,
+                             RiemannFallbackReason reason)
+{
+    const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
+    return rusanov_result(make_face_data(left, normal, ideal),
+                          make_face_data(right, normal, ideal),
+                          std::move(requested),
+                          reason);
 }
 
 Real state_speed(const PressurePrimitiveState& state)
@@ -264,10 +398,8 @@ RiemannResult preconditioned_rusanov_result(const PressurePrimitiveState& left,
                                             RiemannFallbackReason reason)
 {
     const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
-    const auto left_conservative = to_conservative(left, ideal);
-    const auto right_conservative = to_conservative(right, ideal);
-    const auto left_flux = euler_flux(left, normal, ideal);
-    const auto right_flux = euler_flux(right, normal, ideal);
+    const auto left_data = make_face_data(left, normal, ideal);
+    const auto right_data = make_face_data(right, normal, ideal);
     PressurePrimitiveState average {};
     for (int component = 0; component < euler_components; ++component) {
         const auto index = static_cast<std::size_t>(component);
@@ -287,7 +419,7 @@ RiemannResult preconditioned_rusanov_result(const PressurePrimitiveState& left,
     ConservativeState jump {};
     for (int component = 0; component < euler_components; ++component) {
         const auto index = static_cast<std::size_t>(component);
-        jump[index] = right_conservative[index] - left_conservative[index];
+        jump[index] = right_data.conservative[index] - left_data.conservative[index];
     }
     auto primitive_jump = matrix_vector_product(physical.inverse, jump);
     for (Real& value : primitive_jump) value *= spectral_radius;
@@ -296,7 +428,7 @@ RiemannResult preconditioned_rusanov_result(const PressurePrimitiveState& left,
     ConservativeState flux {};
     for (int component = 0; component < euler_components; ++component) {
         const auto index = static_cast<std::size_t>(component);
-        flux[index] = 0.5 * (left_flux[index] + right_flux[index])
+        flux[index] = 0.5 * (left_data.flux[index] + right_data.flux[index])
             - 0.5 * dissipation[index];
     }
     return {flux,
@@ -321,13 +453,11 @@ RiemannResult preconditioned_roe_result(const PressurePrimitiveState& left,
             left, right, normal, gas, floors, viscous_speed, parameters, reason);
     };
     try {
-        const auto left_conservative = to_conservative(left, ideal);
-        const auto right_conservative = to_conservative(right, ideal);
-        const auto left_flux = euler_flux(left, normal, ideal);
-        const auto right_flux = euler_flux(right, normal, ideal);
-        const auto average = roe_average(left, right, normal, ideal);
-        const Real left_sound = sound_speed(left, ideal);
-        const Real right_sound = sound_speed(right, ideal);
+        const auto left_data = make_face_data(left, normal, ideal);
+        const auto right_data = make_face_data(right, normal, ideal);
+        const auto average = roe_average(left, right, left_data, right_data, normal, ideal);
+        const Real left_sound = left_data.sound_speed;
+        const Real right_sound = right_data.sound_speed;
         const Real left_reference = weiss_smith_reference_speed(
             state_speed(left), left_sound, viscous_speed, parameters.preconditioner);
         const Real right_reference = weiss_smith_reference_speed(
@@ -336,7 +466,7 @@ RiemannResult preconditioned_roe_result(const PressurePrimitiveState& left,
         ConservativeState jump {};
         for (int component = 0; component < euler_components; ++component) {
             const auto index = static_cast<std::size_t>(component);
-            jump[index] = right_conservative[index] - left_conservative[index];
+            jump[index] = right_data.conservative[index] - left_data.conservative[index];
         }
         const Real roe_density = std::sqrt(left[0] * right[0]);
         const Real roe_pressure
@@ -413,7 +543,8 @@ RiemannResult preconditioned_roe_result(const PressurePrimitiveState& left,
         for (int component = 0; component < euler_components; ++component) {
             const auto index = static_cast<std::size_t>(component);
             flux[index]
-                = 0.5 * (left_flux[index] + right_flux[index]) - 0.5 * dissipation[index];
+                = 0.5 * (left_data.flux[index] + right_data.flux[index])
+                - 0.5 * dissipation[index];
         }
         if (!finite_state(flux)) return fallback(RiemannFallbackReason::NonFiniteFlux);
         return {flux,
@@ -463,20 +594,18 @@ public:
         const auto normal = checked_unit_normal(unit_normal);
         floors.validate();
         const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
-        const auto left_conservative = to_conservative(left, ideal);
-        const auto right_conservative = to_conservative(right, ideal);
-        const auto left_flux = euler_flux(left, normal, ideal);
-        const auto right_flux = euler_flux(right, normal, ideal);
-        const Real un_left = normal_velocity(left, normal);
-        const Real un_right = normal_velocity(right, normal);
+        const auto left_data = make_face_data(left, normal, ideal);
+        const auto right_data = make_face_data(right, normal, ideal);
+        const Real un_left = left_data.normal_velocity;
+        const Real un_right = right_data.normal_velocity;
 
         try {
-            const auto average = roe_average(left, right, normal, ideal);
+            const auto average = roe_average(left, right, left_data, right_data, normal, ideal);
             const Real speed_left = std::min(
-                un_left - sound_speed(left, ideal),
+                un_left - left_data.sound_speed,
                 average.normal_velocity - average.sound_speed);
             const Real speed_right = std::max(
-                un_right + sound_speed(right, ideal),
+                un_right + right_data.sound_speed,
                 average.normal_velocity + average.sound_speed);
             const Real spectral_radius = std::max(std::abs(speed_left), std::abs(speed_right));
             const Real denominator = speed_right - speed_left;
@@ -493,19 +622,31 @@ public:
                                       RiemannFallbackReason::InvalidWaveSpeed);
             }
             if (speed_left >= 0.0) {
-                return {left_flux, spectral_radius, "hll", "hll", RiemannFallbackReason::None, {}};
+                return {left_data.flux,
+                        spectral_radius,
+                        "hll",
+                        "hll",
+                        RiemannFallbackReason::None,
+                        {}};
             }
             if (speed_right <= 0.0) {
                 return {
-                    right_flux, spectral_radius, "hll", "hll", RiemannFallbackReason::None, {}};
+                    right_data.flux,
+                    spectral_radius,
+                    "hll",
+                    "hll",
+                    RiemannFallbackReason::None,
+                    {}};
             }
 
             ConservativeState flux {};
             for (int component = 0; component < euler_components; ++component) {
                 const auto index = static_cast<std::size_t>(component);
-                flux[index] = (speed_right * left_flux[index] - speed_left * right_flux[index]
+                flux[index] = (speed_right * left_data.flux[index]
+                               - speed_left * right_data.flux[index]
                                + speed_left * speed_right
-                                   * (right_conservative[index] - left_conservative[index]))
+                                    * (right_data.conservative[index]
+                                       - left_data.conservative[index]))
                     / denominator;
             }
             if (!finite_state(flux)) {
@@ -552,17 +693,15 @@ public:
         const auto normal = checked_unit_normal(unit_normal);
         floors.validate();
         const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
-        const auto left_conservative = to_conservative(left, ideal);
-        const auto right_conservative = to_conservative(right, ideal);
-        const auto left_flux = euler_flux(left, normal, ideal);
-        const auto right_flux = euler_flux(right, normal, ideal);
-        const Real un_left = normal_velocity(left, normal);
-        const Real un_right = normal_velocity(right, normal);
-        const Real sound_left = sound_speed(left, ideal);
-        const Real sound_right = sound_speed(right, ideal);
+        const auto left_data = make_face_data(left, normal, ideal);
+        const auto right_data = make_face_data(right, normal, ideal);
+        const Real un_left = left_data.normal_velocity;
+        const Real un_right = right_data.normal_velocity;
+        const Real sound_left = left_data.sound_speed;
+        const Real sound_right = right_data.sound_speed;
         RoeAverage average;
         try {
-            average = roe_average(left, right, normal, ideal);
+            average = roe_average(left, right, left_data, right_data, normal, ideal);
         } catch (const PhysicsError&) {
             return rusanov_result(
                 left, right, normal, gas, floors, "hllc", RiemannFallbackReason::InvalidWaveSpeed);
@@ -578,10 +717,20 @@ public:
                 left, right, normal, gas, floors, "hllc", RiemannFallbackReason::InvalidWaveSpeed);
         }
         if (speed_left >= 0.0) {
-            return {left_flux, spectral_radius, "hllc", "hllc", RiemannFallbackReason::None, {}};
+            return {left_data.flux,
+                    spectral_radius,
+                    "hllc",
+                    "hllc",
+                    RiemannFallbackReason::None,
+                    {}};
         }
         if (speed_right <= 0.0) {
-            return {right_flux, spectral_radius, "hllc", "hllc", RiemannFallbackReason::None, {}};
+            return {right_data.flux,
+                    spectral_radius,
+                    "hllc",
+                    "hllc",
+                    RiemannFallbackReason::None,
+                    {}};
         }
         const Real left_term = left[0] * (speed_left - un_left);
         const Real right_term = right[0] * (speed_right - un_right);
@@ -640,8 +789,16 @@ public:
         };
         try {
             const auto flux = speed_middle >= 0.0
-                ? star_flux(left, left_conservative, left_flux, speed_left, un_left)
-                : star_flux(right, right_conservative, right_flux, speed_right, un_right);
+                ? star_flux(left,
+                            left_data.conservative,
+                            left_data.flux,
+                            speed_left,
+                            un_left)
+                : star_flux(right,
+                            right_data.conservative,
+                            right_data.flux,
+                            speed_right,
+                            un_right);
             return {flux, spectral_radius, "hllc", "hllc", RiemannFallbackReason::None, {}};
         } catch (const PhysicsError&) {
             return rusanov_result(left,
@@ -702,14 +859,13 @@ public:
             return result;
         };
         try {
-            const auto left_conservative = to_conservative(left, ideal);
-            const auto right_conservative = to_conservative(right, ideal);
-            const auto left_flux = euler_flux(left, normal, ideal);
-            const auto right_flux = euler_flux(right, normal, ideal);
-            const auto average = roe_average(left, right, normal, ideal);
-            const auto basis = make_roe_characteristic_basis(left, right, normal, gas, floors, 3);
-            const auto jump = conservative_jump(left_conservative, right_conservative);
-            auto strengths = project_characteristic(jump, basis);
+            const auto left_data = make_face_data(left, normal, ideal);
+            const auto right_data = make_face_data(right, normal, ideal);
+            const auto average
+                = roe_average(left, right, left_data, right_data, normal, ideal);
+            const auto jump
+                = conservative_jump(left_data.conservative, right_data.conservative);
+            auto strengths = roe_pike_strengths(jump, average, normal, ideal.gamma);
             if (variant_ == RoeVariant::RieperAllSpeed) {
                 // Rieper-type low-Mach Roe fix: scale only the velocity-jump
                 // contribution to the two acoustic wave strengths.  The
@@ -723,8 +879,8 @@ public:
                     = normal_velocity(right, normal) - normal_velocity(left, normal);
                 const Real acoustic_correction = (1.0 - velocity_factor) * average.density
                     * delta_normal_velocity / (2.0 * average.sound_speed);
-                strengths[0] += acoustic_correction;
-                strengths[4] -= acoustic_correction;
+                strengths.acoustic_minus += acoustic_correction;
+                strengths.acoustic_plus -= acoustic_correction;
             }
             Real acoustic_speed = average.sound_speed;
             Real flux_dissipation_scale = 0.5;
@@ -748,31 +904,28 @@ public:
                 acoustic_speed = all_speed_factor * average.sound_speed;
                 flux_dissipation_scale = parameters_.all_speed.dissipation_scale;
             }
-            std::array<Real, euler_components> eigenvalues {{
-                average.normal_velocity - acoustic_speed,
-                average.normal_velocity,
-                average.normal_velocity,
-                average.normal_velocity,
-                average.normal_velocity + acoustic_speed,
-            }};
             const Real delta
                 = parameters_.entropy_fix_coefficient
                 * std::max(
-                      {sound_speed(left, ideal), sound_speed(right, ideal), average.sound_speed});
-            ConservativeState scaled_strengths {};
-            for (int wave = 0; wave < euler_components; ++wave) {
-                Real magnitude = std::abs(eigenvalues[static_cast<std::size_t>(wave)]);
+                      {left_data.sound_speed, right_data.sound_speed, average.sound_speed});
+            const auto wave_magnitude = [&](Real eigenvalue) {
+                Real magnitude = std::abs(eigenvalue);
                 if (variant_ != RoeVariant::LiGuAllSpeed && magnitude < delta) {
                     magnitude = 0.5 * (magnitude * magnitude / delta + delta);
                 }
-                scaled_strengths[static_cast<std::size_t>(wave)]
-                    = magnitude * strengths[static_cast<std::size_t>(wave)];
-            }
-            const auto dissipation = restore_characteristic(scaled_strengths, basis);
+                return magnitude;
+            };
+            const auto dissipation = roe_pike_dissipation(
+                strengths,
+                average,
+                normal,
+                wave_magnitude(average.normal_velocity - acoustic_speed),
+                wave_magnitude(average.normal_velocity),
+                wave_magnitude(average.normal_velocity + acoustic_speed));
             ConservativeState flux {};
             for (int component = 0; component < euler_components; ++component) {
                 const auto index = static_cast<std::size_t>(component);
-                flux[index] = 0.5 * (left_flux[index] + right_flux[index])
+                flux[index] = 0.5 * (left_data.flux[index] + right_data.flux[index])
                     - flux_dissipation_scale * dissipation[index];
             }
             if (variant_ == RoeVariant::LiGuAllSpeed) {
@@ -780,7 +933,8 @@ public:
                 for (int component = 0; component < euler_components; ++component) {
                     const auto index = static_cast<std::size_t>(component);
                     averaged_conservative[index]
-                        = 0.5 * (left_conservative[index] + right_conservative[index]);
+                        = 0.5
+                        * (left_data.conservative[index] + right_data.conservative[index]);
                 }
                 const Real averaged_pressure = to_primitive(averaged_conservative, ideal)[4];
                 ConservativeState pressure_vector = averaged_conservative;
@@ -843,12 +997,12 @@ public:
         };
 
         try {
-            const auto left_conservative = to_conservative(left, ideal);
-            const auto right_conservative = to_conservative(right, ideal);
-            const auto left_flux = euler_flux(left, normal, ideal);
-            const auto right_flux = euler_flux(right, normal, ideal);
-            const auto jump = conservative_jump(left_conservative, right_conservative);
-            const auto average = roe_average(left, right, normal, ideal);
+            const auto left_data = make_face_data(left, normal, ideal);
+            const auto right_data = make_face_data(right, normal, ideal);
+            const auto jump
+                = conservative_jump(left_data.conservative, right_data.conservative);
+            const auto average
+                = roe_average(left, right, left_data, right_data, normal, ideal);
             const Normal3 velocity_jump {
                 right[1] - left[1],
                 right[2] - left[2],
@@ -931,7 +1085,8 @@ public:
             for (int component = 0; component < euler_components; ++component) {
                 const auto index = static_cast<std::size_t>(component);
                 flux[index]
-                    = 0.5 * (left_flux[index] + right_flux[index]) - 0.5 * dissipation[index];
+                    = 0.5 * (left_data.flux[index] + right_data.flux[index])
+                    - 0.5 * dissipation[index];
             }
             if (!finite_state(flux) || !std::isfinite(spectral_radius)) {
                 return fallback(RiemannFallbackReason::NonFiniteFlux);

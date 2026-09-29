@@ -1,6 +1,6 @@
 # WCNS 运行、配置、输出与重启指南
 
-本文对应 WCNS `v2.2`：`schema_version = 1` 兼容路径和 `schema_version = 2` 的
+本文对应 WCNS `v2.3`：`schema_version = 1` 兼容路径和 `schema_version = 2` 的
 RANS/LES、低 Mach 与隐式推进均已进入统一程序，但大型服务器物理验证仍未执行。正式入口为
 `wcns_run`，本文定位为简明速查。
 逐步用户手册见 [`user-manual.md`](user-manual.md)，源码扩展指南见
@@ -12,7 +12,7 @@ RANS/LES、低 Mach 与隐式推进均已进入统一程序，但大型服务器
 
 ## 1. 构建与运行
 
-v2.2 本机验收环境包括 Windows 11、CMake、MinGW-w64 GCC 8.1.0 和本机 Python
+v2.3 本机验收环境包括 Windows 11、CMake、MinGW-w64 GCC 8.1.0 和本机 Python
 工具链和 Intel MPI 2021.10。CMake 最低声明版本为 3.20；未列出的编译器、操作系统和 MPI
 组合目前属于未验证环境，而不是已知不兼容。仓库不启用外部 CI，合并前应在本机执行适用的
 串行/MPI 构建、CTest 和算法规格检查。

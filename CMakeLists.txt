@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(wcns VERSION 2.2.0 LANGUAGES C CXX)
+project(wcns VERSION 2.3.0 LANGUAGES C CXX)
 
-set(WCNS_PROGRAM_VERSION "2.2" CACHE STRING "WCNS user-visible release label")
+set(WCNS_PROGRAM_VERSION "2.3" CACHE STRING "WCNS user-visible release label")
 
 include(GNUInstallDirs)
 
@@ -322,7 +322,9 @@ install(
     FILES_MATCHING PATTERN "*.md"
 )
 install(
-    FILES examples/channel_retau180_from_t250_all_speed_roe.wcns
+    FILES
+        examples/channel_retau180_from_t250_all_speed_roe.wcns
+        examples/full_case_template_v2.3.wcns
     DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/config-templates
 )
 if(WCNS_INSTALL_EXAMPLES)

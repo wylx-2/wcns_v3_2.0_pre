@@ -63,16 +63,16 @@ if(WCNS_ENABLE_CGNS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
     add_test(
-        NAME wcns.v2_2_release_contract
+        NAME wcns.v2_3_release_contract
         COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_2_release.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_3_release.py
             --repository ${CMAKE_CURRENT_SOURCE_DIR}/..
     )
     add_test(
-        NAME wcns.v2_2_package_safety
+        NAME wcns.v2_3_package_safety
         COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/test_package_v2_2.py
-            --packager ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package_v2_2.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_package_v2_3.py
+            --packager ${CMAKE_CURRENT_SOURCE_DIR}/../tools/package_v2_3.py
     )
 
     add_test(

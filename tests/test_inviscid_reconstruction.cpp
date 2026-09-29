@@ -426,6 +426,55 @@ void test_stage_l_riemann_solvers()
         }
     }
 
+    // The production Roe path uses the matrix-free Roe-Pike formulas.  Keep a
+    // matrix reference here so future optimizations remain numerically
+    // equivalent to R*|Lambda|*L*delta(U) for an oblique three-dimensional face.
+    const PressurePrimitiveState matrix_left {1.15, 0.8, -0.35, 0.22, 1.1};
+    const PressurePrimitiveState matrix_right {0.72, -0.18, 0.41, -0.09, 0.63};
+    const Normal3 matrix_normal {2.0 / 3.0, -1.0 / 3.0, 2.0 / 3.0};
+    const auto matrix_basis = make_roe_characteristic_basis(
+        matrix_left, matrix_right, matrix_normal, gas, floors, 3);
+    const auto matrix_left_conservative = to_conservative(matrix_left, ideal);
+    const auto matrix_right_conservative = to_conservative(matrix_right, ideal);
+    ConservativeState matrix_jump {};
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        matrix_jump[index] = matrix_right_conservative[index]
+            - matrix_left_conservative[index];
+    }
+    auto matrix_strengths = project_characteristic(matrix_jump, matrix_basis);
+    const Real matrix_roe_un = matrix_basis.right[1][1];
+    const Real matrix_roe_sound
+        = 0.5 * (matrix_basis.right[1][4] - matrix_basis.right[1][0]);
+    const Real entropy_delta = 0.1
+        * std::max(
+              {sound_speed(matrix_left, ideal), sound_speed(matrix_right, ideal), matrix_roe_sound});
+    const std::array<Real, euler_components> matrix_eigenvalues {{
+        matrix_roe_un - matrix_roe_sound,
+        matrix_roe_un,
+        matrix_roe_un,
+        matrix_roe_un,
+        matrix_roe_un + matrix_roe_sound}};
+    for (int wave = 0; wave < euler_components; ++wave) {
+        Real magnitude = std::abs(matrix_eigenvalues[static_cast<std::size_t>(wave)]);
+        if (magnitude < entropy_delta) {
+            magnitude = 0.5 * (magnitude * magnitude / entropy_delta + entropy_delta);
+        }
+        matrix_strengths[static_cast<std::size_t>(wave)] *= magnitude;
+    }
+    const auto matrix_dissipation = restore_characteristic(matrix_strengths, matrix_basis);
+    const auto matrix_left_flux = euler_flux(matrix_left, matrix_normal, ideal);
+    const auto matrix_right_flux = euler_flux(matrix_right, matrix_normal, ideal);
+    const auto matrix_free_result = RiemannSolver(RiemannSolverKind::Roe).solve(
+        matrix_left, matrix_right, matrix_normal, gas, floors);
+    for (int component = 0; component < euler_components; ++component) {
+        const auto index = static_cast<std::size_t>(component);
+        const Real expected
+            = 0.5 * (matrix_left_flux[index] + matrix_right_flux[index])
+            - 0.5 * matrix_dissipation[index];
+        WCNS_REQUIRE_NEAR(matrix_free_result.flux_per_unit_area[index], expected, 3.0e-13);
+    }
+
     const PressurePrimitiveState contact_left {1.0, 0.0, 0.0, 0.0, 1.0};
     const PressurePrimitiveState contact_right {2.0, 0.0, 0.0, 0.0, 1.0};
     const ConservativeState contact_flux {{0.0, 1.0, 0.0, 0.0, 0.0}};

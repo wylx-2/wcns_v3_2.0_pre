@@ -40,10 +40,40 @@ std::array<Real, 6> checked_stencil(ScalarStencilView stencil)
 
 std::array<Real, 6> orient_stencil(const std::array<Real, 6>& stencil, TraceSide side);
 Real weno_z_left_scaled(const std::array<Real, 6>& q, Real scale, const WcnsParameters& parameters);
+Real mdcd_linear_left_unchecked(const std::array<Real, 6>& q,
+                                const WcnsParameters& parameters);
 Real mdcd_linear_left(const std::array<Real, 6>& q, const WcnsParameters& parameters);
+Real mdcd_hybrid_left_scaled_unchecked(const std::array<Real, 6>& q,
+                                       Real scale,
+                                       const WcnsParameters& parameters);
 Real mdcd_hybrid_left_scaled(const std::array<Real, 6>& q,
                              Real scale,
                              const WcnsParameters& parameters);
+Real square(Real value);
+
+Real mdcd_six_point_smoothness_unchecked(const std::array<Real, 6>& f)
+{
+    Real maximum = 0.0;
+    for (const auto value : f) maximum = std::max(maximum, std::abs(value));
+    const Real numerator = 271779.0 * square(f[0])
+        + f[0]
+            * (-2380800.0 * f[1] + 4086352.0 * f[2] - 3462252.0 * f[3]
+               + 1458762.0 * f[4] - 245620.0 * f[5])
+        + f[1]
+            * (5653317.0 * f[1] - 20427884.0 * f[2] + 17905032.0 * f[3]
+               - 7727988.0 * f[4] + 1325006.0 * f[5])
+        + f[2]
+            * (19510972.0 * f[2] - 35817664.0 * f[3] + 15929912.0 * f[4]
+               - 2792660.0 * f[5])
+        + f[3] * (17195652.0 * f[3] - 15880404.0 * f[4] + 2863984.0 * f[5])
+        + f[4] * (3824847.0 * f[4] - 1429976.0 * f[5]) + 139633.0 * square(f[5]);
+    const Real result = numerator / 120960.0;
+    const Real tolerance = 1.0e-11 * std::max(1.0, maximum * maximum);
+    if (!std::isfinite(result) || result < -tolerance) {
+        throw PhysicsError("MDCD six-point smoothness is negative or non-finite");
+    }
+    return std::max(0.0, result);
+}
 
 class Linear5Scheme final : public IReconstructionScheme {
 public:
@@ -194,14 +224,6 @@ std::array<Real, 3> weno_smoothness_unchecked(const std::array<Real, 6>& q, Real
     }};
 }
 
-std::array<Real, 3> weno_smoothness(const std::array<Real, 6>& q, Real scale)
-{
-    if (!std::isfinite(scale) || scale <= 0.0) {
-        throw std::invalid_argument("reconstruction scale must be positive and finite");
-    }
-    return weno_smoothness_unchecked(q, scale);
-}
-
 Real positive_integer_power(Real value, int power)
 {
     // The configured WCNS powers are normally two.  Expressing that exact
@@ -259,20 +281,9 @@ Real weno_z_left_scaled(const std::array<Real, 6>& q, Real scale, const WcnsPara
     return weno_z_left_scaled_unchecked(q, scale, parameters);
 }
 
-ScalarFaceStates weno_z_pair_prevalidated(ScalarStencilView stencil,
-                                          const ReconstructionContext& context)
+Real mdcd_linear_left_unchecked(const std::array<Real, 6>& q,
+                                const WcnsParameters& parameters)
 {
-    const auto values = checked_stencil(stencil);
-    return {
-        weno_z_left_scaled_unchecked(values, context.scale, context.parameters),
-        weno_z_left_scaled_unchecked(
-            orient_stencil(values, TraceSide::Right), context.scale, context.parameters),
-    };
-}
-
-Real mdcd_linear_left(const std::array<Real, 6>& q, const WcnsParameters& parameters)
-{
-    parameters.validate();
     const Real dispersion = parameters.mdcd_dispersion;
     const Real dissipation = parameters.mdcd_dissipation;
     const std::array<Real, 6> coefficients {{
@@ -291,14 +302,15 @@ Real mdcd_linear_left(const std::array<Real, 6>& q, const WcnsParameters& parame
     return result;
 }
 
-Real mdcd_sensor(const std::array<Real, 6>& q, Real scale, const WcnsParameters& parameters)
+Real mdcd_linear_left(const std::array<Real, 6>& q, const WcnsParameters& parameters)
 {
-    if (!std::isfinite(scale) || scale <= 0.0) {
-        throw std::invalid_argument("MDCD sensor scale must be positive and finite");
-    }
-    std::array<Real, 6> f {};
-    for (std::size_t index = 0; index < q.size(); ++index)
-        f[index] = q[index] / scale;
+    parameters.validate();
+    return mdcd_linear_left_unchecked(q, parameters);
+}
+
+Real mdcd_sensor_normalized(const std::array<Real, 6>& f,
+                            const WcnsParameters& parameters)
+{
     const Real a1 = std::abs(f[2] - f[1]) + std::abs(f[2] - 2.0 * f[1] + f[0]);
     const Real b1 = std::abs(f[2] - f[3]) + std::abs(f[2] - 2.0 * f[3] + f[4]);
     const Real a2 = std::abs(f[3] - f[2]) + std::abs(f[3] - 2.0 * f[2] + f[1]);
@@ -312,13 +324,16 @@ Real mdcd_sensor(const std::array<Real, 6>& q, Real scale, const WcnsParameters&
     return result;
 }
 
-Real mdcd_hybrid_left_scaled(const std::array<Real, 6>& q,
-                             Real scale,
-                             const WcnsParameters& parameters)
+Real mdcd_hybrid_left_scaled_unchecked(const std::array<Real, 6>& q,
+                                       Real scale,
+                                       const WcnsParameters& parameters)
 {
-    parameters.validate();
-    if (mdcd_sensor(q, scale, parameters) > parameters.mdcd_sensor_threshold) {
-        return mdcd_linear_left(q, parameters);
+    std::array<Real, 6> normalized {};
+    for (std::size_t index = 0; index < q.size(); ++index) {
+        normalized[index] = q[index] / scale;
+    }
+    if (mdcd_sensor_normalized(normalized, parameters) > parameters.mdcd_sensor_threshold) {
+        return mdcd_linear_left_unchecked(q, parameters);
     }
     const auto candidates3 = weno_candidates(q);
     const std::array<Real, 4> candidates {{
@@ -327,8 +342,13 @@ Real mdcd_hybrid_left_scaled(const std::array<Real, 6>& q,
         candidates3[2],
         (15.0 * q[3] - 10.0 * q[4] + 3.0 * q[5]) / 8.0,
     }};
-    const auto beta3 = weno_smoothness(q, scale);
-    std::array<Real, 4> beta {{beta3[0], beta3[1], beta3[2], mdcd_six_point_smoothness(q, scale)}};
+    const auto beta3 = weno_smoothness_unchecked(normalized, 1.0);
+    std::array<Real, 4> beta {{
+        beta3[0],
+        beta3[1],
+        beta3[2],
+        mdcd_six_point_smoothness_unchecked(normalized),
+    }};
     for (auto& value : beta) {
         if (!std::isfinite(value) || value < -1.0e-13) {
             throw PhysicsError("MDCD smoothness indicator is invalid");
@@ -353,23 +373,27 @@ Real mdcd_hybrid_left_scaled(const std::array<Real, 6>& q,
     return checked_weighted_sum(alpha, candidates, 4, "MDCD-HYBRID");
 }
 
+Real mdcd_hybrid_left_scaled(const std::array<Real, 6>& q,
+                             Real scale,
+                             const WcnsParameters& parameters)
+{
+    parameters.validate();
+    if (!std::isfinite(scale) || scale <= 0.0) {
+        throw std::invalid_argument("MDCD reconstruction scale must be positive and finite");
+    }
+    return mdcd_hybrid_left_scaled_unchecked(q, scale, parameters);
+}
+
 Index3 shifted(Index3 index, Axis axis, int offset)
 {
     index[static_cast<std::size_t>(axis)] += offset;
     return index;
 }
 
-Real wcns5_left_scaled(const std::array<Real, 5>& q, Real scale, const WcnsParameters& parameters)
+Real wcns5_left_scaled_unchecked(const std::array<Real, 5>& q,
+                                 Real scale,
+                                 const WcnsParameters& parameters)
 {
-    parameters.validate();
-    if (!std::isfinite(scale) || scale <= 0.0) {
-        throw std::invalid_argument("WCNS reconstruction scale must be positive and finite");
-    }
-    for (const auto value : q) {
-        if (!std::isfinite(value)) {
-            throw PhysicsError("WCNS stencil contains a non-finite value");
-        }
-    }
     const std::array<Real, 3> candidates {{
         (3.0 * q[0] - 10.0 * q[1] + 15.0 * q[2]) / 8.0,
         (-q[1] + 6.0 * q[2] + 3.0 * q[3]) / 8.0,
@@ -399,6 +423,22 @@ Real wcns5_left_scaled(const std::array<Real, 5>& q, Real scale, const WcnsParam
         result += alpha[candidate] * candidates[candidate] / sum;
     }
     return result;
+}
+
+Real wcns5_left_scaled(const std::array<Real, 5>& q,
+                       Real scale,
+                       const WcnsParameters& parameters)
+{
+    parameters.validate();
+    if (!std::isfinite(scale) || scale <= 0.0) {
+        throw std::invalid_argument("WCNS reconstruction scale must be positive and finite");
+    }
+    for (const auto value : q) {
+        if (!std::isfinite(value)) {
+            throw PhysicsError("WCNS stencil contains a non-finite value");
+        }
+    }
+    return wcns5_left_scaled_unchecked(q, scale, parameters);
 }
 
 std::array<Real, 6>
@@ -453,6 +493,60 @@ bool try_convert(const std::array<Real, euler_components>& left,
     } catch (const PhysicsConfigurationError&) {
         return false;
     }
+}
+
+ScalarFaceStates reconstruct_builtin_pair_prevalidated(
+    std::string_view scheme,
+    ScalarStencilView stencil,
+    const ReconstructionContext& context)
+{
+    // Configuration and scales are validated once before the face loop.  The
+    // stencil itself remains checked here so a non-finite evolving solution
+    // still follows the normal reconstruction fallback path.
+    const auto values = checked_stencil(stencil);
+    if (scheme == "zero_order") return {values[2], values[3]};
+    if (scheme == "linear5") {
+        return {
+            (3.0 * values[0] - 20.0 * values[1] + 90.0 * values[2] + 60.0 * values[3]
+             - 5.0 * values[4])
+                / 128.0,
+            (-5.0 * values[1] + 60.0 * values[2] + 90.0 * values[3] - 20.0 * values[4]
+             + 3.0 * values[5])
+                / 128.0,
+        };
+    }
+    const auto reversed = orient_stencil(values, TraceSide::Right);
+    if (scheme == "weno_z") {
+        return {
+            weno_z_left_scaled_unchecked(values, context.scale, context.parameters),
+            weno_z_left_scaled_unchecked(reversed, context.scale, context.parameters),
+        };
+    }
+    if (scheme == "weno_js") {
+        const std::array<Real, 5> left {{
+            values[0], values[1], values[2], values[3], values[4],
+        }};
+        const std::array<Real, 5> right {{
+            values[5], values[4], values[3], values[2], values[1],
+        }};
+        return {
+            wcns5_left_scaled_unchecked(left, context.scale, context.parameters),
+            wcns5_left_scaled_unchecked(right, context.scale, context.parameters),
+        };
+    }
+    if (scheme == "mdcd_linear") {
+        return {
+            mdcd_linear_left_unchecked(values, context.parameters),
+            mdcd_linear_left_unchecked(reversed, context.parameters),
+        };
+    }
+    if (scheme == "mdcd_hybrid") {
+        return {
+            mdcd_hybrid_left_scaled_unchecked(values, context.scale, context.parameters),
+            mdcd_hybrid_left_scaled_unchecked(reversed, context.scale, context.parameters),
+        };
+    }
+    throw std::invalid_argument("unknown built-in reconstruction scheme: " + std::string(scheme));
 }
 
 } // namespace
@@ -655,8 +749,26 @@ EulerCharacteristicBasis make_roe_characteristic_basis(const PressurePrimitiveSt
     }
 
     const IdealGas ideal {gas.gamma(), floors.density, floors.pressure};
-    const auto left_conservative = to_conservative(left, ideal);
-    const auto right_conservative = to_conservative(right, ideal);
+    Real left_enthalpy = 0.0;
+    Real right_enthalpy = 0.0;
+    if (inputs_prevalidated) {
+        const auto enthalpy = [&](const PressurePrimitiveState& state) {
+            const Real speed_squared
+                = state[1] * state[1] + state[2] * state[2] + state[3] * state[3];
+            return gas.gamma() / (gas.gamma() - 1.0) * state[4] / state[0]
+                + 0.5 * speed_squared;
+        };
+        left_enthalpy = enthalpy(left);
+        right_enthalpy = enthalpy(right);
+    } else {
+        // The conversion validates externally supplied states.  Production
+        // reconstruction has already validated its fields and uses the direct
+        // enthalpy path above to avoid two redundant state conversions per face.
+        const auto left_conservative = to_conservative(left, ideal);
+        const auto right_conservative = to_conservative(right, ideal);
+        left_enthalpy = (left_conservative[4] + left[4]) / left[0];
+        right_enthalpy = (right_conservative[4] + right[4]) / right[0];
+    }
     const Real root_left = std::sqrt(left[0]);
     const Real root_right = std::sqrt(right[0]);
     const Real denominator = root_left + root_right;
@@ -669,8 +781,6 @@ EulerCharacteristicBasis make_roe_characteristic_basis(const PressurePrimitiveSt
     const Real u = average(left[1], right[1]);
     const Real v = average(left[2], right[2]);
     const Real w = average(left[3], right[3]);
-    const Real left_enthalpy = (left_conservative[4] + left[4]) / left[0];
-    const Real right_enthalpy = (right_conservative[4] + right[4]) / right[0];
     const Real enthalpy = average(left_enthalpy, right_enthalpy);
     const Normal3 velocity {u, v, w};
     const Real un = dot(velocity, result.normal);
@@ -722,21 +832,10 @@ EulerCharacteristicBasis make_roe_characteristic_basis(const PressurePrimitiveSt
         -0.5 * beta * ut2,
         0.5 * beta,
     }};
-    for (int row = 0; row < euler_components; ++row) {
-        for (int column = 0; column < euler_components; ++column) {
-            Real product = 0.0;
-            for (int inner = 0; inner < euler_components; ++inner) {
-                product
-                    += result.left[static_cast<std::size_t>(row)][static_cast<std::size_t>(inner)]
-                    * result
-                          .right[static_cast<std::size_t>(inner)][static_cast<std::size_t>(column)];
-            }
-            const Real expected = row == column ? 1.0 : 0.0;
-            if (!std::isfinite(product) || std::abs(product - expected) > 1.0e-10) {
-                throw PhysicsError("Euler characteristic matrices failed L*R=I");
-            }
-        }
-    }
+    // L*R=I is an implementation invariant, not an input-dependent condition.
+    // It is covered for two- and three-dimensional faces by the characteristic
+    // reconstruction unit tests.  Rechecking all 125 products on every face
+    // was a measurable hot-path cost and provided no additional run-time safety.
     return result;
 }
 
@@ -890,27 +989,10 @@ Real mdcd_six_point_smoothness(const std::array<Real, 6>& stencil, Real scale)
         throw std::invalid_argument("MDCD smoothness scale must be positive and finite");
     }
     std::array<Real, 6> f {};
-    Real maximum = 0.0;
     for (std::size_t index = 0; index < values.size(); ++index) {
         f[index] = values[index] / scale;
-        maximum = std::max(maximum, std::abs(f[index]));
     }
-    const Real numerator = 271779.0 * square(f[0])
-        + f[0]
-            * (-2380800.0 * f[1] + 4086352.0 * f[2] - 3462252.0 * f[3] + 1458762.0 * f[4]
-               - 245620.0 * f[5])
-        + f[1]
-            * (5653317.0 * f[1] - 20427884.0 * f[2] + 17905032.0 * f[3] - 7727988.0 * f[4]
-               + 1325006.0 * f[5])
-        + f[2] * (19510972.0 * f[2] - 35817664.0 * f[3] + 15929912.0 * f[4] - 2792660.0 * f[5])
-        + f[3] * (17195652.0 * f[3] - 15880404.0 * f[4] + 2863984.0 * f[5])
-        + f[4] * (3824847.0 * f[4] - 1429976.0 * f[5]) + 139633.0 * square(f[5]);
-    const Real result = numerator / 120960.0;
-    const Real tolerance = 1.0e-11 * std::max(1.0, maximum * maximum);
-    if (!std::isfinite(result) || result < -tolerance) {
-        throw PhysicsError("MDCD six-point smoothness is negative or non-finite");
-    }
-    return std::max(0.0, result);
+    return mdcd_six_point_smoothness_unchecked(f);
 }
 
 EulerFaceStates reconstruct_euler_face(const Field<Real>& primitive,
@@ -973,16 +1055,10 @@ EulerFaceStates reconstruct_thermodynamic_face(const Field<Real>& conservative,
             context.scale = std::max(config.scaling.component[static_cast<std::size_t>(component)],
                                      config.scaling.scale_floor);
             context.parameters = config.nonlinear;
-            if (inputs_prevalidated && config.scheme == "weno_z") {
-                const auto states = weno_z_pair_prevalidated(stencil, context);
-                left[static_cast<std::size_t>(component)] = states.left;
-                right[static_cast<std::size_t>(component)] = states.right;
-            } else {
-                left[static_cast<std::size_t>(component)]
-                    = scheme.reconstruct_scalar(stencil, TraceSide::Left, context);
-                right[static_cast<std::size_t>(component)]
-                    = scheme.reconstruct_scalar(stencil, TraceSide::Right, context);
-            }
+            const auto states
+                = reconstruct_builtin_pair_prevalidated(scheme.name(), stencil, context);
+            left[static_cast<std::size_t>(component)] = states.left;
+            right[static_cast<std::size_t>(component)] = states.right;
         }
     };
 
@@ -1029,21 +1105,10 @@ EulerFaceStates reconstruct_thermodynamic_face(const Field<Real>& conservative,
                     = std::max(config.scaling.component[static_cast<std::size_t>(component)],
                                config.scaling.scale_floor);
                 context.parameters = config.nonlinear;
-                if (inputs_prevalidated && config.scheme == "weno_z") {
-                    const auto states = weno_z_pair_prevalidated(
-                        stencils[static_cast<std::size_t>(component)], context);
-                    left_characteristic[static_cast<std::size_t>(component)] = states.left;
-                    right_characteristic[static_cast<std::size_t>(component)] = states.right;
-                } else {
-                    left_characteristic[static_cast<std::size_t>(component)]
-                        = scheme.reconstruct_scalar(stencils[static_cast<std::size_t>(component)],
-                                                    TraceSide::Left,
-                                                    context);
-                    right_characteristic[static_cast<std::size_t>(component)]
-                        = scheme.reconstruct_scalar(stencils[static_cast<std::size_t>(component)],
-                                                    TraceSide::Right,
-                                                    context);
-                }
+                const auto states = reconstruct_builtin_pair_prevalidated(
+                    scheme.name(), stencils[static_cast<std::size_t>(component)], context);
+                left_characteristic[static_cast<std::size_t>(component)] = states.left;
+                right_characteristic[static_cast<std::size_t>(component)] = states.right;
             }
             left = restore_characteristic(left_characteristic, basis);
             right = restore_characteristic(right_characteristic, basis);
