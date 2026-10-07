@@ -33,6 +33,7 @@ __pycache__/
 /cases/**/report/*.log
 /cases/**/report/*.out
 /cases/**/report/*.toc
+/cases/**/report/*.synctex.gz
 
 # New case grids are losslessly stored in cases/grid-archives; restore with the helper.
 /cases/manual/**/grids/*.cgns
