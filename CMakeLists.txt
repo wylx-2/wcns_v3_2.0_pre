@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(wcns VERSION 2.3.0 LANGUAGES C CXX)
+project(wcns VERSION 2.6.0 LANGUAGES C CXX)
 
-set(WCNS_PROGRAM_VERSION "2.3" CACHE STRING "WCNS user-visible release label")
+set(WCNS_PROGRAM_VERSION "2.6" CACHE STRING "WCNS user-visible release label")
 
 include(GNUInstallDirs)
 
@@ -24,8 +24,16 @@ endif()
 if(NOT WCNS_GIT_COMMIT)
     set(WCNS_GIT_COMMIT unknown)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+    execute_process(COMMAND git diff --quiet HEAD -- CMakeLists.txt include src
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} RESULT_VARIABLE WCNS_SOURCE_DIRTY)
+    if(WCNS_SOURCE_DIRTY EQUAL 1)
+        string(APPEND WCNS_GIT_COMMIT "-worktree")
+    endif()
+endif()
 
 option(WCNS_BUILD_TESTS "Build WCNS unit tests" OFF)
+option(WCNS_BUILD_TOOLS "Build mesh generation and developer utilities" ON)
 option(WCNS_ENABLE_CGNS "Enable CGNS mesh I/O" ON)
 option(WCNS_ENABLE_MPI "Enable MPI parallel execution" OFF)
 option(WCNS_INSTALL_EXAMPLES "Install example and case templates" OFF)
@@ -129,6 +137,30 @@ else()
     target_compile_definitions(wcns_parallel PUBLIC WCNS_HAS_MPI=0)
 endif()
 
+option(WCNS_ENABLE_FFTW "Use FFTW local transforms in the distributed MPI slab FFT" ON)
+add_library(wcns_spectral STATIC src/parallel/slab_fft.cpp)
+add_library(wcns::spectral ALIAS wcns_spectral)
+target_link_libraries(wcns_spectral PUBLIC wcns::parallel)
+if(WCNS_ENABLE_FFTW)
+    include(FetchContent)
+    if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW)
+    endif()
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(DISABLE_FORTRAN ON CACHE BOOL "" FORCE)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    FetchContent_Declare(wcns_fftw_source
+        URL ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fftw/fftw-3.3.11.tar.gz
+        URL_HASH SHA256=5630c24cdeb33b131612f7eb4b1a9934234754f9f388ff8617458d0be6f239a1)
+    FetchContent_MakeAvailable(wcns_fftw_source)
+    target_link_libraries(wcns_spectral PRIVATE fftw3)
+    target_include_directories(wcns_spectral PRIVATE ${wcns_fftw_source_SOURCE_DIR}/api)
+    target_compile_definitions(wcns_spectral PRIVATE WCNS_HAS_FFTW=1)
+else()
+    target_compile_definitions(wcns_spectral PRIVATE WCNS_HAS_FFTW=0)
+endif()
+
 if(WCNS_ENABLE_CGNS)
     include(FetchContent)
     if(POLICY CMP0135)
@@ -209,10 +241,13 @@ add_library(wcns_runtime STATIC
     src/runtime/simulation_driver.cpp
     src/runtime/stop_controller.cpp
     src/runtime/structured_partition.cpp
+    src/runtime/periodic_hill.cpp
+    src/runtime/chapter5.cpp
+    src/runtime/hit.cpp
     src/runtime/weighted_statistics.cpp
 )
 add_library(wcns::runtime ALIAS wcns_runtime)
-target_link_libraries(wcns_runtime PUBLIC wcns::solver)
+target_link_libraries(wcns_runtime PUBLIC wcns::solver wcns::spectral)
 target_compile_definitions(
     wcns_runtime
     PRIVATE
@@ -228,12 +263,22 @@ if(WCNS_ENABLE_CGNS)
     target_link_libraries(wcns_runtime PRIVATE wcns::io wcns::cgns)
     add_executable(wcns_run src/app/wcns_run.cpp)
     target_link_libraries(wcns_run PRIVATE wcns::runtime wcns::io)
+endif()
 
+if(WCNS_ENABLE_CGNS AND WCNS_BUILD_TOOLS)
     add_executable(
         wcns_generate_release_cgns
         tools/generate_release_cgns.cpp
     )
     target_link_libraries(wcns_generate_release_cgns PRIVATE wcns::core wcns::cgns)
+    add_executable(wcns_generate_hit_cgns tools/generate_hit_cgns.cpp)
+    target_link_libraries(wcns_generate_hit_cgns PRIVATE wcns::core wcns::cgns)
+    add_executable(wcns_audit_chapter5_metrics tools/audit_chapter5_metrics.cpp)
+    target_link_libraries(wcns_audit_chapter5_metrics PRIVATE wcns::io wcns::mesh)
+    add_executable(wcns_generate_chapter5_cgns tools/generate_chapter5_cgns.cpp)
+    target_link_libraries(wcns_generate_chapter5_cgns PRIVATE wcns::core wcns::cgns)
+    add_executable(wcns_generate_periodic_hill_cgns tools/generate_periodic_hill_cgns.cpp)
+    target_link_libraries(wcns_generate_periodic_hill_cgns PRIVATE wcns::core wcns::cgns)
 
     add_executable(
         wcns_generate_couette_validation_cgns
@@ -294,10 +339,16 @@ if(WCNS_BUILD_TESTS)
 endif()
 
 if(WCNS_ENABLE_CGNS)
+    install(TARGETS wcns_run RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT WCNS)
+endif()
+if(WCNS_ENABLE_CGNS AND WCNS_BUILD_TOOLS)
     install(
         TARGETS
-            wcns_run
             wcns_generate_release_cgns
+            wcns_generate_periodic_hill_cgns
+            wcns_generate_chapter5_cgns
+            wcns_generate_hit_cgns
+            wcns_audit_chapter5_metrics
             wcns_generate_couette_validation_cgns
             wcns_validate_release_case
             wcns_compare_metric_profiles
@@ -306,6 +357,7 @@ if(WCNS_ENABLE_CGNS)
             wcns_convert_tmr_flatplate_p3d_to_cgns
             wcns_extract_rans_profile
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        COMPONENT WCNS
     )
 endif()
 install(
@@ -315,10 +367,12 @@ install(
         THIRD_PARTY_NOTICES.md
         "算法补充.md"
     DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns
+    COMPONENT WCNS
 )
 install(
     DIRECTORY docs/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/docs
+    COMPONENT WCNS
     FILES_MATCHING PATTERN "*.md"
 )
 install(
@@ -326,6 +380,7 @@ install(
         examples/channel_retau180_from_t250_all_speed_roe.wcns
         examples/full_case_template_v2.3.wcns
     DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/config-templates
+    COMPONENT WCNS
 )
 if(WCNS_INSTALL_EXAMPLES)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples"
@@ -338,10 +393,12 @@ if(WCNS_INSTALL_EXAMPLES)
     install(
         DIRECTORY examples/
         DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/examples
+        COMPONENT WCNS
     )
     install(
         DIRECTORY cases/config/
         DESTINATION ${CMAKE_INSTALL_DATADIR}/wcns/cases/config
+        COMPONENT WCNS
         FILES_MATCHING PATTERN "*.wcns.in"
     )
 endif()

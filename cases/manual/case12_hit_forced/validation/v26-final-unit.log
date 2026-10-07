@@ -1,0 +1,20 @@
+Internal ctest changing into directory: D:/program/WCNS_v3/wcns/tmp/v26-build
+Test project D:/program/WCNS_v3/wcns/tmp/v26-build
+    Start   1: wcns.hit
+1/7 Test   #1: wcns.hit .........................   Passed    0.72 sec
+    Start   2: wcns.slab_fft
+2/7 Test   #2: wcns.slab_fft ....................   Passed    0.07 sec
+    Start   3: wcns.slab_fft.mpi3
+3/7 Test   #3: wcns.slab_fft.mpi3 ...............   Passed    0.21 sec
+    Start   4: wcns.slab_fft.mpi4
+4/7 Test   #4: wcns.slab_fft.mpi4 ...............   Passed    0.18 sec
+    Start   5: wcns.chapter5
+5/7 Test   #5: wcns.chapter5 ....................   Passed    0.10 sec
+    Start   8: wcns.periodic_hill
+6/7 Test   #8: wcns.periodic_hill ...............   Passed    0.14 sec
+    Start 227: wcns.unit
+7/7 Test #227: wcns.unit ........................   Passed    0.49 sec
+
+100% tests passed, 0 tests failed out of 7
+
+Total Test time (real) =   1.92 sec

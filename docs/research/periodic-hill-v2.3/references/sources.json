@@ -1,0 +1,30 @@
+[
+  {
+    "file": "hill-geometry.dat",
+    "url": "https://tmbwg.github.io/turbmodels/Other_LES_Data/2Dhill_periodic/hill-geometry.dat",
+    "access_date": "2026-10-02",
+    "bytes": 1171,
+    "sha256": "97ddeb0986c1f1f406998cca07b4ba9e568b0a90461e7198c6092a873c0dceaf"
+  },
+  {
+    "file": "README_gridpoints_hill.txt",
+    "url": "https://tmbwg.github.io/turbmodels/Other_LES_Data/2Dhill_periodic/README_gridpoints_hill.txt",
+    "access_date": "2026-10-02",
+    "bytes": 707,
+    "sha256": "78b1bfd2d9dd2c89ac16330a99e0e0bcb066aceecd3bba3e923f3f94b1071f3e"
+  },
+  {
+    "file": "README_p_vel_and_turb_hill.txt",
+    "url": "https://tmbwg.github.io/turbmodels/Other_LES_Data/2Dhill_periodic/README_p_vel_and_turb_hill.txt",
+    "access_date": "2026-10-02",
+    "bytes": 1809,
+    "sha256": "821ac64bba5ea99c5bb5f0c77c0b55de7172515b50ecabc070bba6ffe3c2d6fd"
+  },
+  {
+    "file": "hill_LES_cf_digitized.dat",
+    "url": "https://tmbwg.github.io/turbmodels/Other_LES_Data/2Dhill_periodic/hill_LES_cf_digitized.dat",
+    "access_date": "2026-10-02",
+    "bytes": 1805,
+    "sha256": "cbdf847fc9941aef23038a4ed8ab3d19c0ba46972476e6b5c4664d13b4dbfcc3"
+  }
+]

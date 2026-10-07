@@ -27,6 +27,7 @@ struct BoundaryData {
     std::optional<Real> wall_temperature;
     std::optional<DoubleMachReflection> double_mach_reflection;
     std::optional<FarfieldPointVortex> farfield_point_vortex;
+    bool compression_ramp_inlet = false;
 
     void validate(BoundaryType type, int dimension) const;
 };

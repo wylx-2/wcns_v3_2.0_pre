@@ -59,8 +59,9 @@ public:
     void record_file(std::string path);
     [[nodiscard]] const std::vector<std::string>& files() const noexcept { return files_; }
 
-private:
+    // Prepare once before benchmark observers that write their initial sample.
     void prepare_directory();
+private:
     void dispatch(OutputCategory category,
                   OutputSchedule& schedule,
                   const SimulationState& state,

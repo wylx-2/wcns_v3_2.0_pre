@@ -1,0 +1,6 @@
+{
+  "pages": 11,
+  "checked": "All 11 pages visually inspected. After final command-path edits, page 9 and page 10 were reinspected; the other nine raster images match the already reviewed images byte-for-byte.",
+  "docx_sha256": "e3439c24fc4da96424a6bf1ca9103195557b3fe128d79ae0a118c5153d24d025",
+  "backend": "Word hidden read-only PDF export; packaged render_docx.py rasterization"
+}

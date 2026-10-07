@@ -1,0 +1,1 @@
+zones=12 cells_per_zone=64x160x72 total_cells=8847360 min_corner_jacobian=5.6684978964157729e-06 maximum_abs_cos_grid_angle=0.61946372609017708 interface_mismatch=0

@@ -1,0 +1,10 @@
+{
+  "sd7003": {
+    "planar_regeneration_identical": true,
+    "sha256": "e353d8e56218355b78c94285ab85d1ac22ab844aa637696453938061d84a5ea2"
+  },
+  "ramp": {
+    "planar_regeneration_identical": true,
+    "sha256": "3eb5dbea873c98ef6bcef6ab0dbf71f56e48e0dedd8a268c19b23551b24ba2f3"
+  }
+}

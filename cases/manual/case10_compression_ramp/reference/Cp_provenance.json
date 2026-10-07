@@ -1,0 +1,29 @@
+{
+  "status": "approximate digitization of visible black reference squares; not original numerical data",
+  "document": "test_4.docx, chapter 5",
+  "figure": "图5.34_1.jpeg",
+  "reference": "Porter & Poggie 2019 as reproduced in the supplied thesis",
+  "source_file": "source_Cp.jpeg",
+  "source_sha256": "95ce78531e36804155bbf1bb07c68fef580820111da58e44b7006bb3bd785837",
+  "native_pixels": [
+    1432,
+    1432
+  ],
+  "x_calibration": [
+    444,
+    1159,
+    80,
+    120
+  ],
+  "y_calibration": [
+    1201,
+    321,
+    0,
+    0.6
+  ],
+  "x_log10": false,
+  "pixel_error_estimate": 4.0,
+  "uncertainty_note": "coordinate/marker reading estimate only, not a rigorous bound on source-data uncertainty",
+  "marker_count": 33,
+  "selection": "hollow-square black border score > 0.58 (profile figures 0.43), nonmaximum suppression; visual-QA axis/tick exclusions; incomplete visible-marker subset; no curve interpolation"
+}

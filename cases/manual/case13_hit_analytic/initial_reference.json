@@ -1,0 +1,17 @@
+{
+  "A": 0.00013,
+  "k0": 8.0,
+  "K0_continuum": 0.500523533878318,
+  "enstrophy_continuum": 40.04188271026545,
+  "urms_continuum": 0.5776524525342888,
+  "lambda_continuum": 0.25,
+  "L_integral_continuum": 0.31332853432887503,
+  "tau": 0.5424170415173236,
+  "Mt0": 0.3,
+  "Re_lambda_continuum": 72,
+  "nu": 0.0020057376824107248,
+  "reference_mach": 0.2998430630684572,
+  "reference_temperature": 7.944817998068541,
+  "CBC_preparation_time": 0.10381382891686522,
+  "status": "Analytical continuum initial integrals, not evolved DNS data. Finite grid statistics differ."
+}

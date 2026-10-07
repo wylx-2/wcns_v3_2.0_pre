@@ -17,3 +17,23 @@ __pycache__/
 *.o
 *.exe
 /glm_test/
+
+# Local build/test scratch and solver outputs. Existing tracked evidence stays tracked.
+/tmp/
+/output/
+/unit-*.csv
+/cases/**/output/
+/cases/**/results/
+/cases/**/qa/
+/docs/**/qa/
+/docs/research/**/sources/
+/docs/chapter5-source-provenance.json
+/docs/hit-v2.6/initialization-sources.json
+/cases/**/report/*.aux
+/cases/**/report/*.log
+/cases/**/report/*.out
+/cases/**/report/*.toc
+
+# New case grids are losslessly stored in cases/grid-archives; restore with the helper.
+/cases/manual/**/grids/*.cgns
+/cases/manual/**/grid/*.cgns

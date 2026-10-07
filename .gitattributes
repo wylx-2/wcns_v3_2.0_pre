@@ -7,6 +7,9 @@
 *.h text eol=lf
 *.hpp text eol=lf
 *.py text eol=lf
+*.sh text eol=lf
+*.slurm text eol=lf
+*.wcns text eol=lf
 *.cmake text eol=lf
 CMakeLists.txt text eol=lf
 *.md text eol=lf
@@ -19,3 +22,8 @@ CMakeLists.txt text eol=lf
 *.cgns binary
 *.png binary
 *.zip binary
+*.xz binary
+*.gz binary
+*.mat binary
+*.pdf binary
+*.docx binary

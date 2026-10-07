@@ -1,0 +1,514 @@
+# WCNS v2.2 schema 2 full configuration template
+#
+# This file is intentionally a runnable laminar SSPRK3 baseline after mesh.path is
+# changed to an existing ADF-CGNS structured mesh. Mutually exclusive model keys
+# are retained as commented examples. Copy this file; do not edit it in place.
+#
+# Syntax rules:
+# - one key = value per line;
+# - comments must occupy a whole line; inline comments are not supported;
+# - booleans are exactly true or false; enumerations are case-sensitive;
+# - comma lists cannot contain empty items or a trailing comma;
+# - unknown keys, duplicate keys, NaN and Inf are rejected.
+
+# -----------------------------------------------------------------------------
+# 1. Schema, case identity and paths
+# -----------------------------------------------------------------------------
+
+# Supported: 1 | 2. Use 2 for turbulence, LU-SGS and time statistics.
+schema_version = 2
+
+# Output filename prefix. Prefer letters, digits, hyphen and underscore.
+case.name = v2_2_case
+
+# Relative mesh/restart paths are resolved from this configuration file.
+mesh.path = mesh.cgns
+
+# Optional restart. strict reproduces the same numerical algorithm;
+# algorithm_change imports a compatible conservative state and resets histories.
+# restart.path = previous/output/v2_2_case.checkpoint.latest.cgns
+# restart.mode = strict
+# Choices for restart.mode: strict | algorithm_change
+
+# -----------------------------------------------------------------------------
+# 2. Spatial algorithms
+# -----------------------------------------------------------------------------
+
+# Complete geometry/linear-operator bundle; components cannot be mixed.
+# Choices: phenglei_wcns | scmm6_wcns
+algorithm.profile = phenglei_wcns
+
+# Choices: profile | conservative_two_point
+algorithm.flux_difference = profile
+
+# Choices: zero_order | linear5 | weno_js | weno_z | mdcd_linear | mdcd_hybrid
+algorithm.reconstruction = weno_z
+
+# Choices: conservative | primitive | characteristic
+algorithm.reconstruction_variables = characteristic
+
+# Choices: rusanov | hll | hllc | roe | roe_all_speed |
+#          roe_all_speed_rieper | roe_rotated
+algorithm.riemann = hllc
+
+# Only for mdcd_linear or mdcd_hybrid. Defaults: 0.0463783 and 0.01.
+# algorithm.mdcd.disp = 0.0463783
+# algorithm.mdcd.diss = 0.01
+
+# Only for algorithm.riemann=roe_all_speed (v2.2 Li-Gu explicit all-speed Roe).
+# algorithm.roe_all_speed.reference_mach = 0.1
+# algorithm.roe_all_speed.dissipation_scale = 0.02
+# algorithm.roe_all_speed.pressure_coefficient = 0.05
+
+# Optional metric fallback. strict rejects the failed selected metric path;
+# phenglei_finite_volume allows the documented finite-volume fallback.
+# geometry.metric.fallback = strict
+# Choices: strict | phenglei_finite_volume
+# geometry.metric.maximum_reference_relative_difference = 1e-10
+
+# SSPRK3 posterior admissibility and local support downgrade. In schema 2 this
+# must remain false for RANS, LES and LU-SGS paths.
+robustness.enabled = false
+robustness.max_local_recomputations = 3
+robustness.max_step_retries = 4
+robustness.time_step_reduction = 0.5
+robustness.minimum_time_step = 1e-12
+
+# -----------------------------------------------------------------------------
+# 3. Gas, reference scales and molecular transport
+# -----------------------------------------------------------------------------
+
+gas.gamma = 1.4
+
+# Exactly one of the next two keys must be active.
+gas.molar_mass = 0.029
+# gas.specific_gas_constant = 287.0
+
+# Dimensional positive reference values. Re and Ma are derived and cannot be
+# configured directly. Coordinates in the mesh remain nondimensional.
+reference.velocity = 340.0
+reference.density = 1.225
+reference.temperature = 288.15
+reference.length = 1.0
+reference.viscosity = 1.7894e-5
+
+# Choices: constant | sutherland
+transport.model = constant
+transport.prandtl = 0.72
+
+# Constant-viscosity branch.
+transport.constant.viscosity_ratio = 1.0
+
+# Sutherland branch: comment the constant branch and activate these lines.
+# Exactly one of temperature [K] and temperature_ratio is allowed.
+# transport.sutherland.reference_viscosity_ratio = 1.0
+# transport.sutherland.temperature = 110.4
+# transport.sutherland.temperature_ratio = 0.38313378448724628
+
+# -----------------------------------------------------------------------------
+# 4. Turbulence model (schema 2)
+# -----------------------------------------------------------------------------
+
+# Choices: none | sa_neg | k_omega_sst | k_epsilon | smagorinsky |
+#          scale_similarity | mixed_smagorinsky_similarity |
+#          dynamic_smagorinsky | wale
+turbulence.model = none
+
+# RANS common keys; activate only for the applicable RANS model.
+# turbulence.prandtl = 0.9
+# turbulence.wall_treatment = resolved
+# Choices: resolved | wall_function
+
+# SA-neg only.
+# turbulence.sa.farfield_nu_tilde_ratio = 3.0
+# turbulence.sa.source_treatment = explicit
+# Choices: explicit | local_implicit
+
+# SST-2003m or k-epsilon only.
+# turbulence.freestream.intensity = 0.01
+# turbulence.freestream.length_scale = 0.1
+# turbulence.model_floor = 1e-12
+# turbulence.two_equation.source_treatment = explicit
+# Choices: explicit | local_implicit
+
+# k-epsilon only: experimental=true and wall_function are mandatory.
+# turbulence.experimental = true
+# turbulence.wall_function.y_plus_min = 30.0
+# turbulence.wall_function.y_plus_max = 300.0
+
+# LES common keys. LES requires a 3D viscous unsteady run, LU-SGS BDF2 dual
+# time and preconditioner.type=none.
+# les.filter.type = box3_tensor
+# les.filter.width_ratio = 1.0
+# les.sgs_prandtl = 0.9
+
+# Similarity or dynamic model only; v2.2 fixes this ratio at 2.
+# les.test_filter.ratio = 2.0
+
+# Smagorinsky or mixed model only. van_driest is parsed but currently rejected
+# by production validation because the wall-y-plus field is not wired to it.
+# les.smagorinsky.cs = 0.17
+# les.smagorinsky.wall_damping = none
+# Choices: none | van_driest
+
+# Scale-similarity or mixed model only.
+# les.similarity.cb = 1.0
+
+# Dynamic Smagorinsky only; average and clipping have one supported value each.
+# les.dynamic.average = local_box3_tensor
+# les.dynamic.clipping = bounded
+# les.dynamic.denominator_floor = 1e-20
+# les.dynamic.coefficient_minimum = -0.05
+# les.dynamic.coefficient_maximum = 0.09
+
+# WALE only.
+# les.wale.cw = 0.325
+
+# -----------------------------------------------------------------------------
+# 5. Time integration and low-Mach preconditioning
+# -----------------------------------------------------------------------------
+
+# Choices: ssprk3 | lu_sgs
+time.integrator = ssprk3
+
+# SSPRK3 accepts no LU-SGS or dual-time keys. For LU-SGS, activate the block.
+# time.physical.scheme currently has one supported value: bdf2.
+# For steady LU-SGS, omit time.physical.step. For unsteady LU-SGS it is required.
+# time.physical.scheme = bdf2
+# time.physical.step = 0.001
+# time.dual_time.max_iterations = 100
+# time.dual_time.absolute_tolerance = 1e-10
+# time.dual_time.relative_tolerance = 1e-8
+# time.dual_time.cfl = 5.0
+# lu_sgs.sweeps = 1
+# lu_sgs.jacobian = scalar_spectral
+# lu_sgs.relaxation = 1.0
+
+# Choices: none | weiss_smith. Weiss-Smith requires roe + lu_sgs.
+preconditioner.type = none
+# preconditioner.mach_cutoff = 1e-3
+# preconditioner.viscous_cutoff = 1.0
+
+# -----------------------------------------------------------------------------
+# 6. Partition and MPI
+# -----------------------------------------------------------------------------
+
+# Choices: zones_only | auto_split | force_split
+partition.mode = auto_split
+partition.allow_idle_ranks = false
+partition.max_load_ratio = 1.2
+
+# Minimum 4 for phenglei_wcns and 5 for scmm6_wcns.
+partition.min_cells_per_active_direction = 8
+
+# -----------------------------------------------------------------------------
+# 7. Initial condition
+# -----------------------------------------------------------------------------
+
+# Choices: uniform | sod_x | quadrant_riemann | isentropic_vortex | couette |
+# poiseuille | linear_conduction | manufactured_periodic | taylor_green_vortex |
+# double_mach_reflection | turbulent_channel
+initial.type = uniform
+
+# Active uniform state. Give exactly one of pressure and temperature when a
+# deterministic thermodynamic input is desired.
+initial.rho = 1.0
+initial.u = 0.2
+initial.v = 0.0
+initial.w = 0.0
+initial.temperature = 1.0
+# initial.pressure = 7.142857142857143
+
+# Generic position/profile parameters used by the model selected above.
+# initial.x0 = 0.5
+# initial.y0 = 0.0
+# initial.y1 = 1.0
+# initial.z0 = 0.0
+# initial.lower_velocity = 0.0
+# initial.upper_velocity = 1.0
+# initial.centerline_velocity = 1.0
+# initial.lower_temperature = 1.0
+# initial.upper_temperature = 1.0
+# initial.temperature_curvature = 0.0
+# initial.velocity_curvature = 0.0
+# initial.beta = 0.1
+# initial.background_u = 1.0
+# initial.background_v = 1.0
+# initial.period_x = 6.283185307179586
+# initial.period_y = 6.283185307179586
+# initial.period_z = 3.141592653589793
+# initial.re_tau = 180.0
+# initial.bulk_velocity = 1.0
+# initial.bulk_velocity_plus = 15.481978793165828
+# initial.perturbation_amplitude = 0.05
+
+# sod_x left/right states.
+# initial.left_rho = 1.0
+# initial.left_u = 0.0
+# initial.left_v = 0.0
+# initial.left_p = 1.0
+# initial.right_rho = 0.125
+# initial.right_u = 0.0
+# initial.right_v = 0.0
+# initial.right_p = 0.1
+
+# quadrant_riemann states.
+# initial.ne_rho = 1.5
+# initial.ne_u = 0.0
+# initial.ne_v = 0.0
+# initial.ne_p = 1.5
+# initial.nw_rho = 0.5323
+# initial.nw_u = 1.206
+# initial.nw_v = 0.0
+# initial.nw_p = 0.3
+# initial.sw_rho = 0.138
+# initial.sw_u = 1.206
+# initial.sw_v = 1.206
+# initial.sw_p = 0.029
+# initial.se_rho = 0.5323
+# initial.se_u = 0.0
+# initial.se_v = 1.206
+# initial.se_p = 0.3
+
+# -----------------------------------------------------------------------------
+# 8. Physical boundaries
+# -----------------------------------------------------------------------------
+
+# Choices: farfield | inflow | outflow | slip_wall |
+# no_slip_adiabatic_wall | no_slip_isothermal_wall | symmetry |
+# double_mach_reflection
+# The string periodic is parsed, but production periodicity must be supplied by
+# CGNS GridConnectivity1to1, not by a physical BC override.
+boundary.default = farfield
+
+# Replace <patch> with the exact CGNS BC_t name. The following lines enumerate
+# every dynamic boundary property accepted by v2.2.
+# boundary.<patch>.type = inflow
+# boundary.<patch>.wall_velocity_x = 0.0
+# boundary.<patch>.wall_velocity_y = 0.0
+# boundary.<patch>.wall_velocity_z = 0.0
+# boundary.<patch>.wall_temperature = 1.0
+# boundary.<patch>.rho = 1.0
+# boundary.<patch>.u = 0.2
+# boundary.<patch>.v = 0.0
+# boundary.<patch>.w = 0.0
+# boundary.<patch>.temperature = 1.0
+# boundary.<patch>.pressure = 7.142857142857143
+
+# Schema-2 farfield point-vortex correction. Requires at least one farfield.
+# boundary.point_vortex.enabled = false
+# boundary.point_vortex.lift_coefficient = 0.0
+# boundary.point_vortex.center_x = 0.25
+# boundary.point_vortex.center_y = 0.0
+# boundary.point_vortex.chord = 1.0
+
+# -----------------------------------------------------------------------------
+# 9. Source terms
+# -----------------------------------------------------------------------------
+
+source.enabled = false
+
+# When enabled, choose a comma list from:
+# uniform_conservative | body_force | pressure_gradient | manufactured
+# source.models = uniform_conservative,body_force,pressure_gradient,manufactured
+
+# source.uniform.rho = 0.0
+# source.uniform.momentum_x = 0.0
+# source.uniform.momentum_y = 0.0
+# source.uniform.momentum_z = 0.0
+# source.uniform.energy = 0.0
+
+# source.body.ax = 0.0
+# source.body.ay = 0.0
+# source.body.az = 0.0
+
+# source.pressure_gradient.x = 0.0
+# source.pressure_gradient.y = 0.0
+# source.pressure_gradient.z = 0.0
+
+# source.manufactured.rho = 0.0
+# source.manufactured.momentum_x = 0.0
+# source.manufactured.momentum_y = 0.0
+# source.manufactured.momentum_z = 0.0
+# source.manufactured.energy = 0.0
+
+# -----------------------------------------------------------------------------
+# 10. Run mode, limits and steady convergence
+# -----------------------------------------------------------------------------
+
+# Choices: steady | unsteady
+run.mode = unsteady
+
+# false: Euler; true: viscous Navier-Stokes/RANS/LES.
+run.viscous = false
+
+# SSPRK3 global CFL or LU-SGS pseudo-time CFL, depending on the integrator.
+run.cfl = 0.2
+
+# Hard accepted-step/time-layer limit.
+run.max_steps = 1000
+
+# Required positive total target time for unsteady runs. On restart this remains
+# the absolute total physical end time, not an added duration.
+run.t_end = 0.1
+
+# Seconds; 0 disables. A positive value requires checkpoint output.
+run.max_wall_time = 0
+
+# Used only for run.mode=steady.
+# steady.min_steps = 100
+# steady.check_interval_steps = 10
+# steady.consecutive_checks = 3
+# steady.reference_floor = 1e-30
+# steady.l2_absolute = 1e-12
+# steady.l2_relative = 1e-8
+# steady.linf_enabled = true
+# steady.linf_absolute = 1e-11
+# steady.linf_relative = 1e-8
+
+# -----------------------------------------------------------------------------
+# 11. Output root and common policy
+# -----------------------------------------------------------------------------
+
+# Relative output.directory is resolved from the process working directory.
+output.directory = output/v2_2_case
+output.allow_existing = false
+output.dimensional = false
+
+# -----------------------------------------------------------------------------
+# 12. Field snapshots
+# -----------------------------------------------------------------------------
+
+output.field.enabled = true
+# Choices: cgns | tecplot | both
+output.field.format = cgns
+output.field.every_steps = 100
+output.field.every_time = 0
+# output.field.explicit_times = 0.025,0.05,0.075
+output.field.write_initial = true
+output.field.write_final = true
+
+# Built-in mean-flow quantities:
+# rho,u,v,w,p,T,rho_u,rho_v,rho_w,rho_E,sound_speed,mach,
+# total_enthalpy,entropy_proxy,viscosity,jacobian
+# Active turbulence models additionally register their own descriptors; see the
+# user manual for SA, SST, k-epsilon and LES names.
+output.field.quantities = rho,u,v,w,p,T,mach
+
+# -----------------------------------------------------------------------------
+# 13. Residual history
+# -----------------------------------------------------------------------------
+
+output.history.enabled = true
+# Choices: txt | tecplot
+output.history.format = txt
+output.history.every_steps = 1
+output.history.every_time = 0
+# output.history.explicit_times = 0.025,0.05,0.075
+output.history.write_initial = true
+output.history.write_final = true
+
+# This key is recognized only to issue a clear error. History has a fixed schema
+# and output.history.quantities must remain omitted.
+# output.history.quantities = forbidden
+
+# -----------------------------------------------------------------------------
+# 14. Instantaneous and accepted-time statistics
+# -----------------------------------------------------------------------------
+
+output.statistics.enabled = true
+# Choices: txt | tecplot
+output.statistics.format = txt
+output.statistics.every_steps = 10
+output.statistics.every_time = 0
+# output.statistics.explicit_times = 0.025,0.05,0.075
+output.statistics.write_initial = true
+output.statistics.write_final = true
+
+# Built-in quantities: total_mass,total_momentum_x,total_momentum_y,
+# total_momentum_z,total_energy. Plane/channel quantities are appended
+# automatically when their features are enabled.
+output.statistics.quantities = total_mass,total_momentum_x,total_energy
+
+# Accepted physical-step statistics; only valid for unsteady runs and requires
+# output.statistics.enabled=true.
+statistics.time.enabled = false
+# statistics.time.start = 0.0
+# statistics.time.end = 0.1
+# statistics.time.every_steps = 1
+# statistics.time.weight = accepted_dt
+
+# Original-zone x-z cell-j layers, 3D only.
+output.statistics.xz_planes.enabled = false
+# output.statistics.xz_planes.cell_j_indices = 0,23,47
+
+# Geometrically planar y-z sections, 3D only.
+output.statistics.yz_planes.enabled = false
+# output.statistics.yz_planes.target_x_coordinates = 0.0,3.141592653589793
+
+# Isothermal channel-wall friction monitor, 3D viscous only.
+output.statistics.channel_walls.enabled = false
+# output.statistics.channel_walls.lower_patch = bottom
+# output.statistics.channel_walls.upper_patch = top
+# output.statistics.channel_walls.half_height = 1.0
+
+# -----------------------------------------------------------------------------
+# 15. Boundary fields, loads and span bins
+# -----------------------------------------------------------------------------
+
+output.boundary.enabled = false
+# Choices: txt | tecplot
+output.boundary.format = tecplot
+output.boundary.every_steps = 100
+output.boundary.every_time = 0
+# output.boundary.explicit_times = 0.025,0.05,0.075
+output.boundary.write_initial = true
+output.boundary.write_final = true
+
+# output.boundary.patches = wall
+# Available quantities:
+# p_w,T_w,mu_w,Cp,Cf,q_wall,wall_distance,friction_velocity,wall_y_plus,
+# wall_y_plus_class,mu_model_over_mu,pressure_traction_x,
+# pressure_traction_y,pressure_traction_z,viscous_traction_x,
+# viscous_traction_y,viscous_traction_z,traction_x,traction_y,traction_z
+# output.boundary.quantities = p_w,T_w,Cp,traction_x,traction_y
+
+# All reference values below are required when boundary output is enabled.
+# output.boundary.reference_pressure = 7.142857142857143
+# output.boundary.reference_density = 1.0
+# output.boundary.reference_velocity_x = 1.0
+# output.boundary.reference_velocity_y = 0.0
+# output.boundary.reference_velocity_z = 0.0
+# output.boundary.reference_area = 1.0
+# output.boundary.reference_length = 1.0
+# output.boundary.moment_center_x = 0.0
+# output.boundary.moment_center_y = 0.0
+# output.boundary.moment_center_z = 0.0
+# output.boundary.drag_direction_x = 1.0
+# output.boundary.drag_direction_y = 0.0
+# output.boundary.drag_direction_z = 0.0
+# output.boundary.lift_direction_x = 0.0
+# output.boundary.lift_direction_y = 1.0
+# output.boundary.lift_direction_z = 0.0
+# output.boundary.tangent_direction_x = 1.0
+# output.boundary.tangent_direction_y = 0.0
+# output.boundary.tangent_direction_z = 0.0
+
+# Optional 3D spanwise bins. drag, lift and span must form a right-handed basis.
+# output.boundary.span_direction_x = 0.0
+# output.boundary.span_direction_y = 0.0
+# output.boundary.span_direction_z = 1.0
+# output.boundary.span_bin_edges = -1.0,-0.5,0.0,0.5,1.0
+
+# -----------------------------------------------------------------------------
+# 16. Checkpoint schedule
+# -----------------------------------------------------------------------------
+
+output.checkpoint.enabled = true
+output.checkpoint.every_steps = 500
+output.checkpoint.every_time = 0
+# output.checkpoint.explicit_times = 0.05
+output.checkpoint.write_initial = false
+output.checkpoint.write_final = true
+
+# End of template. Always run wcns_run --config <copy>.wcns --dry-run first.

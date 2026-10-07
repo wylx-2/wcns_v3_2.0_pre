@@ -78,7 +78,7 @@ Real normal_physical_scale(const StructuredBlock& block,
                            const MetricField& metric,
                            const BoundaryPatch& patch,
                            Index3 face,
-                           Normal3 outward)
+                           Normal3 outward,const AlgorithmProfile& profile)
 {
     const auto center = inward_cell(block, patch, face, 0);
     const auto& coordinates = metric.cell_coordinates();
@@ -87,7 +87,7 @@ Real normal_physical_scale(const StructuredBlock& block,
         coordinates.y(center.i, center.j, center.k),
         coordinates.z(center.i, center.j, center.k),
     }};
-    const auto boundary = face_centroid(block, patch, face);
+    const auto boundary = viscous_wall_coordinates(block, metric, patch, face, profile);
     const auto outward_array = as_array(outward);
     std::array<Real, 3> inward {{-outward_array[0], -outward_array[1], -outward_array[2]}};
     const std::array<Real, 3> delta {
@@ -131,6 +131,21 @@ CartesianGradient remove_normal(CartesianGradient gradient, Normal3 outward)
 }
 
 } // namespace
+
+std::array<Real,3> viscous_wall_coordinates(const StructuredBlock& block,const MetricField& metric,
+    const BoundaryPatch& patch,Index3 face,const AlgorithmProfile& profile)
+{
+    if(profile.kind()!=AlgorithmProfileKind::Scmm6Wcns) return face_centroid(block,patch,face);
+    const auto axis=static_cast<std::size_t>(patch.face.axis);
+    const auto& operators=cached_line_operators(profile,block.cell_extent()[axis]);
+    const auto& row=operators.interpolation_rows()[static_cast<std::size_t>(face[axis])];
+    const auto& c=metric.cell_coordinates();std::array<Real,3> result{};
+    for(const auto [j,w]:row) {
+        auto p=face;p[axis]=j;
+        result[0]+=w*c.x(p.i,p.j,p.k);result[1]+=w*c.y(p.i,p.j,p.k);result[2]+=w*c.z(p.i,p.j,p.k);
+    }
+    return result;
+}
 
 Real wall_dirichlet_computational_derivative(Real wall_value,
                                              const std::vector<Real>& inward_center_values,
@@ -223,7 +238,7 @@ ViscousFaceTrace apply_viscous_boundary_trace(const StructuredBlock& block,
     if (block.cell_extent()[static_cast<std::size_t>(patch.face.axis)] < stencil_count) {
         throw ProfileError("wall Dirichlet stencil does not fit the block");
     }
-    const Real scale = normal_physical_scale(block, metric, patch, face, outward_unit_normal);
+    const Real scale = normal_physical_scale(block, metric, patch, face, outward_unit_normal, profile);
     ViscousFaceTrace result = raw_trace;
     for (int velocity = 0; velocity < 3; ++velocity) {
         result.state[static_cast<std::size_t>(temperature_velocity_x + velocity)]

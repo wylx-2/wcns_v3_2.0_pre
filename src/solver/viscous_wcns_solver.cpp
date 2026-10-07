@@ -775,6 +775,7 @@ void ViscousWcnsSolver::compute_residuals_impl(Real stage_time,
                                           profile_);
         }
     }
+    if (collective_source_) collective_source_(stage_time);
 }
 
 void ViscousWcnsSolver::capture_turbulence_stage_state()
@@ -1473,6 +1474,7 @@ Real ViscousWcnsSolver::advance(Real time_step, Real initial_time)
             },
             robustness_diagnostics_);
     }
+    if (accepted_step_transform_) accepted_step_transform_(accepted_time_step);
     for (auto& block : local_blocks_.blocks()) {
         update_temperature_primitive_interior(block, gas_, reference_, floors_);
     }

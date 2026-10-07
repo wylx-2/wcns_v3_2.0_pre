@@ -1,0 +1,27 @@
+WCNS v2.6 validation, 2026-10-03
+Build host: Windows x64, MinGW GCC 8.1, CMake, Intel oneAPI MPI.
+Source release is platform-independent C++17; Linux instructions are supplied, but no Linux compiler run was performed in this session.
+Independent source directory: WCNS_v2.6, built outside the development checkout's source tree.
+Options: WCNS_ENABLE_MPI=ON, WCNS_ENABLE_FFTW=ON, WCNS_BUILD_TESTS=ON, Release.
+FFTW 3.3.11 pinned archive + WCNS distributed MPI slab transpose; CGNS 4.4.0 static ADF.
+Independent package targets: wcns_run, wcns_generate_hit_cgns, wcns_hit_tests, wcns_slab_fft_tests built successfully.
+Independent package CTest: 4/4 HIT and FFT tests passed (MPI ranks 1, 3, 4).
+Development regression subset: 7/7 (core, periodic hill, chapter5, HIT, FFT).
+Fallback FFT backend: 3/3 serial/MPI3/MPI4 tests passed.
+Runtime acceptance: 19 checks, successful cases limited to 16^3 and at most 3 steps; invalid-config rejection included.
+Eight-block serial/MPI4/repartition-MPI2 final field and statistics maximum scaled difference: 7.174608129822957e-13.
+One-zone auto-split MPI4 maximum scaled difference: 1.7577814204194908e-12.
+Same-partition strict restart difference: 0 for both cases in this test.
+Packaged unchanged smoke configurations: MPI4 3-step tests passed (return code 2, max_steps).
+Packaged restart helper: generated strict config and loaded checkpoint with MPI2 dry-run.
+Packaged 64^3 production configurations: MPI4 dry-run passed, zero metric fallback cells.
+Reference conversion: all 19/19/18 CBC rows and 482 JHTDB rows reproduce bundled numerical values exactly.
+Postprocessing: actual short-test output compared; missing CBC stations and insufficient forced averaging duration correctly reported.
+DOCX: 11 pages rendered with hidden Word read-only PDF export and bundled render_docx.py rasterization; all pages visually reviewed.
+No long production computation, mature CBC initialization conditioning, or converged turbulence-statistics validation was performed locally.
+
+{
+  "unmodified_smoke": "MPI4, 3 steps, max_steps code 2",
+  "restart_helper": "strict checkpoint loaded with MPI2 dry-run",
+  "production_config": "MPI4 64^3 dry-run passed"
+}

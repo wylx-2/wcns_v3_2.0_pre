@@ -1,0 +1,10 @@
+CGNS read: zones=1 nodes=89x49x25 cells=88x48x24 total=101376
+coordinate bounds=0:9
+coordinate bounds=0:3.0350000000000001
+coordinate bounds=0:4.5
+linear-cell min_volume=5.2937194717149487e-05 total_volume=114.31455562733419 periodic_coordinate_mismatch=0
+physical_walls=2 periodic_connections=4
+imin -> PeriodicHill shift=9,0,0 transform=1,2,3
+imax -> PeriodicHill shift=-9,0,0 transform=1,2,3
+kmin -> PeriodicHill shift=0,0,4.5 transform=1,2,3
+kmax -> PeriodicHill shift=0,0,-4.5 transform=1,2,3

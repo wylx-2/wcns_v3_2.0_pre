@@ -1,0 +1,39 @@
+WCNS v2.6 CBC 九算例上传包：本地验证记录
+日期：2026-10-07
+
+验证采用上传包内的源码快照独立编译，不复用旧版可执行文件。
+环境：WSL Ubuntu 22.04；GCC 11.4.0；Open MPI 4.1.2；CMake 3.31.0-rc3；Python 3.10.12。
+构建：Release，MPI=ON，FFTW=ON，CGNS=ON，WCNS_BUILD_TESTS=OFF，parallel=2。
+编译目标 wcns_run 成功；离线 CGNS/FFTW 源码取自本包。
+
+已完成：
+1. 核对 148 个核心源码/依赖文件及 CMake 文件与当前工作区一致。
+2. 核对全部九份正式配置，矩阵为 32/64/128 × Roe/Rusanov/Roe-all-speed；
+   MDCD-linear、diss=0.001、SCMM6-WCNS、SSPRK3、CFL=0.3、无湍流模型。
+3. 用 CGNS 读取器逐块读取 16³/32³/64³/128³ 网格；每网格 8 块、48 个有向块连接；
+   块单元数分别为 (N/2)³，总数 N³；文件 SHA256 与已有网格一致。
+4. 九标签的 MPI 2 进程真实求解器短测全部完成：实际均用 16³，
+   预演化 t*=0.001，谱重匹配后正式衰减至 t*=0.001。
+   这不是 32³/64³/128³ 的正式计算结果。
+   最大 Parseval 误差：2.4980e-16。
+   重匹配 E_after 与 E_target_discrete 的最大绝对差：1.2143e-17。
+5. 真实墙钟停止与 strict 续算：MPI 2 进程在正式 t*=0.0005 暂停，
+   runner 正确记录 pending；改用 MPI 4 进程恢复并达到 t*=0.001。
+   K、平均密度、总能量、黏性耗散及 enstrophy 相对无中断短测的最大
+   abs(delta)/max(1,abs(reference)) 为 6.6613e-16。
+6. 实际网格初始化 dry-run：32³ 的三种通量、64³ 的 Roe 均通过。
+   其余真实网格配置做静态核对；128³ 做 CGNS 完整逐块读取，未运行求解器初始化。
+7. 批处理自动测试 9 项通过：九组合顺序/完成跳过、准备/正式阶段检查点选择、
+   退出码 2 暂停、未达终点不能误报完成、缺实验测站失败、失败继续其他组、
+   fresh retry、输入身份变化拒绝、dry-run 独立状态及时间预算耗尽。
+   这些状态测试使用模拟 launcher，不替代第 4/5 项的真实 MPI 测试。
+8. Bash 语法检查通过。结果收集脚本实际生成九组合统计包，核对所有内部
+   SHA256；18 份准备/正式历史均收录，CGNS 大文件按默认规则排除。
+
+数值验证详细指标与网格校验码见 validation.json。
+维护用脚本位于原开发工作区 tools/package_cbc_campaign.py、
+tools/validate_cbc_campaign.py、tests/test_cbc_campaign.py。
+
+没有在本机推进任何正式 32³/64³/128³ CBC 衰减长计算。
+上述检查确认编译、短流程、配置与续算可用，不证明长时间稳定性或实验精度。
+正式结果应按 README.md 在服务器完成后回传，结合实验谱与能量预算评估。

@@ -1,0 +1,21 @@
+{
+  "trailing_edge_radius_input": 0.0004,
+  "te_circle_center": [
+    0.9996,
+    0.0
+  ],
+  "rounding_blend_start": 0.98,
+  "chord_realized": 0.9999173646498035,
+  "first_height": 3.000000000000024e-05,
+  "farfield": "radial offset 30c from wall (approximately 30c radius)",
+  "mapping": "normal displacement 0.002*(1-exp(-h/0.002)); remaining displacement radial",
+  "zones": 8,
+  "cells_per_zone": [
+    56,
+    96,
+    40
+  ],
+  "cells": 1720320,
+  "span": 0.2,
+  "min_corner_volume": 1.0686591891695583e-11
+}

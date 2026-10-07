@@ -5,6 +5,7 @@
 #include <wcns/solver/rans_two_equation_transport.hpp>
 #include <wcns/solver/sa_negative_transport.hpp>
 #include <wcns/solver/viscous_operator.hpp>
+#include <functional>
 
 namespace wcns {
 
@@ -45,6 +46,10 @@ public:
                       NumericalFloors floors,
                       ViscousWcnsConfig config = {});
 
+    void set_pressure_gradient_x(Real force) { source_registry_.set_pressure_gradient_x(force); }
+    void set_accepted_step_transform(std::function<void(Real)> transform) { accepted_step_transform_ = std::move(transform); }
+    // Collective stage callback, recomputed on retries. It may only add to the RHS.
+    void set_collective_source(std::function<void(Real)> source) { collective_source_ = std::move(source); }
     void compute_residuals(Real stage_time, int rk_stage = 0);
     [[nodiscard]] Real advance(Real time_step, Real initial_time);
     [[nodiscard]] Real advance_lu_sgs(Real pseudo_cfl,
@@ -104,6 +109,8 @@ private:
     NumericalFloors floors_;
     ViscousWcnsConfig config_;
     SourceTermRegistry source_registry_;
+    std::function<void(Real)> collective_source_;
+    std::function<void(Real)> accepted_step_transform_;
     TransportModel transport_;
     std::unique_ptr<ITurbulenceModel> turbulence_model_;
     RiemannSolver riemann_;

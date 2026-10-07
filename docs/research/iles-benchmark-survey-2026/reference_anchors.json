@@ -1,0 +1,26 @@
+{
+  "TGV_peak_sample": {
+    "t": 8.97,
+    "K": 0.0867895646809,
+    "epsilon": 0.012857528187,
+    "enstrophy": 10.2861271303
+  },
+  "TGV_time_interval": [
+    0.0,
+    19.99
+  ],
+  "LM180_Cf_from_header": 0.008123255229619998,
+  "hump_reattachment_linear_interpolation": 1.1162068965517242,
+  "bfs_reattachment_linear_interpolation_not_published_value": 6.278656716417911,
+  "CBC_table4_Re_lambda": [
+    71.6,
+    65.3,
+    60.7
+  ],
+  "CBC_epsilon_m2_s3": [
+    0.474,
+    0.0633,
+    0.0174
+  ],
+  "note": "Derived values are not new DNS or CFD results; original published precision and uncertainty apply."
+}

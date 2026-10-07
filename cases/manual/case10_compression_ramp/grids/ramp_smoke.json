@@ -1,0 +1,25 @@
+{
+  "corner_x": 100,
+  "angle_degrees": 24,
+  "wall_x_max": 190,
+  "upstream_height": 40,
+  "first_height": 0.002000000000000001,
+  "trip_x": [
+    2.33,
+    2.67
+  ],
+  "trip_y": [
+    0,
+    0.01
+  ],
+  "mapping": "near-wall normal angle blended 0 to 24 deg over x=70..130; outer downstream height buffer",
+  "zones": 12,
+  "cells_per_zone": [
+    8,
+    24,
+    8
+  ],
+  "cells": 18432,
+  "span": 6,
+  "min_corner_volume": 0.0002436988225016924
+}

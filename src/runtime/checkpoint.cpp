@@ -1,3 +1,6 @@
+#include <wcns/runtime/hit.hpp>
+#include <wcns/runtime/periodic_hill.hpp>
+#include <wcns/runtime/chapter5.hpp>
 #include <wcns/runtime/checkpoint.hpp>
 
 #include <wcns/io/cgns_reader.hpp>
@@ -426,6 +429,9 @@ struct RootCheckpointData {
     bool implicit_history_valid = false;
     Real implicit_history_time_step = 0.0;
     std::string time_statistics;
+    std::string periodic_hill;
+    std::string chapter5;
+    std::string hit;
     std::vector<Real> rank_payload;
     std::vector<std::size_t> rank_counts;
 };
@@ -466,7 +472,8 @@ CheckpointService::CheckpointService(const MpiRuntime& mpi,
                                      const BlockMetricMap& metrics,
                                      QuantityContext quantity_context,
                                      std::string mesh_path,
-                                     AcceptedTimeStatistics* time_statistics)
+                                     AcceptedTimeStatistics* time_statistics,
+                                     PeriodicHillRuntime* periodic_hill, Chapter5Runtime* chapter5, HitRuntime* hit)
     : mpi_(mpi)
     , config_(config)
     , partition_(partition)
@@ -476,7 +483,14 @@ CheckpointService::CheckpointService(const MpiRuntime& mpi,
     , mesh_path_(std::move(mesh_path))
     , registry_(FieldQuantityRegistry::create_builtin())
     , time_statistics_(time_statistics)
+    , periodic_hill_(periodic_hill)
+    , chapter5_(chapter5)
+    , hit_(hit)
 {
+    if ((hit_!=nullptr)!=config_.hit.enabled()) throw std::invalid_argument("checkpoint HIT state differs");
+    if ((chapter5_!=nullptr)!=config_.chapter5.enabled()) throw std::invalid_argument("checkpoint benchmark state differs");
+    if ((periodic_hill_ != nullptr) != config_.periodic_hill.enabled)
+        throw std::invalid_argument("checkpoint hill state differs from configuration");
     if ((time_statistics_ != nullptr) != config_.time_statistics.enabled) {
         throw std::invalid_argument(
             "checkpoint time-statistics state differs from configuration");
@@ -605,6 +619,9 @@ std::vector<std::string> CheckpointService::write(const SimulationState& state) 
         }());
         write_descriptor(file->id(), "WCNS_MeshSignature", mesh_signature_);
         write_descriptor(file->id(), "WCNS_RestartSignature", config_.restart_signature());
+        if (hit_ != nullptr) write_descriptor(file->id(), "WCNS_HIT", hit_->serialize());
+        if (chapter5_ != nullptr) write_descriptor(file->id(), "WCNS_Chapter5", chapter5_->serialize());
+        if (periodic_hill_ != nullptr) write_descriptor(file->id(), "WCNS_PeriodicHill", periodic_hill_->serialize());
         if (time_statistics_ != nullptr) {
             write_descriptor(
                 file->id(), "WCNS_TimeStatistics", time_statistics_->serialize());
@@ -844,6 +861,15 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
             const auto stored_time_step
                 = parse_real(required(descriptors, "WCNS_TimeStep"), "time step");
             root.restored.previous_time_step = algorithm_change ? 0.0 : stored_time_step;
+            if (!algorithm_change && hit_ != nullptr) { root.hit=required(descriptors,"WCNS_HIT");hit_->restore(root.hit); }
+            if (!algorithm_change && chapter5_ != nullptr) {
+                root.chapter5=required(descriptors,"WCNS_Chapter5");
+                chapter5_->restore(root.chapter5);
+            }
+            if (!algorithm_change && periodic_hill_ != nullptr) {
+                root.periodic_hill = required(descriptors, "WCNS_PeriodicHill");
+                periodic_hill_->restore(root.periodic_hill);
+            }
             if (!algorithm_change && time_statistics_ != nullptr) {
                 root.time_statistics = required(descriptors, "WCNS_TimeStatistics");
                 const auto restored_statistics
@@ -1080,6 +1106,14 @@ CheckpointRestoreResult CheckpointService::restore(const std::string& path) cons
     }
     if (status.rfind("OK\n", 0) != 0) {
         throw std::runtime_error("invalid checkpoint restore broadcast");
+    }
+    if (!algorithm_change && hit_ != nullptr) hit_->restore(mpi_.broadcast_string(mpi_.rank()==0?root.hit:std::string{}));
+    if (!algorithm_change && chapter5_ != nullptr) {
+        chapter5_->restore(mpi_.broadcast_string(mpi_.rank()==0?root.chapter5:std::string{}));
+    }
+    if (!algorithm_change && periodic_hill_ != nullptr) {
+        periodic_hill_->restore(mpi_.broadcast_string(
+            mpi_.rank() == 0 ? root.periodic_hill : std::string {}));
     }
     if (!algorithm_change && time_statistics_ != nullptr) {
         auto serialized_statistics = mpi_.broadcast_string(

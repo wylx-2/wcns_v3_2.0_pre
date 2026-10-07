@@ -1,3 +1,16 @@
+add_executable(wcns_hit_tests test_hit.cpp)
+target_link_libraries(wcns_hit_tests PRIVATE wcns::runtime)
+add_test(NAME wcns.hit COMMAND wcns_hit_tests)
+add_executable(wcns_slab_fft_tests test_slab_fft.cpp)
+target_link_libraries(wcns_slab_fft_tests PRIVATE wcns::spectral)
+add_test(NAME wcns.slab_fft COMMAND wcns_slab_fft_tests)
+if(WCNS_ENABLE_MPI)
+    add_test(NAME wcns.slab_fft.mpi3 COMMAND "${WCNS_MPIEXEC_EXECUTABLE}" -n 3 $<TARGET_FILE:wcns_slab_fft_tests>)
+    add_test(NAME wcns.slab_fft.mpi4 COMMAND "${WCNS_MPIEXEC_EXECUTABLE}" -n 4 $<TARGET_FILE:wcns_slab_fft_tests>)
+endif()
+add_executable(wcns_chapter5_tests test_chapter5.cpp)
+target_link_libraries(wcns_chapter5_tests PRIVATE wcns::runtime)
+add_test(NAME wcns.chapter5 COMMAND wcns_chapter5_tests)
 add_executable(wcns_unit_tests
     test_main.cpp
     test_index.cpp
@@ -58,16 +71,26 @@ target_link_libraries(
     PRIVATE wcns::core wcns::solver
 )
 add_test(NAME wcns.lu_sgs.allocations COMMAND wcns_lu_sgs_allocation_probe)
+add_executable(wcns_periodic_hill_tests test_periodic_hill.cpp)
+target_link_libraries(wcns_periodic_hill_tests PRIVATE wcns::runtime)
+add_test(NAME wcns.periodic_hill COMMAND wcns_periodic_hill_tests)
 if(WCNS_ENABLE_CGNS)
     target_link_libraries(wcns_unit_tests PRIVATE wcns::cgns)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
     add_test(
-        NAME wcns.v2_3_release_contract
+        NAME wcns.v2_5_release_contract
         COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_3_release.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tools/verify_v2_5_release.py
             --repository ${CMAKE_CURRENT_SOURCE_DIR}/..
     )
+    add_test(NAME wcns.periodic_hill.runtime.serial
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_periodic_hill_runtime.py
+            --runner $<TARGET_FILE:wcns_run>
+            --generator $<TARGET_FILE:wcns_generate_periodic_hill_cgns>
+            --config ${CMAKE_CURRENT_SOURCE_DIR}/../cases/manual/case08_periodic_hill/smoke.wcns
+            --work ${CMAKE_CURRENT_BINARY_DIR}/hill-runtime)
+    set_tests_properties(wcns.periodic_hill.runtime.serial PROPERTIES TIMEOUT 120)
     add_test(
         NAME wcns.v2_3_package_safety
         COMMAND ${Python3_EXECUTABLE}

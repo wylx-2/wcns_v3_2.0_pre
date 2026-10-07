@@ -1,0 +1,16 @@
+Internal ctest changing into directory: D:/program/WCNS_v3/wcns/glm_test/build-serial
+Test project D:/program/WCNS_v3/wcns/glm_test/build-serial
+    Start   1: wcns.chapter5
+1/5 Test   #1: wcns.chapter5 .......................   Passed    0.17 sec
+    Start   4: wcns.periodic_hill
+2/5 Test   #4: wcns.periodic_hill ..................   Passed    0.30 sec
+    Start   6: wcns.periodic_hill.runtime.serial
+3/5 Test   #6: wcns.periodic_hill.runtime.serial ...   Passed    2.37 sec
+    Start 112: wcns.unit
+4/5 Test #112: wcns.unit ...........................   Passed    0.50 sec
+    Start 116: wcns.stage_k_solver.serial
+5/5 Test #116: wcns.stage_k_solver.serial ..........   Passed    0.13 sec
+
+100% tests passed, 0 tests failed out of 5
+
+Total Test time (real) =   3.48 sec

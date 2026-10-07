@@ -1,0 +1,3 @@
+check=finite samples=202752 min_rho=0.52632958061487123 min_p=0.14109229746575563 min_T=0.99999361851478752
+check=compare samples=202752 max_abs=0 tolerance=1e-10
+check=compare samples=202752 max_abs=0 tolerance=1e-10

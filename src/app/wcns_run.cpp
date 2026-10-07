@@ -1,3 +1,6 @@
+#include <wcns/runtime/hit.hpp>
+#include <wcns/runtime/periodic_hill.hpp>
+#include <wcns/runtime/chapter5.hpp>
 #include <wcns/io/cgns_reader.hpp>
 #include <wcns/mesh/high_order_metrics.hpp>
 #include <wcns/mesh/metrics.hpp>
@@ -211,8 +214,6 @@ wcns::BlockBoundaryDataMap make_boundary_data(const wcns::LocalBlockSet& local_b
 {
     wcns::BlockBoundaryDataMap result;
     for (const auto& block : local_blocks.blocks()) {
-        const auto target = wcns::FlowInitializer::evaluate(
-            config.initial, {0.0, 0.0, 0.0}, gas, reference, floors, block.cell_dimension());
         wcns::BoundaryDataMap data;
         for (const auto& patch : block.boundaries) {
             wcns::BoundaryData patch_data;
@@ -227,7 +228,8 @@ wcns::BlockBoundaryDataMap make_boundary_data(const wcns::LocalBlockSet& local_b
             }
             if (patch.type == wcns::BoundaryType::Farfield
                 || patch.type == wcns::BoundaryType::Inflow) {
-                patch_data.target_state = target;
+                patch_data.target_state = wcns::FlowInitializer::evaluate(
+                    config.initial, {0.0, 0.0, 0.0}, gas, reference, floors, block.cell_dimension());
             }
             if (patch.type == wcns::BoundaryType::Farfield
                 && config.farfield_point_vortex.enabled) {
@@ -262,6 +264,8 @@ wcns::BlockBoundaryDataMap make_boundary_data(const wcns::LocalBlockSet& local_b
                                                       block.cell_dimension());
                 }
             }
+            if (config.chapter5.type=="compression_ramp" && patch.type==wcns::BoundaryType::Inflow)
+                patch_data.compression_ramp_inlet=true;
             if (patch.type == wcns::BoundaryType::NoSlipIsothermalWall) {
                 patch_data.wall_temperature = physical != nullptr && physical->wall_temperature
                     ? physical->wall_temperature
@@ -481,6 +485,25 @@ int main(int argc, char** argv)
             time_statistics = std::make_unique<wcns::AcceptedTimeStatistics>(
                 config.time_statistics_identity(), config.output.statistics.quantities.size());
         }
+        wcns::StatisticContext statistic_context {
+            mpi,
+            local_blocks,
+            metrics,
+            plan,
+            conservation_weights,
+            profile,
+            quantity_context,
+            &boundary_data,
+            config.run.viscous,
+        };
+        std::unique_ptr<wcns::HitRuntime> hit;
+        if(config.hit.enabled()) hit=std::make_unique<wcns::HitRuntime>(config,statistic_context,local_blocks,
+            config.hit.spectrum_file.empty()?std::string{}:resolve_mesh_path(command.config_path,config.hit.spectrum_file));
+        std::unique_ptr<wcns::Chapter5Runtime> chapter5;
+        if(config.chapter5.enabled()) chapter5=std::make_unique<wcns::Chapter5Runtime>(config,statistic_context);
+        std::unique_ptr<wcns::PeriodicHillRuntime> periodic_hill;
+        if (config.periodic_hill.enabled)
+            periodic_hill = std::make_unique<wcns::PeriodicHillRuntime>(config, statistic_context);
         wcns::CheckpointService checkpoint(
             mpi,
             config,
@@ -489,10 +512,11 @@ int main(int argc, char** argv)
             metrics,
             quantity_context,
             mesh_name,
-            time_statistics.get());
+            time_statistics.get(), periodic_hill.get(), chapter5.get(), hit.get());
         wcns::SimulationInitialState simulation_initial;
         if (config.restart_path.empty()) {
-            wcns::FlowInitializer::initialize_local_blocks(
+            if(hit) hit->initialize();
+            else wcns::FlowInitializer::initialize_local_blocks(
                 local_blocks, metrics, config.initial, gas, reference, floors);
         } else {
             const auto restart_name = resolve_mesh_path(command.config_path, config.restart_path);
@@ -547,17 +571,6 @@ int main(int argc, char** argv)
         std::signal(SIGINT, request_stop);
         std::signal(SIGTERM, request_stop);
         ConsoleObserver console(mpi);
-        wcns::StatisticContext statistic_context {
-            mpi,
-            local_blocks,
-            metrics,
-            plan,
-            conservation_weights,
-            profile,
-            quantity_context,
-            &boundary_data,
-            config.run.viscous,
-        };
         auto field_registry = wcns::FieldQuantityRegistry::create_builtin();
         for (const auto& descriptor : turbulence_model->fields()) {
             field_registry.register_turbulence_field(descriptor);
@@ -617,8 +630,18 @@ int main(int argc, char** argv)
             },
             std::move(statistic_registry),
             time_statistics.get());
+        if(hit) output.prepare_directory();
         wcns::CompositeSimulationObserver observer;
         observer.add(console);
+        if(hit) observer.add(*hit);
+        if (chapter5) {
+            observer.add(*chapter5);
+            for(const auto& path:chapter5->output_paths()) output.record_file(path);
+        }
+        if (periodic_hill) {
+            observer.add(*periodic_hill);
+            for (const auto& path : periodic_hill->output_paths()) output.record_file(path);
+        }
         observer.add(output);
         wcns::SimulationState final_state;
         if (config.run.viscous) {
@@ -638,6 +661,11 @@ int main(int argc, char** argv)
                                            reference,
                                            floors,
                                            solver_config);
+            if(hit) {
+                solver.set_collective_source([&hit](wcns::Real time){hit->add_stage_source(time);});
+                solver.set_accepted_step_transform([&hit](wcns::Real dt){hit->accepted_step_transform(dt);});
+            }
+            if (periodic_hill) periodic_hill->bind_force([&solver](wcns::Real force) { solver.set_pressure_gradient_x(force); });
             wcns::ViscousSimulationSolver adapter(
                 solver,
                 mpi,
@@ -647,9 +675,57 @@ int main(int argc, char** argv)
                 profile,
                 config.time_algorithm,
                 config.run.mode);
-            wcns::SimulationDriver driver(
-                mpi, adapter, config.run, observer, [] { return stop_requested != 0; });
-            final_state = driver.run(simulation_initial);
+            auto production_run=config.run;
+            bool production_ready=true;
+            if(hit && hit->preparing()) {
+                // A separate driver gives preparation its own clock, step limit,
+                // outputs and strict checkpoints. The solver/flow storage is reused.
+                auto prep=config;
+                prep.case_name+="-preparation";
+                prep.output.directory+="/preparation";
+                prep.run.end_time=config.hit.preparation_time;
+                prep.run.max_steps=config.hit.preparation_max_steps;
+                prep.output.boundary.enabled=false;
+                wcns::ProductionFieldWriter prep_field_writer(mpi,prep,plan,local_blocks,metrics,
+                    quantity_context,mesh_name,wcns::FieldQuantityRegistry::create_builtin());
+                wcns::CheckpointService prep_checkpoint(mpi,prep,plan,local_blocks,metrics,
+                    quantity_context,mesh_name,nullptr,nullptr,nullptr,hit.get());
+                wcns::RuntimeOutputManager prep_output(mpi,prep,plan,prep_checkpoint.mesh_signature(),
+                    &statistic_context,[&](wcns::OutputCategory category,const wcns::SimulationState& state,bool,bool) {
+                        if(category==wcns::OutputCategory::Field)return prep_field_writer.write(state);
+                        return category==wcns::OutputCategory::Checkpoint?prep_checkpoint.write(state):std::vector<std::string>{};
+                    });
+                prep_output.prepare_directory();
+                for(const auto& path:hit->output_paths())prep_output.record_file(path);
+                wcns::CompositeSimulationObserver prep_observer;
+                prep_observer.add(console);prep_observer.add(*hit);prep_observer.add(prep_output);
+                if(mpi.rank()==0)std::cout<<"HIT preparation: evolve to t="<<prep.run.end_time<<'\n';
+                wcns::SimulationDriver prep_driver(mpi,adapter,prep.run,prep_observer,[] {return stop_requested!=0;});
+                final_state=prep_driver.run(simulation_initial);
+                production_ready=final_state.stop_reason==wcns::StopReason::PhysicalTimeReached;
+                const bool preparation_stop_requested=!mpi.all_true(stop_requested==0);
+                if(production_ready && preparation_stop_requested) {
+                    final_state.stop_reason=wcns::StopReason::UserSignalCheckpoint;production_ready=false;
+                }
+                if(production_ready && production_run.max_wall_time>0) {
+                    production_run.max_wall_time-=mpi.max(final_state.wall_time);
+                    if(production_run.max_wall_time<=0) {
+                        final_state.stop_reason=wcns::StopReason::WallTimeCheckpoint;production_ready=false;
+                    }
+                }
+                if(production_ready) {
+                    hit->finish_preparation(final_state);
+                    output.record_file(prep.output.directory+"/"+config.case_name+"_rematch.csv");
+                    simulation_initial={};
+                    if(mpi.rank()==0)std::cout<<"HIT preparation complete: Kang mode rematch; production time/step/statistics reset to zero\n";
+                } else if(mpi.rank()==0)std::cout<<"HIT preparation incomplete; production has not started\n";
+            }
+            if(production_ready) {
+                if(hit)for(const auto& path:hit->output_paths())output.record_file(path);
+                wcns::SimulationDriver driver(
+                    mpi, adapter, production_run, observer, [] { return stop_requested != 0; });
+                final_state = driver.run(simulation_initial);
+            }
         } else {
             auto solver_config = config.make_inviscid_config();
             wcns::InviscidWcnsSolver solver(mpi,

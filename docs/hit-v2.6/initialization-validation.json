@@ -1,0 +1,285 @@
+{
+  "date": "2026-10-07",
+  "initialization": {
+    "runs": {
+      "analytic": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 1.234000000054948
+      },
+      "different-seed": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 0.9529999999795109
+      },
+      "analytic-part": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 0.640999999945052
+      },
+      "analytic-resume": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 0.6400000000139698
+      },
+      "prepared": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 2.187000000034459
+      },
+      "prepared-resume0": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 0.9379999999655411
+      },
+      "prep-interrupted": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 0.7179999999934807
+      },
+      "prep-resume": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 1.9369999999180436
+      },
+      "prep-end-resume": {
+        "ranks": 1,
+        "return_code": 2,
+        "seconds": 1.2820000000065193
+      },
+      "analytic-mpi4": {
+        "ranks": 4,
+        "return_code": 2,
+        "seconds": 0.7040000000270084
+      },
+      "prepared-mpi4": {
+        "ranks": 4,
+        "return_code": 2,
+        "seconds": 1.187999999965541
+      },
+      "prep-resume-mpi2": {
+        "ranks": 2,
+        "return_code": 2,
+        "seconds": 1.3440000000409782
+      },
+      "bad-mode": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.0779999999795109
+      },
+      "conflicting-energy": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.062000000034458935
+      },
+      "negative-A": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.06299999996554106
+      },
+      "analytic-prep": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.062000000034458935
+      },
+      "forced-prep": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.0779999999795109
+      },
+      "changed-duration": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.18700000003445894
+      },
+      "algorithm-change": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.0779999999795109
+      },
+      "changed-A": {
+        "ranks": 1,
+        "return_code": 1,
+        "seconds": 0.18799999996554106
+      }
+    },
+    "checks": {
+      "analytic_K0": 0.500523533878318,
+      "analytic strict restart": 0.0,
+      "per_mode_target_relative_error": 1.926994704620247e-15,
+      "rematch_preserves_thermodynamics_and_transverse_phases": true,
+      "restart after rematch does not repeat preparation": 0.0,
+      "restart during preparation": 0.0,
+      "restart at preparation endpoint": 0.0,
+      "analytic MPI4": 0.0,
+      "prepared MPI4": 1.1879386363489175e-14,
+      "preparation restart repartition MPI2": 0.0
+    }
+  },
+  "legacy_HIT": {
+    "work": "D:\\program\\WCNS_v3\\wcns\\tmp\\hit-init-20261007\\legacy\\hit-dpdner8n",
+    "runs": {
+      "decay-serial": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 1.1099999999860302
+      },
+      "decay-part": {
+        "ranks": 1,
+        "steps": 1,
+        "seconds": 0.609000000054948
+      },
+      "decay-resume": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.8129999999655411
+      },
+      "decay-mpi4": {
+        "ranks": 4,
+        "steps": 3,
+        "seconds": 0.6410000000614673
+      },
+      "decay-resume2": {
+        "ranks": 2,
+        "steps": 3,
+        "seconds": 0.6869999999180436
+      },
+      "decay-bad-n": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.1559999999590218
+      },
+      "decay-bad-seed": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.2190000000409782
+      },
+      "forced-serial": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 1.062000000034459
+      },
+      "forced-part": {
+        "ranks": 1,
+        "steps": 1,
+        "seconds": 0.6099999999860302
+      },
+      "forced-resume": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.8279999999795109
+      },
+      "forced-mpi4": {
+        "ranks": 4,
+        "steps": 3,
+        "seconds": 0.6720000000204891
+      },
+      "forced-resume2": {
+        "ranks": 2,
+        "steps": 3,
+        "seconds": 0.6879999999655411
+      },
+      "forced-bad-n": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.18700000003445894
+      },
+      "forced-bad-seed": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.2029999999795109
+      },
+      "constant-power": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 1.0630000000819564
+      },
+      "constant-band": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 1.0939999999245629
+      },
+      "bad-forced-cutoff": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.09299999999348074
+      },
+      "one-zone-serial": {
+        "ranks": 1,
+        "steps": 3,
+        "seconds": 0.8589999999385327
+      },
+      "one-zone-split4": {
+        "ranks": 4,
+        "steps": 3,
+        "seconds": 0.5630000000819564
+      }
+    },
+    "comparisons": {
+      "decay serial restart": 0,
+      "decay MPI4": 5.327231711316216e-13,
+      "decay repartition MPI2": 7.174608129822957e-13,
+      "forced serial restart": 0,
+      "forced MPI4": 5.567542954443283e-13,
+      "forced repartition MPI2": 5.48696504898416e-13,
+      "one-zone auto split MPI4": 1.7577814204194908e-12
+    }
+  },
+  "examples_and_grids": {
+    "case11_hit_decay-prepared_smoke": {
+      "dry_run": false,
+      "ranks": 4,
+      "return_code": 2,
+      "seconds": 1.4839999999385327
+    },
+    "case13_hit_analytic-smoke": {
+      "dry_run": false,
+      "ranks": 4,
+      "return_code": 2,
+      "seconds": 0.875
+    },
+    "case11_hit_decay-prepared_production": {
+      "dry_run": true,
+      "ranks": 4,
+      "return_code": 0,
+      "seconds": 1.5
+    },
+    "case13_hit_analytic-production": {
+      "dry_run": true,
+      "ranks": 4,
+      "return_code": 0,
+      "seconds": 1.7179999999934807
+    },
+    "grid16": {
+      "sha256": "1d52ea54c234f6e145aa1116c00082c70a7cdbbd479fb458879cdf1fadba545c",
+      "bytes": 294912,
+      "matches_existing_verified_periodic_2pi_8block_grid": true
+    },
+    "grid32": {
+      "sha256": "4ab0c382d89814d55ed66837b24670232fb3211aa1bed529952cb7400282cd4e",
+      "bytes": 1097728,
+      "matches_existing_verified_periodic_2pi_8block_grid": true
+    },
+    "grid64": {
+      "sha256": "dc4cc94b7b5b84f3d7e64d22284437852c1ab7d8398687f077200cd4c9c80086",
+      "bytes": 7053312,
+      "matches_existing_verified_periodic_2pi_8block_grid": true
+    },
+    "grid128": {
+      "sha256": "3ac5ed91238e2062ace211fa7a2ac79cf8cb01e97399b37bacbe2dae1aad8d54",
+      "bytes": 52883456,
+      "matches_existing_verified_periodic_2pi_8block_grid": true
+    }
+  },
+  "old_checkpoint_compatibility": {
+    "old_executable": "tmp/v26-package-build/wcns_run.exe (2026-10-03 build)",
+    "result": "strict restore of original v2.6 checkpoint succeeded",
+    "final_field_max_absolute_error": 0.0
+  },
+  "ctest": {
+    "core_selected": "7/7 passed",
+    "periodic_hill_runtime": "1/1 passed after building missing generator",
+    "FFTW_OFF_hit": "1/1 passed"
+  },
+  "production_time_integration": "not run"
+}

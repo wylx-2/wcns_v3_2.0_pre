@@ -1,0 +1,1 @@
+check=compare samples=608256 max_abs=2.7755575615628914e-17 tolerance=1e-10

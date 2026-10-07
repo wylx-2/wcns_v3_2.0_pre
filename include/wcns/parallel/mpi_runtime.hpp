@@ -35,6 +35,7 @@ public:
 
     void barrier() const;
     [[nodiscard]] Real sum(Real local_value) const;
+    void sum_reals(std::vector<Real>& values) const;
     [[nodiscard]] Real min(Real local_value) const;
     [[nodiscard]] Real max(Real local_value) const;
     [[nodiscard]] bool all_true(bool local_value) const;

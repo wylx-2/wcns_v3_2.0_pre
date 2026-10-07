@@ -28,6 +28,7 @@ enum class QuantityScale {
     Viscosity,
     KinematicViscosity,
     InverseTime,
+    InverseTimeSquared,
     Dissipation,
     LengthPower,
 };

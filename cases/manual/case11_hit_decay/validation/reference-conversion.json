@@ -1,0 +1,18 @@
+{
+  "cbc_spectrum_171_nondimensional.dat": {
+    "rows": 18,
+    "scaled_error": 0.0
+  },
+  "cbc_spectrum_42_nondimensional.dat": {
+    "rows": 19,
+    "scaled_error": 0.0
+  },
+  "cbc_spectrum_98_nondimensional.dat": {
+    "rows": 19,
+    "scaled_error": 0.0
+  },
+  "jhtdb_spectrum.dat": {
+    "rows": 482,
+    "scaled_error": 0.0
+  }
+}

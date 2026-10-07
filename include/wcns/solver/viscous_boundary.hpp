@@ -7,6 +7,13 @@
 
 namespace wcns {
 
+// Wall location consistent with the metric's cell-coordinate interpolation.
+// SCMM centres must not be paired with a straight-chord centroid on a curved
+// wall: on concave surfaces that can produce a negative first-cell distance.
+[[nodiscard]] std::array<Real,3> viscous_wall_coordinates(
+    const StructuredBlock& block,const MetricField& metric,const BoundaryPatch& patch,
+    Index3 face,const AlgorithmProfile& profile);
+
 [[nodiscard]] Real
 wall_dirichlet_computational_derivative(Real wall_value,
                                         const std::vector<Real>& inward_center_values,

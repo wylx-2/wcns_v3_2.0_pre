@@ -1,0 +1,13 @@
+zone=Zone1 maximum_relative_difference=0.0018538280231527148 fallback=0
+zone=Zone10 maximum_relative_difference=0.00013222391363323113 fallback=0
+zone=Zone11 maximum_relative_difference=0.00039860706584496033 fallback=0
+zone=Zone12 maximum_relative_difference=0.00035141800183552011 fallback=0
+zone=Zone2 maximum_relative_difference=4.2977689642971987e-05 fallback=0
+zone=Zone3 maximum_relative_difference=5.6886233160059758e-05 fallback=0
+zone=Zone4 maximum_relative_difference=5.7038085199316134e-05 fallback=0
+zone=Zone5 maximum_relative_difference=5.7101915747766409e-05 fallback=0
+zone=Zone6 maximum_relative_difference=5.7114215280486148e-05 fallback=0
+zone=Zone7 maximum_relative_difference=0.00024771514265953314 fallback=0
+zone=Zone8 maximum_relative_difference=6.8880857899527627e-05 fallback=0
+zone=Zone9 maximum_relative_difference=6.4520027165323443e-05 fallback=0
+PASS: zones=12 cells=8847360 min_scmm_jacobian=5.6627118675221085e-06 max_reference_difference=0.0018538280231527148

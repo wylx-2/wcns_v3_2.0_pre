@@ -1,4 +1,5 @@
 #include <wcns/physics/source_terms.hpp>
+#include <wcns/physics/chapter5.hpp>
 
 #include <stdexcept>
 #include <algorithm>
@@ -17,6 +18,7 @@ void validate_kind(SourceModelKind kind)
     case SourceModelKind::UniformConservative:
     case SourceModelKind::BodyForce:
     case SourceModelKind::PressureGradient:
+    case SourceModelKind::RampTrip:
     case SourceModelKind::ManufacturedSolution: return;
     }
     throw std::invalid_argument("source-term configuration contains an unknown model");
@@ -61,12 +63,17 @@ const char* source_model_name(SourceModelKind kind)
     case SourceModelKind::BodyForce: return "body_force";
     case SourceModelKind::PressureGradient: return "pressure_gradient";
     case SourceModelKind::ManufacturedSolution: return "manufactured_solution";
+    case SourceModelKind::RampTrip: return "ramp_trip";
     }
     throw std::logic_error("unreachable source model");
 }
 
 void SourceTermConfig::validate() const
 {
+    if(!std::isfinite(ramp_trip_amplitude) || ramp_trip_amplitude<0
+        || !std::isfinite(ramp_trip_span) || ramp_trip_span<=0
+        || (ramp_trip_amplitude!=0 && (!enable_source_terms || !contains_model(*this,SourceModelKind::RampTrip))))
+        throw std::invalid_argument("invalid ramp trip configuration");
     validate_finite(uniform_conservative, "uniform conservative source");
     validate_finite(body_acceleration, "body acceleration");
     validate_finite(pressure_gradient, "pressure-gradient force");
@@ -123,6 +130,8 @@ std::string SourceTermConfig::summary() const
         result += ";pressure_gradient=" + values_string(pressure_gradient);
         result += ";manufactured_amplitude=" + values_string(manufactured_amplitude);
     }
+    if(contains_model(*this,SourceModelKind::RampTrip))
+        result += ";ramp_trip="+values_string(std::array<Real,2>{{ramp_trip_amplitude,ramp_trip_span}});
     return result;
 }
 
@@ -149,6 +158,13 @@ SourceTermRegistry SourceTermRegistry::create_stage_j(const SourceTermConfig& co
         result.config_ = config;
     }
     return result;
+}
+
+void SourceTermRegistry::set_pressure_gradient_x(Real force)
+{
+    if (!std::isfinite(force) || !contains_model(config_, SourceModelKind::PressureGradient))
+        throw std::invalid_argument("dynamic pressure gradient requires an enabled pressure-gradient model and finite force");
+    config_.pressure_gradient[0] = force;
 }
 
 std::array<Real, 5> SourceTermRegistry::evaluate(const std::array<Real, 5>& conservative,
@@ -189,6 +205,13 @@ std::array<Real, 5> SourceTermRegistry::evaluate(const std::array<Real, 5>& cons
                           + conservative[3] * config_.pressure_gradient[2])
                 / conservative[0];
             break;
+        case SourceModelKind::RampTrip: {
+            if(dimension!=3) throw std::invalid_argument("ramp trip requires 3D");
+            const Real force=ramp_trip(coordinates[0],coordinates[1],coordinates[2],time,
+                config_.ramp_trip_amplitude,config_.ramp_trip_span);
+            result[1]+=force; result[4]+=force*conservative[1]/conservative[0];
+            break;
+        }
         case SourceModelKind::ManufacturedSolution: {
             const Real shape = 1.0 + coordinates[0] + coordinates[1]
                 + (dimension == 3 ? coordinates[2] : 0.0) + time;

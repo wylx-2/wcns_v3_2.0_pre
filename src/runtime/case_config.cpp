@@ -252,6 +252,7 @@ SourceModelKind parse_source_model(const std::string& value)
 {
     if (value == "uniform_conservative") return SourceModelKind::UniformConservative;
     if (value == "body_force") return SourceModelKind::BodyForce;
+    if (value == "ramp_trip") return SourceModelKind::RampTrip;
     if (value == "pressure_gradient") return SourceModelKind::PressureGradient;
     if (value == "manufactured") return SourceModelKind::ManufacturedSolution;
     throw CaseConfigurationError("unknown source model: " + value);
@@ -281,6 +282,14 @@ std::string canonical_entries(const EntryMap& entries)
 const std::set<std::string>& fixed_keys()
 {
     static const std::set<std::string> keys {
+        "hill.enabled",
+        "hill.bulk_velocity",
+        "hill.density",
+        "hill.controller_time",
+        "hill.force_limit",
+        "hill.statistics.start",
+        "hill.statistics.end",
+        "hill.write_every_steps",
         "schema_version",
         "case.name",
         "mesh.path",
@@ -358,6 +367,38 @@ const std::set<std::string>& fixed_keys()
         "geometry.metric.fallback",
         "geometry.metric.maximum_reference_relative_difference",
         "initial.type",
+        "hit.type",
+        "hit.n",
+        "hit.length",
+        "hit.seed",
+        "hit.spectrum_file",
+        "hit.initial_energy",
+        "hit.initialization",
+        "hit.spectrum_amplitude",
+        "hit.preparation.time",
+        "hit.preparation.max_steps",
+        "hit.peak_wave",
+        "hit.cutoff",
+        "hit.forcing",
+        "hit.forcing_power",
+        "hit.forcing_kmax",
+        "hit.remove_mean_acceleration",
+        "hit.thermostat",
+        "hit.statistics.start",
+        "hit.statistics.end",
+        "hit.sample_every_steps",
+        "hit.write_every_samples",
+        "hit.sample_times",
+        "benchmark.type",
+        "benchmark.statistics.start",
+        "benchmark.statistics.end",
+        "benchmark.write_every_steps",
+        "benchmark.history_every_steps",
+        "benchmark.probes",
+        "source.ramp_trip.amplitude",
+        "source.ramp_trip.span",
+        "initial.alpha_degrees",
+
         "initial.rho",
         "initial.u",
         "initial.v",
@@ -785,7 +826,11 @@ void InitialConditionConfig::validate(int dimension) const
         "manufactured_periodic",
         "taylor_green_vortex",
         "double_mach_reflection",
+        "hit",
         "turbulent_channel",
+        "periodic_hill",
+        "sd7003",
+        "compression_ramp",
     };
     if (valid_types.find(type) == valid_types.end()) {
         throw CaseConfigurationError("unknown initial condition type: " + type);
@@ -807,6 +852,12 @@ void InitialConditionConfig::validate(int dimension) const
     if (type == "isentropic_vortex"
         && (parameter("period_x", 0.0) < 0.0 || parameter("period_y", 0.0) < 0.0)) {
         throw CaseConfigurationError("isentropic-vortex periods must be zero or positive");
+    }
+    if (type == "periodic_hill") {
+        if (dimension != 3 || parameter("bulk_velocity", 1.0) <= 0
+            || parameter("perturbation_amplitude", 0.05) < 0
+            || parameter("perturbation_amplitude", 0.05) > 0.2)
+            throw CaseConfigurationError("periodic_hill requires 3D, positive bulk velocity and perturbation in [0,0.2]");
     }
     if (type == "turbulent_channel") {
         const Real y0 = parameter("y0", -1.0);
@@ -2235,6 +2286,61 @@ CaseConfig CaseConfig::from_text(const std::string& text)
         result.restart_mode = parse_restart_mode(iterator->second);
     }
     result.digest_ = fnv1a(canonical_entries(entries));
+    result.hit.type = optional_string(entries, "hit.type", "none");
+    const auto hit_n = optional_size(entries, "hit.n", 32);
+    if(hit_n>512) throw CaseConfigurationError("hit.n exceeds 512");
+    result.hit.n = static_cast<int>(hit_n);
+    result.hit.seed = optional_size(entries, "hit.seed", 20261003);
+    result.hit.length = optional_real(entries, "hit.length", 6.2831853071795864769);
+    result.hit.spectrum_file = optional_string(entries, "hit.spectrum_file", "");
+    result.hit.initial_energy = optional_real(entries, "hit.initial_energy", .705);
+    result.hit.initialization = optional_string(entries, "hit.initialization", "shell_spectrum");
+    result.hit.spectrum_amplitude = optional_real(entries, "hit.spectrum_amplitude", .00013);
+    result.hit.preparation_time = optional_real(entries, "hit.preparation.time", 0);
+    result.hit.preparation_max_steps = optional_size(entries, "hit.preparation.max_steps", 10000000);
+    if(result.hit.initialization=="analytic_random_phase" && entries.count("hit.initial_energy"))
+        throw CaseConfigurationError("analytic_random_phase derives energy from A and peak_wave; remove hit.initial_energy");
+    result.hit.peak_wave = optional_real(entries, "hit.peak_wave", 4);
+    result.hit.cutoff = optional_real(entries, "hit.cutoff", 0);
+    result.hit.forcing = optional_string(entries, "hit.forcing", "constant_power");
+    result.hit.forcing_power = optional_real(entries, "hit.forcing_power", .103);
+    result.hit.forcing_kmax = optional_real(entries, "hit.forcing_kmax", 2);
+    result.hit.remove_mean_acceleration = optional_bool(entries, "hit.remove_mean_acceleration", true);
+    result.hit.thermostat = optional_bool(entries, "hit.thermostat", true);
+    result.hit.statistics_start = optional_real(entries, "hit.statistics.start", 0);
+    result.hit.statistics_end = optional_real(entries, "hit.statistics.end", 100);
+    result.hit.sample_every_steps = optional_size(entries, "hit.sample_every_steps", 10);
+    result.hit.write_every_samples = optional_size(entries, "hit.write_every_samples", 10);
+    result.hit.sample_times = optional_real_list(entries, "hit.sample_times");
+    if (!result.hit.enabled()) for (const auto& entry : entries)
+        if (entry.first.rfind("hit.",0)==0 && entry.first!="hit.type")
+            throw CaseConfigurationError("disabled HIT has configured parameters");
+
+    result.chapter5.type = optional_string(entries, "benchmark.type", "none");
+    result.chapter5.statistics_start = optional_real(entries, "benchmark.statistics.start", 0);
+    result.chapter5.statistics_end = optional_real(entries, "benchmark.statistics.end", 100);
+    result.chapter5.write_every_steps = optional_size(entries, "benchmark.write_every_steps", 1000);
+    result.chapter5.history_every_steps = optional_size(entries, "benchmark.history_every_steps", 20);
+    result.chapter5.probes = optional_real_list(entries, "benchmark.probes");
+    result.source_terms.ramp_trip_amplitude = optional_real(entries, "source.ramp_trip.amplitude", 0);
+    result.source_terms.ramp_trip_span = optional_real(entries, "source.ramp_trip.span", 6);
+    result.periodic_hill.enabled = optional_bool(entries, "hill.enabled", false);
+    result.periodic_hill.bulk_velocity = optional_real(entries, "hill.bulk_velocity", 1.0);
+    result.periodic_hill.density = optional_real(entries, "hill.density", 1.0);
+    result.periodic_hill.controller_time = optional_real(entries, "hill.controller_time", 1.0);
+    result.periodic_hill.force_limit = optional_real(entries, "hill.force_limit", 0.5);
+    result.periodic_hill.statistics_start = optional_real(entries, "hill.statistics.start", 100.0);
+    result.periodic_hill.statistics_end = optional_real(entries, "hill.statistics.end", 1000.0);
+    if (entries.count("hill.write_every_steps")) {
+        const auto n = parse_integer(entries.at("hill.write_every_steps"), "hill.write_every_steps");
+        if (n <= 0) throw CaseConfigurationError("hill.write_every_steps must be positive");
+        result.periodic_hill.write_every_steps = static_cast<std::size_t>(n);
+    }
+    if (!result.periodic_hill.enabled) {
+        for (const auto& entry : entries)
+            if (entry.first.rfind("hill.", 0) == 0 && entry.first != "hill.enabled")
+                throw CaseConfigurationError("hill settings require hill.enabled=true");
+    }
     result.validate();
     return result;
 }
@@ -2345,6 +2451,62 @@ void CaseConfig::validate() const
                 throw CaseConfigurationError("Weiss-Smith requires algorithm.riemann=roe");
             }
         }
+    }
+    hit.validate();
+    if (hit.enabled()) {
+        if(hit.preparation_time>0 && (time_statistics.enabled || restart_mode==RestartMode::AlgorithmChange))
+            throw CaseConfigurationError("prepared HIT uses its own statistics and requires strict restart (no generic time statistics or algorithm_change)");
+        if(schema_version!=2 || initial.type!="hit" || run.mode!=RunMode::Unsteady || !run.viscous
+            || turbulence.kind!=TurbulenceModelKind::None || chapter5.enabled() || periodic_hill.enabled
+            || time_algorithm.integrator!=TimeIntegratorKind::SspRk3 || preconditioner.kind!=PreconditionerKind::None
+            || source_terms.enable_source_terms || output.dimensional
+            || !std::holds_alternative<ConstantViscosity>(transport.viscosity))
+            throw CaseConfigurationError("HIT requires schema 2, hit initial, viscous unsteady ILES/SSPRK3, constant viscosity, nondimensional output, no other source/benchmark");
+    } else if(initial.type=="hit") throw CaseConfigurationError("hit initial requires hit.type=decay or forced");
+    if (chapter5.enabled()) {
+        if (chapter5.type != "sd7003" && chapter5.type != "compression_ramp")
+            throw CaseConfigurationError("unknown benchmark.type");
+        if (schema_version!=2 || !run.viscous || run.mode!=RunMode::Unsteady
+            || turbulence.kind!=TurbulenceModelKind::None || periodic_hill.enabled
+            || time_algorithm.integrator!=TimeIntegratorKind::SspRk3
+            || preconditioner.kind!=PreconditionerKind::None || initial.type!=chapter5.type)
+            throw CaseConfigurationError("chapter5 requires matching initial, schema 2, unsteady viscous ILES/SSPRK3, no preconditioner");
+        if (!(chapter5.statistics_start>=0 && chapter5.statistics_end>chapter5.statistics_start)
+            || !chapter5.write_every_steps || !chapter5.history_every_steps || chapter5.probes.size()%3)
+            throw CaseConfigurationError("invalid benchmark statistics/probes");
+        const auto ref=make_reference_scales(make_gas_model());
+        const bool ramp=chapter5.type=="compression_ramp";
+        if(std::abs(ref.mach()-(ramp?2.25:.2))>1e-10 || std::abs(ref.reynolds()-(ramp?15800:60000))>1e-6)
+            throw CaseConfigurationError("chapter5 reference Ma/Re differs from benchmark");
+        if(!ramp && std::abs(initial.parameter("alpha_degrees",4)-4)>1e-12)
+            throw CaseConfigurationError("SD7003 chapter5 benchmark requires alpha=4 degrees");
+        if (ramp && (std::abs(make_gas_model().gamma()-1.4)>1e-12
+            || std::abs(transport.prandtl-.72)>1e-12
+            || !std::holds_alternative<SutherlandViscosity>(transport.viscosity)
+            || std::abs(std::get<SutherlandViscosity>(transport.viscosity).reference_viscosity_ratio-1)>1e-12
+            || std::abs(std::get<SutherlandViscosity>(transport.viscosity).constant_temperature_ratio-110.4/170)>1e-12))
+            throw CaseConfigurationError("fixed ramp similarity table requires gamma=1.4, Pr=.72, S/Tinf=110.4/170");
+        if(ramp && std::abs(source_terms.ramp_trip_span-6)>1e-12)
+            throw CaseConfigurationError("compression ramp trip requires span=6");
+    }
+    if (periodic_hill.enabled) {
+        const auto& h = periodic_hill;
+        if (schema_version != 2 || !run.viscous || run.mode != RunMode::Unsteady
+            || turbulence.kind != TurbulenceModelKind::None
+            || time_algorithm.integrator != TimeIntegratorKind::SspRk3
+            || preconditioner.kind != PreconditionerKind::None || robustness.enabled)
+            throw CaseConfigurationError("hill runtime requires schema 2 viscous unsteady ILES, SSPRK3, no preconditioner/retries");
+        if (!(h.bulk_velocity > 0 && h.density > 0 && h.controller_time > 0
+              && h.force_limit > 0 && h.statistics_start >= 0
+              && h.statistics_end > h.statistics_start && h.write_every_steps > 0))
+            throw CaseConfigurationError("invalid hill control/statistics parameters");
+        if (!source_terms.enable_source_terms || source_terms.models.size() != 1
+            || source_terms.models.front() != SourceModelKind::PressureGradient
+            || source_terms.pressure_gradient[1] != 0 || source_terms.pressure_gradient[2] != 0
+            || std::abs(source_terms.pressure_gradient[0]) > h.force_limit)
+            throw CaseConfigurationError("hill runtime requires only an x pressure-gradient source within force_limit");
+        if (!std::holds_alternative<ConstantViscosity>(transport.viscosity))
+            throw CaseConfigurationError("hill wall statistics currently require constant viscosity");
     }
     static_cast<void>(make_profile());
     partition.validate(profile);
@@ -2521,6 +2683,9 @@ std::string CaseConfig::summary() const
         result << ',' << turbulence.summary() << ',' << time_algorithm.summary() << ','
                << preconditioner.summary();
     }
+    if (hit.enabled()) result << ',' << hit.signature();
+    if (chapter5.enabled()) result << ',' << chapter5.signature();
+    if (periodic_hill.enabled) result << ',' << periodic_hill.signature();
     result << ',' << source_terms.summary() << ',' << run.summary() << ',' << output.summary()
            << ',' << time_statistics.summary()
            << ",restart.path=" << (restart_path.empty() ? "<none>" : restart_path)
@@ -2565,6 +2730,22 @@ std::string CaseConfig::legacy_v1_restart_signature() const
     return result.str();
 }
 
+std::string Chapter5Config::signature() const {
+    std::ostringstream s; s<<std::setprecision(17)<<"chapter5_v1;type="<<type
+        <<";start="<<statistics_start<<";end="<<statistics_end;
+    for(Real p:probes) s<<';'<<p;
+    return s.str();
+}
+
+std::string PeriodicHillConfig::signature() const
+{
+    std::ostringstream out;
+    out << std::setprecision(17) << "hill_v1;Ub=" << bulk_velocity << ";rho=" << density
+        << ";tau=" << controller_time << ";limit=" << force_limit
+        << ";start=" << statistics_start << ";end=" << statistics_end;
+    return out.str();
+}
+
 std::string CaseConfig::restart_signature() const
 {
     std::string result
@@ -2592,6 +2773,9 @@ std::string CaseConfig::restart_signature() const
             result += ";" + time_statistics_identity();
         }
     }
+    if (hit.enabled()) result += ";" + hit.signature();
+    if (chapter5.enabled()) result += ";" + chapter5.signature();
+    if (periodic_hill.enabled) result += ";" + periodic_hill.signature();
     return result;
 }
 

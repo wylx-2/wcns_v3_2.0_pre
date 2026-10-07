@@ -1,0 +1,6 @@
+dataset,source,Tu_percent_reported,xs_over_c,xt_over_c,xr_over_c,bubble_height_over_c,data_kind
+thesis result,test_4.docx table 5.5,0,0.21,0.52,0.63,,published rounded table
+Galbraith_Visbal_2010,AIAA 2010-4737 tables 2 and 3,0,0.23,0.55,0.65,0.03,published rounded table
+IAR,test_4.docx table 5.5,0,0.33,0.57,0.63,,published rounded table
+TU_BS,test_4.docx table 5.5,0.1,0.3,0.53,0.62,,published rounded table
+AFRL,test_4.docx table 5.5,approximately 0.1,0.18,0.47,0.58,,published rounded table

@@ -1,0 +1,40 @@
+{
+  "case": "decay",
+  "physical_validation": "not_automatically_assessed",
+  "history_range": [
+    0.0,
+    0.0011607004193288702
+  ],
+  "notes": [
+    "Relative errors are comparisons, not pass/fail tolerances.",
+    "Coarse resolved viscous dissipation and derived Re_lambda omit unresolved gradients.",
+    "K_full_reference is unfiltered experimental energy. It is not the exact target for a truncated coarse field.",
+    "Spectral errors are listed over overlapping k only; inspect low modes separately from the cutoff."
+  ],
+  "stations": [
+    {
+      "station": 42,
+      "time": 0.0,
+      "status": "available",
+      "K": 0.21699306756899409,
+      "K_full_reference": 1.0000000000000004,
+      "K_relative_error": -0.783006932431006
+    },
+    {
+      "station": 98,
+      "time": 0.13841843855582028,
+      "status": "not_reached",
+      "K": null,
+      "K_full_reference": 0.332440548656765,
+      "K_relative_error": null
+    },
+    {
+      "station": 171,
+      "time": 0.3188567602446574,
+      "status": "not_reached",
+      "K": null,
+      "K_full_reference": 0.16253246489732978,
+      "K_relative_error": null
+    }
+  ]
+}

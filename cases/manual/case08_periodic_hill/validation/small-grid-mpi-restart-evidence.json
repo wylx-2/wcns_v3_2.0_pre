@@ -1,0 +1,50 @@
+{
+  "directory": "D:\\program\\WCNS_v3\\wcns\\tmp\\v24-tests\\hill-iqpfomz5",
+  "runs": {
+    "serial-full": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.9923132999974769
+    },
+    "serial-part": {
+      "ranks": 1,
+      "steps": 2,
+      "seconds": 0.7007063000055496
+    },
+    "serial-resume": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.5827472000091802
+    },
+    "mpi4-full": {
+      "ranks": 4,
+      "steps": 3,
+      "seconds": 0.9352668000210542
+    },
+    "mpi2-resume": {
+      "ranks": 2,
+      "steps": 3,
+      "seconds": 0.5678027999820188
+    },
+    "serial-from-mpi": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.19665119997807778
+    }
+  },
+  "max_abs_difference": {
+    "serial-full vs serial-resume hill_mean_xy": 0,
+    "serial-full vs serial-resume hill_profiles": 0,
+    "serial-full vs serial-resume hill_wall": 0,
+    "serial-full vs mpi4-full hill_mean_xy": 1.7265079181329304e-19,
+    "serial-full vs mpi4-full hill_profiles": 8.102234099956906e-22,
+    "serial-full vs mpi4-full hill_wall": 0,
+    "serial-full vs mpi2-resume hill_mean_xy": 8.033578109115005e-21,
+    "serial-full vs mpi2-resume hill_profiles": 1.6876423200642436e-23,
+    "serial-full vs mpi2-resume hill_wall": 0,
+    "serial-full vs serial-from-mpi hill_mean_xy": 1.7265079181329304e-19,
+    "serial-full vs serial-from-mpi hill_profiles": 8.102234099956906e-22,
+    "serial-full vs serial-from-mpi hill_wall": 0
+  },
+  "strict_restart_mismatch_rejected": true
+}

@@ -1,0 +1,30 @@
+Internal ctest changing into directory: D:/program/WCNS_v3/wcns/glm_test/build-serial
+Test project D:/program/WCNS_v3/wcns/glm_test/build-serial
+      Start   3: wcns.periodic_hill
+ 1/12 Test   #3: wcns.periodic_hill .................................   Passed    0.46 sec
+      Start   5: wcns.periodic_hill.runtime.serial
+ 2/12 Test   #5: wcns.periodic_hill.runtime.serial ..................   Passed    2.71 sec
+      Start   6: wcns.v2_3_package_safety
+ 3/12 Test   #6: wcns.v2_3_package_safety ...........................   Passed    0.27 sec
+      Start  79: wcns.release.source.uniform.smoke.serial
+ 4/12 Test  #79: wcns.release.source.uniform.smoke.serial ...........   Passed    0.75 sec
+      Start  80: wcns.release.source.manufactured_2d.smoke.serial
+ 5/12 Test  #80: wcns.release.source.manufactured_2d.smoke.serial ...   Passed    0.43 sec
+      Start  81: wcns.release.output_restart.smoke.serial
+ 6/12 Test  #81: wcns.release.output_restart.smoke.serial ...........   Passed    3.74 sec
+      Start  83: wcns.release.freestream.phenglei_wcns.2d.serial
+ 7/12 Test  #83: wcns.release.freestream.phenglei_wcns.2d.serial ....   Passed    0.45 sec
+      Start  84: wcns.release.freestream.phenglei_wcns.3d.serial
+ 8/12 Test  #84: wcns.release.freestream.phenglei_wcns.3d.serial ....   Passed    0.85 sec
+      Start  85: wcns.release.freestream.scmm6_wcns.2d.serial
+ 9/12 Test  #85: wcns.release.freestream.scmm6_wcns.2d.serial .......   Passed    0.40 sec
+      Start  86: wcns.release.freestream.scmm6_wcns.3d.serial
+10/12 Test  #86: wcns.release.freestream.scmm6_wcns.3d.serial .......   Passed    0.78 sec
+      Start  87: wcns.release.freestream.native_multizone.serial
+11/12 Test  #87: wcns.release.freestream.native_multizone.serial ....   Passed    0.46 sec
+      Start 111: wcns.unit
+12/12 Test #111: wcns.unit ..........................................   Passed    0.82 sec
+
+100% tests passed, 0 tests failed out of 12
+
+Total Test time (real) =  12.18 sec

@@ -1,0 +1,26 @@
+[
+  {
+    "url": "https://turbulence.idies.jhu.edu/docs/isotropic/ener_Re_time.txt",
+    "file": "ener_Re_time.txt",
+    "sha256": "edde46fdb5b44ce1c7cd963a3f1703fd6de23d3008f62e8363b909c8880487fa",
+    "bytes": 14799
+  },
+  {
+    "url": "https://turbulence.idies.jhu.edu/docs/isotropic/spectrum.txt",
+    "file": "spectrum.txt",
+    "sha256": "b45c643869357a805eb4cb839a65fb83388b185c005b72580c7e28b133e8b3e8",
+    "bytes": 10453
+  },
+  {
+    "url": "https://turbulence.idies.jhu.edu/docs/isotropic/README-isotropic1024.pdf",
+    "file": "README-isotropic1024.pdf",
+    "sha256": "09373d6b15121a11b554e24cf22f81bbbd745fb4956dcc76814981e49729c928",
+    "bytes": 3707590
+  },
+  {
+    "url": "https://turbulence.idies.jhu.edu/docs/isotropic/README-isotropic.pdf",
+    "file": "README-isotropic.pdf",
+    "sha256": "5209e93044fa31680cacd5294d3bcdb36c009350ea3ddc2130b2dd04a692e0b8",
+    "bytes": 1380246
+  }
+]

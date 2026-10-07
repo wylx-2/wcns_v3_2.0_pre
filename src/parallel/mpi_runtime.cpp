@@ -82,6 +82,18 @@ void MpiRuntime::barrier() const
 #endif
 }
 
+void MpiRuntime::sum_reals(std::vector<Real>& values) const
+{
+#if WCNS_HAS_MPI
+    if (values.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        throw MpiError("sum vector exceeds MPI count range");
+    check_mpi(MPI_Allreduce(MPI_IN_PLACE, values.data(), static_cast<int>(values.size()),
+                            MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD), "MPI_Allreduce vector sum");
+#else
+    static_cast<void>(values);
+#endif
+}
+
 Real MpiRuntime::sum(Real local_value) const
 {
 #if WCNS_HAS_MPI

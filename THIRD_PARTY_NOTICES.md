@@ -34,3 +34,7 @@ CGNS 原文还注明该许可证借自 zlib/libpng License，并取代 CGNS 软�
 WCNS 的算法和数据结构设计参考 PHengLEI 的公开实现思路，文档中标明了具体对照位置；当前
 仓库清单未包含 PHengLEI 自有源文件或其预编译库。上述 CGNS 原始归档是唯一从 PHengLEI
 随附第三方目录复制的文件，仍按 CGNS 自身许可证分发。
+
+## FFTW 3.3.11
+
+The v2.6 spectral backend optionally links FFTW. The original source archive, SHA256, COPYRIGHT and COPYING are in `third_party/fftw/`. Upstream is licensed under GPL v2 or later. WCNS implements its own MPI transpose layer; native FFTW MPI APIs are not used. `WCNS_ENABLE_FFTW=OFF` builds the internal radix-2 alternative.

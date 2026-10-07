@@ -1,0 +1,29 @@
+{
+  "status": "approximate digitization of visible black reference squares; not original numerical data",
+  "document": "test_4.docx, chapter 5",
+  "figure": "图5.25_3.jpg",
+  "reference": "Galbraith & Visbal 2010",
+  "source_file": "source_velocity_x0p95.jpg",
+  "source_sha256": "372d25af379fac962039fba7152b21a7ff73b70a5e35edb592c20e63057fd776",
+  "native_pixels": [
+    2475,
+    2475
+  ],
+  "x_calibration": [
+    529.03125,
+    1751.0625,
+    0,
+    1
+  ],
+  "y_calibration": [
+    2176.453125,
+    221.203125,
+    0,
+    0.1
+  ],
+  "x_log10": false,
+  "pixel_error_estimate": 4.0,
+  "uncertainty_note": "coordinate/marker reading estimate only, not a rigorous bound on source-data uncertainty",
+  "marker_count": 16,
+  "selection": "hollow-square black border score > 0.58 (profile figures 0.43), nonmaximum suppression; visual-QA axis/tick exclusions; incomplete visible-marker subset; no curve interpolation"
+}

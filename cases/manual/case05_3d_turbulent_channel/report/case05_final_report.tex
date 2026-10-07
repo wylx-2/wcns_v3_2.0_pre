@@ -1,0 +1,506 @@
+\documentclass[UTF8,12pt,a4paper,fontset=fandol]{ctexart}
+
+\usepackage[a4paper,margin=24mm,headheight=15pt]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs,longtable,tabularx,array,multirow}
+\usepackage{graphicx}
+\usepackage{caption,subcaption}
+\usepackage{float,placeins}
+\usepackage{pdflscape,rotating}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{microtype}
+
+\graphicspath{
+  {../results/final-campaign-report/}
+  {../results/branch-mdcd-dissipation-comparison/extended-final-analysis/}
+}
+
+\definecolor{navy}{HTML}{17365D}
+\definecolor{orange}{HTML}{D55E00}
+\definecolor{blue}{HTML}{0072B2}
+\definecolor{softgray}{HTML}{F2F4F7}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=navy,
+  urlcolor=blue,
+  citecolor=navy,
+  pdfauthor={WCNS_v3 case05 project},
+  pdftitle={Case05 low-Mach Re_tau=180 turbulent channel final computation report}
+}
+
+\captionsetup{font=small,labelfont=bf}
+\setlist{nosep,leftmargin=2em}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.25em}
+\renewcommand{\arraystretch}{1.15}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{Case05 低马赫槽道湍流最终计算报告}
+\fancyhead[R]{WCNS\_v3}
+\fancyfoot[C]{\thepage}
+
+\newcommand{\Retau}{Re_{\tau}}
+\newcommand{\Ub}{U_b}
+\newcommand{\utau}{u_{\tau}}
+\newcommand{\dns}{\textsc{DNS}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\CampaignAdvancedSteps}{2,272,188}
+\newcommand{\CampaignWallHours}{276.56}
+\newcommand{\CampaignCoreHours}{17699.6}
+\newcommand{\CampaignStorageGiB}{1.39}
+\newcommand{\CampaignFieldCount}{114}
+\newcommand{\CampaignCheckpointCount}{118}
+
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{20mm}
+  {\Huge\bfseries Case05 低马赫 $\Retau=180$ 槽道湍流\\[4mm]最终计算报告\par}
+  \vspace{8mm}
+  {\Large 完整计算活动、MDCD耗散参数分叉与ERCOFTAC DNS对比\par}
+  \vspace{20mm}
+  \rule{0.78\textwidth}{0.8pt}\par
+  \vspace{10mm}
+  \begin{tabular}{rl}
+    项目： & WCNS\_v3 / case05\_3d\_turbulent\_channel \\
+    目标： & 初始体积平均马赫数 $Ma_{b,0}=0.1$，目标 $\Retau=180$ \\
+    网格： & $36\times48\times36$，$L_x\times L_y\times L_z=2\pi\times2\times\pi$ \\
+    计算平台： & Linux，正式计算采用64个MPI进程 \\
+    报告日期： & 2026年9月22日 \\
+    状态： & 计算活动已终止；结果完整归档，统计稳态未严格达到
+  \end{tabular}
+  \vfill
+  {\large 本报告以实际运行manifest、history、statistics和CGNS场文件为准。\par}
+\end{titlepage}
+
+\begin{abstract}
+本报告汇总Case05从人工低马赫湍流初场、4核可行性卡口、两段64核基线计算，
+到在$t=223.003107849$处分叉得到的两套MDCD耗散参数计算的全部结果。基线实际采用
+SCMM6-WCNS、MDCD-linear原始变量重构和Roe通量，推进至$t=223.0031$；随后保持
+其余参数不变，分别令MDCD耗散系数为0.001和0.01，最终推进至$t=439.7373$和
+$t=325.5531$。全部正式计算共执行\CampaignAdvancedSteps 个推进步，累计
+\CampaignWallHours{} h墙钟时间、约\CampaignCoreHours{}核时，保存
+\CampaignFieldCount 个三维场和\CampaignCheckpointCount 个编号检查点，占用约
+\CampaignStorageGiB{} GiB（不含分析副本）。
+
+所有续算连接点的时间、步数和完整状态统计均精确连续；总质量相对漂移量级低于
+$6\times10^{-11}$，未发生重构/Riemann fallback、troubled cell、局部重算或步重试，
+因此计算在数值上健康。两条分支最终仍存在可测的流量趋势、壁面剪切失配或低频
+$\Retau$变化，故不能宣称达到严格统计稳态。
+
+与ERCOFTAC Case 032的Kim--Moin--Moser $\Retau=180$ DNS比较表明：在双方严格共同的
+$t=300,305,\ldots,325$六场窗口内，耗散系数0.001的$U^+$、三个速度RMS和
+$-\langle u'v'\rangle^+$相对$L_2$误差分别为4.14\%、4.57\%、5.95\%、2.28\%和
+9.41\%；耗散系数0.01分别为13.74\%、24.07\%、16.12\%、6.76\%和11.69\%。
+0.01仅在窗口平均$\Retau$上更接近180。综合所有数据，0.001是当前更接近DNS的
+参数，但由于计算在未严格统计收敛时终止，该判断应理解为本次有限时间计算的结果，
+而不是无不确定度的最终算法标定。
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+\section{任务、数据范围与结论边界}
+
+本次任务是在不再继续服务器计算的前提下，对Case05全部已产生数据进行最终归档和
+统一分析。报告覆盖：
+
+\begin{itemize}
+  \item 4进程、5步的低马赫可行性卡口；
+  \item 基线长算segment01--02，$0\le t\le223.0031$；
+  \item $d_{MDCD}=0.001$分支segment01--04，$223.0031\le t\le439.7373$；
+  \item $d_{MDCD}=0.01$分支segment01--03，$223.0031\le t\le325.5531$；
+  \item history中的时间步、更新范数、fallback和稳健性计数；
+  \item statistics中的质量、三方向动量、总能量、两个$yz$截面的速度与质量流量、
+        上下壁剪切、平均剪切、摩擦速度和$\Retau$；
+  \item CGNS三维场提取的平均速度、三个速度RMS、Reynolds剪切应力、密度、温度和
+        平均Mach数；
+  \item ERCOFTAC Case 032原始\code{simul1.dat}的统一壁面尺度对比。
+\end{itemize}
+
+“计算活动终止”不等价于“统计已收敛”。本报告分别给出数值稳定性、守恒性和统计
+平稳性判断。前两者通过，第三项没有严格通过。因此，最终窗口可用于记录本次数值实验
+在终止时所处状态，也可用于参数的阶段性比较，但不能据此忽略低频不确定度。
+
+\section{物理问题、无量纲化与网格}
+
+\subsection{流动区域和边界条件}
+
+计算对象为完全发展平板槽道湍流，槽道半高$h=1$，区域为
+\begin{equation}
+  0\le x<2\pi,\qquad -1\le y\le1,\qquad 0\le z<\pi .
+\end{equation}
+流向$x$和展向$z$采用周期拓扑，上、下壁为无滑移等温壁，壁温$T_w=1$。流动由恒定
+流向体力驱动：
+\begin{equation}
+  a_x=0.0041720265499730312 .
+\end{equation}
+该算例不是恒定质量流量计算。以$\rho=h=1$表示时，整体流向动量近似满足
+\begin{equation}
+  \frac{\mathrm d\Ub}{\mathrm dt}=a_x-\overline{\tau}_w,
+  \label{eq:momentum-balance}
+\end{equation}
+所以当数值耗散改变湍流输运后，$\Ub$和实测$\Retau$都允许变化；配置中的
+$\Retau=180$不是运行时强制控制量。
+
+\subsection{参考量和低马赫设计}
+
+参考速度取人工初场体积平均速度$U_{b,0}=1$，$L_{ref}=h=1$、$\rho_{ref}=1$、
+$R=1$、$\gamma=1.4$、$T_{ref}=71.4285714286$。因此参考声速为10，设计
+$Ma_{b,0}=0.1$。参考黏度为
+\begin{equation}
+  \mu_{ref}=3.588401476178181\times10^{-4},
+\end{equation}
+对应半高体积Reynolds数$Re_b^{(h)}=2786.75618$。人工初场设置
+$\Retau=180$、$U_b^+=15.48198$和5\%扰动。可行性短算最大局部Mach数为0.1236；
+用于DNS比较的窗口中最大平均Mach数约为0.125--0.133，仍处于低马赫范围。
+
+\subsection{网格与名义壁面分辨率}
+
+网格为$36\times48\times36=62\,208$个单元，原生分区为$2\times1\times2$，
+壁法向聚集强度为1.75。按设计$\Retau=180$估算：
+\begin{equation}
+  \Delta x^+=31.416,\qquad \Delta z^+=15.708,\qquad
+  y^+_{1,\mathrm{center}}=0.821 .
+\end{equation}
+该网格能够进行本次算法分叉对比，但壁法向只有48个单元，不能把与经典DNS的差异
+完全归因于通量耗散参数；网格、有限时间平均和可压缩低马赫处理共同构成误差来源。
+
+\section{实际执行算法与计算活动}
+
+\subsection{以运行manifest为准的算法}
+
+仓库中的参考\code{channel\_retau180\_longrun.wcns}仍显示
+\code{phenglei\_wcns + mdcd\_hybrid + HLLC}和CFL=0.15；但Linux正式结果的manifest
+明确记录实际执行配置为：
+
+\begin{itemize}
+  \item 算法轮廓：\code{scmm6\_wcns}；
+  \item 空间重构：\code{mdcd\_linear}，原始变量；
+  \item 色散参数：0.0463783；
+  \item Riemann求解器：Roe，entropy fix=0.1；
+  \item 时间推进：SSPRK3，实际CFL=0.3；
+  \item 黏性项开启，正式计算使用64个MPI进程。
+\end{itemize}
+
+4进程可行性卡口F0确实采用参考文件中的
+\code{phenglei\_wcns + mdcd\_hybrid + HLLC}和CFL=0.15。正式基线开始前算法已切换，
+因此F0仅证明网格、边界、输出和低马赫推进链条可工作，不作为正式算法统计的一部分。
+
+分叉后两工况唯一主要算法差异为MDCD耗散参数：低耗散分支L取0.001，参考耗散分支H
+取0.01；二者色散参数、Roe通量、CFL、网格、边界和体力完全相同。
+
+\subsection{时间轴}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\textwidth]{campaign_timeline.png}
+  \caption{完整计算活动。B为分叉前基线，L为$d_{MDCD}=0.001$，H为$d_{MDCD}=0.01$。}
+  \label{fig:timeline}
+\end{figure}
+
+基线B1--B2推进到$t=223.003107849$。该完整场被复制为独立分叉输入，两个新算法均使用
+\code{restart.compatibility=state\_only}读取相同守恒状态。后续各段也保留了该设置。
+除F0由\code{maximum\_steps}结束外，所有正式段均因达到配置墙钟安全限而以
+\code{wall\_time\_checkpoint}结束，不是数值崩溃或达到$t_{end}=500$。
+
+\section{Restart连续性、数值健康与计算代价}
+
+\subsection{连接点}
+
+基线B1$\to$B2、基线到两条分叉B2$\to$L1/H1，以及所有后续segment连接处，
+首末statistics在步数、时间、质量、三方向动量、能量、壁面剪切和$\Retau$上均为
+机器输出意义下的零差。由此可确认，所有segment可以作为连续时间序列拼接；分叉时
+变化的是数值算法签名，不是初始场。
+
+\subsection{守恒与稳健性}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\textwidth]{campaign_conservation.png}
+  \caption{完整轨迹的质量、能量、横向动量和两个$yz$截面一致性。总能量随体力做功变化，
+  因而不是应保持常数的量。}
+  \label{fig:conservation}
+\end{figure}
+
+三条主轨迹从各自起点到终点的总质量相对变化绝对值均小于$6\times10^{-11}$。
+每个history文件中，重构fallback、Riemann fallback、troubled cell、局部重算和
+step retry的最大值全部为0。正式计算的中位时间步均约$2.390\times10^{-4}$；个别更小
+时间步对应定时场输出或墙钟终止前对目标时刻的截断，而不是CFL失稳。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\textwidth]{campaign_numerical_health.png}
+  \caption{时间步、非定常更新$L_2$量以及逐段计算吞吐。更新量不是稳态残差，不能用其
+  非零判断非定常计算失败。}
+  \label{fig:numerical-health}
+\end{figure}
+
+全部计算段累计墙钟时间\CampaignWallHours{} h、\CampaignCoreHours{}核时。不同段的
+推进速度约1.1--4.7 step/s，差异来自服务器运行环境和不同批次资源状态，而不是时间步
+显著改变。场文件和编号检查点分别为\CampaignFieldCount 和
+\CampaignCheckpointCount 个；\code{checkpoint.latest.cgns}未计入编号检查点数。
+
+\section{从基线到最终分叉的积分量演化}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\textwidth]{campaign_integral_histories.png}
+  \caption{基线与两个分支的完整体积速度、$\Retau$、壁面剪切-体力失配及上下壁不对称度。
+  虚线为$t=223.0031$分叉点。}
+  \label{fig:integral-history}
+\end{figure}
+
+\subsection{基线阶段}
+
+基线由$t=0$推进到223.0031。体积速度由约1逐渐升高到1.1612，说明人工初场与固定体力
+下的实际阻力并不平衡。最后20时间单位的平均$\Ub=1.160994$，线性斜率仍为
+$+5.13\times10^{-5}$；平均$\Retau=179.12$，斜率为$+0.157$，上下壁剪切相对不对称度
+平均19.93\%、最大27.20\%。因此即使$\Retau$数值接近180，基线也没有达到完整统计稳态。
+
+基线最后六个场$t=195,200,\ldots,220$给出$\Retau=177.64$，相对DNS仅低1.31\%；
+然而$U^+$、$u_{rms}^+$、$v_{rms}^+$、$w_{rms}^+$和
+$-\langle u'v'\rangle^+$的相对$L_2$误差分别为18.10\%、29.17\%、17.49\%、11.44\%
+和10.08\%。这一结果直接说明“$\Retau$接近180”不是湍流统计正确的充分条件。
+
+\subsection{$d_{MDCD}=0.001$分支}
+
+低耗散分支从相同$t=223.0031$状态推进到439.7373。$\Ub$从1.1612降至1.0737，
+$\Retau$先升至约200，随后经历多次下降和回升。最后20时间单位内：
+\begin{equation}
+  \overline{\Ub}=1.07710,\quad \frac{\mathrm d\Ub}{\mathrm dt}=-2.06\times10^{-4},
+  \quad \overline{\Retau}=184.66,\quad
+  \frac{\mathrm d\Retau}{\mathrm dt}=+0.803 .
+\end{equation}
+平均壁面剪切比体力高5.12\%，由\cref{eq:momentum-balance}预测的减速率为
+$-2.14\times10^{-4}$，与实测相差约3.6\%。这说明体积流量漂移是整体动量不平衡的
+物理一致响应。积极之处是最终上下壁剪切不对称度平均仅2.11\%、最大4.48\%；但
+$\Retau$正处于约176到192的低频回升阶段，仍不能判稳。
+
+\subsection{$d_{MDCD}=0.01$分支}
+
+参考耗散分支推进到325.5531。最后20时间单位内：
+\begin{equation}
+  \overline{\Ub}=1.15627,\quad \frac{\mathrm d\Ub}{\mathrm dt}=-1.51\times10^{-4},
+  \quad \overline{\Retau}=183.40,\quad
+  \frac{\mathrm d\Retau}{\mathrm dt}=+0.087 .
+\end{equation}
+平均壁面剪切比体力高3.64\%，预测减速率$-1.52\times10^{-4}$与实测相差不足1\%。
+该分支最突出的问题是上下壁不对称：最后20时间单位平均17.37\%、最大25.45\%；
+最终六场的$v_{rms}$、$w_{rms}$镜像误差为15.62\%和11.71\%，Reynolds剪切反对称
+误差为34.10\%。因此其流量看似变化较慢，但二阶统计远未充分平均。
+
+\subsection{统计平稳性结论}
+
+两个分支均未满足“多个相邻窗口的$\Ub$、壁面剪切、$\Retau$和二阶剖面同时无系统
+漂移”的严格判据。0.001的主要未收敛证据是低频$\Retau$循环和末端动量失配；0.01的
+主要证据是持续减速和强烈上下壁不对称。计算终止后，应该保留这一不确定性，而不能从
+单个瞬时终点或单个接近180的窗口反推稳态。
+
+\section{DNS参考与比较方法}
+
+DNS参考为ERCOFTAC Case 032页面提供的\code{simul1.dat}，其头信息给出
+$\Retau=180$、$Re_{\delta}=3250$和$Re_{\theta}=282$，数据来源为
+Kim、Moin和Moser的经典槽道DNS\cite{kim1987}。从文件积分得到
+\begin{equation}
+  U_{b,DNS}^+=15.51718,\qquad C_{f,DNS}=\frac{2}{(U_b^+)^2}=0.00830624 .
+\end{equation}
+
+每个比较窗口选取等间隔的六个CGNS三维场。先对每个场作$x-z$平面平均，随后以二阶矩
+而不是直接平均RMS的方式合并六场，再把上下半槽按距壁坐标折叠。摩擦速度和$\Retau$
+取六个采样时刻statistics插值值的算术平均。DNS插值到计算网格的共同$y^+$范围，误差为
+\begin{equation}
+  \epsilon_{L_2}(q)=\frac{\|q_{num}-q_{DNS}\|_2}{\|q_{DNS}\|_2} .
+\end{equation}
+六场等权窗口用于统一比较，但不是独立样本置信区间。报告没有用这些稀疏快照伪造
+统计误差条。
+
+\section{严格共同窗口的算法比较}
+
+两个分支都拥有$t=300,305,310,315,320,325$六场，这是唯一不受“不同演化时刻”影响的
+最终公平横向比较。
+
+\begin{table}[H]
+  \centering
+  \small
+  \caption{共同$t=300$--325窗口相对DNS的误差。加粗者为两分支中更接近DNS的一方。}
+  \label{tab:common-dns}
+  \begin{tabular}{@{}lrrl@{}}
+    \toprule
+    指标 & $d=0.001$ & $d=0.01$ & 更接近DNS \\
+    \midrule
+    $\Retau$相对误差 & +5.75\% & \textbf{+1.57\%} & 0.01 \\
+    $U_b^+$相对误差 & \textbf{+5.12\%} & +13.81\% & 0.001 \\
+    $C_f$相对误差 & \textbf{-9.50\%} & -22.79\% & 0.001 \\
+    $U^+$相对$L_2$ & \textbf{4.14\%} & 13.74\% & 0.001 \\
+    $u_{rms}^+$相对$L_2$ & \textbf{4.57\%} & 24.07\% & 0.001 \\
+    $v_{rms}^+$相对$L_2$ & \textbf{5.95\%} & 16.12\% & 0.001 \\
+    $w_{rms}^+$相对$L_2$ & \textbf{2.28\%} & 6.76\% & 0.001 \\
+    $-\langle u'v'\rangle^+$相对$L_2$ & \textbf{9.41\%} & 11.69\% & 0.001 \\
+    外尺度$U/U_b$相对$L_2$ & \textbf{0.66\%} & 1.69\% & 0.001 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.96\textwidth]{dns_common_300_325_mean_velocity.png}
+  \caption{共同窗口平均速度的内尺度与外尺度DNS比较。}
+  \label{fig:common-mean}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\textwidth]{dns_common_300_325_turbulence_statistics.png}
+  \caption{共同窗口三个速度RMS和Reynolds剪切应力的DNS比较。}
+  \label{fig:common-rms}
+\end{figure}
+
+0.01的窗口平均$\Retau$更接近180，但它的$U_b^+$偏高13.81\%、$C_f$偏低22.79\%，
+流向脉动峰值比DNS高29.03\%。0.001的$u_{rms}^+$峰值仅高6.71\%，平均速度和横向脉动
+形状也明显更好。0.01的$-\langle u'v'\rangle^+$峰值幅度误差1.80\%，略小于0.001的
+2.10\%；但完整剪切应力型面仍由0.001占优。综合型面而非单一标量，0.001是更接近DNS
+的参数。
+
+\section{从基线到最终窗口的DNS误差演化}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\textwidth]{dns_error_matrix.png}
+  \caption{所有已分析六场窗口的DNS误差矩阵。格内为绝对相对误差百分数，颜色采用对数尺度。}
+  \label{fig:dns-matrix}
+\end{figure}
+
+误差演化并非单调。0.001从$t=225$--245到365--390，$U^+$误差由7.36\%降至2.05\%，
+$C_f$误差由13.99\%降至5.21\%；但其Reynolds剪切误差先降至4.11\%，后升至13.59\%。
+最终$t=410$--435窗口又出现$\Retau$接近180而$U^+$误差回升到7.14\%的情形，反映低频
+相位改变，不是单调收敛。
+
+0.01从$t=250$--275到300--325有所改善：$U^+$误差由16.40\%降至13.74\%，
+$u_{rms}^+$由35.82\%降至24.07\%；但壁面对称性恶化，且全部主要型面误差仍大于
+0.001共同窗口结果。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.99\textwidth]{dns_final_profile_overview.png}
+  \caption{基线最后窗口及两个分支各自最后可用窗口与DNS的统一剖面对比。注意三个窗口
+  不同时，因此本图用于描述终止状态，而不是替代共同窗口的公平算法比较。}
+  \label{fig:latest-profiles}
+\end{figure}
+
+各自最后可用窗口中，0.001的$t=410$--435给出$\Retau=180.67$、$U^+$误差7.14\%、
+三个RMS误差9.09\%、5.83\%、5.63\%以及Reynolds剪切误差5.58\%；0.01的
+$t=300$--325对应误差为13.74\%、24.07\%、16.12\%、6.76\%和11.69\%。这些数据
+进一步支持0.001，但由于时间窗不同且两者均未判稳，只能作为终止状态的补充证据。
+
+\section{输出量、可追溯性与数据完整性}
+
+每个正式场文件包含
+\code{rho,u,v,w,p,T,rho\_u,rho\_v,rho\_w,rho\_E,mach,viscosity,jacobian}。
+history文件保存步数、时间、时间步、CFL、墙钟时间、各守恒变量更新$L_2/L_\infty$量、
+fallback和稳健性计数。statistics文件保存：
+\begin{equation*}
+  M,\ P_x,\ P_y,\ P_z,\ E,\ U_{yz,0},\ \dot m_{x,0},\
+  U_{yz,1},\ \dot m_{x,1},\ \tau_{w,l},\ \tau_{w,u},\
+  \overline\tau_w,\ \utau,\ \Retau .
+\end{equation*}
+
+附录中的逐段终点表列出上述所有积分、截面和壁面量；时间历程没有在正文中逐行复制，
+而是保留于原始文本文件并由本报告脚本直接读取。JSON汇总同时保存各段起终点、运行健康、
+最后20时间单位窗口、九个DNS比较窗口及用于绘图的完整剖面数组，从而使报告中的每个数字
+都可以回溯到原始输出。
+
+\section{局限性与最终结论}
+
+\subsection{局限性}
+
+\begin{enumerate}
+  \item 两个分支在不同物理时间终止，只有$t=300$--325可以进行严格同步的最终比较。
+  \item 最终DNS窗口各只有六个等间隔场，没有覆盖多个独立低频周期，不能提供可靠置信区间。
+  \item 固定体力下$\Retau$不是受控量；窗口平均接近180可能只是低频相位。
+  \item 网格为$36\times48\times36$，算法误差、网格误差和有限时间平均误差没有通过网格
+        加密或独立重复计算完全分离。
+  \item 基线参考配置文件与实际Linux正式manifest存在算法/CFL差异。所有最终结论均以
+        manifest为准；今后复现实验应直接归档实际输入配置，避免二者混淆。
+\end{enumerate}
+
+\subsection{最终结论}
+
+\begin{enumerate}
+  \item \textbf{数值计算是健康且可连续拼接的。} 所有正式段均正常写出墙钟检查点；restart
+        连接状态零跳变，总质量漂移约$10^{-11}$，稳健性异常计数全部为零。
+  \item \textbf{本次活动在严格统计稳态之前终止。} 0.001仍有显著低频$\Retau$变化和流量
+        下降；0.01仍有流量下降和17\%量级上下壁剪切不对称。
+  \item \textbf{0.001是本次计算中整体更接近DNS的耗散参数。} 在严格共同窗口中，除
+        $\Retau$外，它的$U_b^+$、$C_f$、平均速度、三个速度RMS、Reynolds剪切和外尺度
+        速度误差全部小于0.01。
+  \item \textbf{0.01的$\Retau$接近180不能代表统计更正确。} 基线和0.01分支都展示了
+        $\Retau$较准而速度律、摩阻或湍流强度偏差很大的情况。
+  \item \textbf{结果应表述为“有限时间、当前网格下的阶段性算法结论”。} 若今后重新启动
+        研究，应从两分支最终检查点继续，覆盖多个完整低频周期，并在相同统计窗口内报告
+        block不确定度；但这不改变本报告对当前已终止数据的归档结论。
+\end{enumerate}
+
+\clearpage
+\appendix
+
+\section{全部计算段数值表}
+
+下列表格由分析脚本直接根据manifest、history和statistics生成。F0为独立可行性短算；
+B1--B2为正式基线；L1--L4为$d=0.001$分支；H1--H3为$d=0.01$分支。
+
+\input{../results/final-campaign-report/generated_report_data.tex}
+
+\section{复现文件与运行方法}
+
+报告数据生成脚本：
+\begin{quote}\small
+\path{cases/manual/case05_3d_turbulent_channel/generate_case05_final_report_data.py}
+\end{quote}
+运行：
+\begin{verbatim}
+python cases/manual/case05_3d_turbulent_channel/
+  generate_case05_final_report_data.py
+\end{verbatim}
+该脚本生成：
+\begin{itemize}
+  \item \path{results/final-campaign-report/case05_final_campaign_metrics.json}；
+  \item 本报告使用的六幅总览图；
+  \item \path{results/final-campaign-report/generated_report_data.tex}；
+  \item 基线$t=195$--220六场的$x-z$剖面文本。
+\end{itemize}
+
+分支剖面提取工具和已有分析脚本分别为：
+\begin{quote}\small
+\path{extract_channel_profile.cpp}\\
+\path{analyze_mdcd_dissipation_branches.py}\\
+\path{compare_branches_to_dns.py}\\
+\path{analyze_segment03_dns.py}\\
+\path{analyze_extended_branches_dns.py}
+\end{quote}
+
+DNS原始文件及来源说明：
+\begin{quote}\small
+\path{reference/ercoftac_case032_mkm/simul1.dat}\\
+\path{reference/ercoftac_case032_mkm/SOURCE.md}
+\end{quote}
+
+\begin{thebibliography}{9}
+\bibitem{ercoftac032}
+ERCOFTAC Classic Database, Case 032: Fully developed channel flow,
+\url{http://cfd.mace.manchester.ac.uk/ercoftac/doku.php?id=cases:case032}.
+
+\bibitem{kim1987}
+J. Kim, P. Moin, and R. Moser,
+``Turbulence statistics in fully developed channel flow at low Reynolds number,''
+\emph{Journal of Fluid Mechanics}, vol. 177, pp. 133--166, 1987.
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,8 @@
+Internal ctest changing into directory: D:/program/WCNS_v3/wcns/glm_test/build-serial
+Test project D:/program/WCNS_v3/wcns/glm_test/build-serial
+    Start 4: wcns.v2_4_release_contract
+1/1 Test #4: wcns.v2_4_release_contract .......   Passed    0.13 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.14 sec

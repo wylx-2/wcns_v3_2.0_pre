@@ -2,12 +2,21 @@
 
 一个面向结构多块网格、CGNS 和 MPI 并行设计的小型高阶 CFD 程序。
 
-当前内部版本为 **WCNS v2.3**。本版本保持 v2.2 的数值功能和配置语义，重点清理求解器
-热路径中的重复状态转换、重复参数校验和通用 Roe 特征矩阵乘法；标准 Roe、Li--Gu 与
-Rieper all-speed Roe 改为等价的 Roe--Pike 闭式耗散，预处理 Roe 仍保留其专用矩阵。
-RANS/LES、Weiss--Smith+LU-SGS、三维载荷和可重启统计继续保留。本项目采用
-本机独立开发，不启用外部 CI；质量卡口由本机构建、CTest、算法规格和发布契约检查承担。
-对外发布和 WCNS 自有代码许可证决定均暂缓。
+**最新源码与交付入口（2026-10-07）**：本仓库是版本来源；最小构建包由
+[`tools/package_minimal.py`](tools/package_minimal.py) 从指定 Git 提交生成，使用
+`WCNS_BUILD_TOOLS=OFF` 只编译求解器，不附带网格和计算结果。
+见 [最小包构建说明](docs/minimal-build-readme.md)。已有案例的新增大网格以无损 XZ 归档随仓库保存，
+新克隆后先运行 `python tools/restore_case_grids.py` 恢复，再使用案例配置。
+[CBC 九组合脚本与操作步骤](campaigns/cbc_9cases/README.md) 继续保留，已有上传包可继续使用。
+本地计算结果和临时验证数据保留在原目录，新生成的结果与构建产物由 `.gitignore` 排除。
+
+当前内部版本为 **WCNS v2.6**。新增均匀各向同性自由衰减和强迫湍流，包含 MPI 分布 FFT/FFTW 初始化、低波数强迫、53项统计、能谱、相关函数及跨分区续算。详见 [HIT 详细报告](docs/hit-v2.6/HIT算例与v2.6实现报告.md)、[CBC 算例](cases/manual/case11_hit_decay/README.md) 和 [JHTDB 算例](cases/manual/case12_hit_forced/README.md)。配套16³至128³八块网格与原始参考数据已准备，本机仅进行配置、解析与三步测试，未做长计算。
+
+2026-10-07 初始化更新：新增 CBC **预演化后逐模态匹配谱**及所给 C++ / Samtaney IC4 的**解析谱随机相位初始化**，通过 `hit.initialization` 切换。准备阶段独立输出和重启，正式时钟与统计清零；旧配置行为保留。见 [详细说明与参数](docs/hit-v2.6/HIT初始化与预演化说明.md)、[CBC 准备配置](cases/manual/case11_hit_decay/prepared_production.wcns)、[解析谱配置与网格](cases/manual/case13_hit_analytic/README.md)、[本次验证](docs/hit-v2.6/初始化更新验证.md)。本次仅做初始化检查和短步测试，未进行实际长计算。
+
+v2.5 历史说明：新增 SD7003 和压缩拐角多块结构网格 ILES，见 [第五章调研报告](docs/chapter5-v2.5-research.md)、[v2.5 使用说明](docs/chapter5-v2.5-implementation.md) 和 [验证记录](docs/v2.5-validation.md)。本机只做短步测试；物理统计尚未收敛验证。
+
+v2.4 历史说明：在 v2.3 基础上新增 Re_h=1400 周期山 ILES 初场、动态流量驱动、时间／展向统计和重分区续算；配套 101376 单元网格及 smoke/production 配置已准备。设置依据和补充假设见 [周期山报告](docs/periodic-hill-v2.4.md)，测试见 [v2.4 验收](docs/v2.4-validation.md)，变更见 [发行说明](docs/release-notes-2.4.md)。本机仅进行短步验证，未启动统计长算。v2.4 源码快照使用 `tools/package_v2_4.py` 打包，按 SHA-256 清单核对实际内容。以下 v2.3 段落保留为历史背景。
 
 `v2.3` 仍属于物理验证受限的内部版本：没有在本机运行 Case06 大网格或目标三维翼型；本次
 优化只完成公式等价、单元、小网格 SSPRK3、串行/MPI 回归和短时性能卡口，不宣称长期低马赫湍流

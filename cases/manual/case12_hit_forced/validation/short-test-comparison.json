@@ -1,0 +1,45 @@
+{
+  "case": "forced",
+  "physical_validation": "not_automatically_assessed",
+  "history_range": [
+    0.0,
+    0.0069196088812698755
+  ],
+  "notes": [
+    "Relative errors are comparisons, not pass/fail tolerances.",
+    "Coarse resolved viscous dissipation and derived Re_lambda omit unresolved gradients.",
+    "Duration screen alone does not prove stationarity or independent blocks; inspect block means and autocorrelation.",
+    "Independent random phases do not reproduce the DNS time trajectory. Compare distributions and means.",
+    "Public radial spectrum and scalar time table may use different averaging windows."
+  ],
+  "statistics_duration": 0.0069196088812698755,
+  "sufficient_duration_screen": false,
+  "DNS_table_rows": 507,
+  "DNS_unique_rows": 504,
+  "DNS_duplicate_times": [
+    2.04,
+    3.06,
+    5.06
+  ],
+  "DNS_table_time_range": [
+    0.0,
+    10.04
+  ],
+  "DNS_table_K_time_mean": 0.7053098827689235,
+  "coarse_K_time_mean": 0.5425791736771998,
+  "K_relative_error": -0.23072228685194565,
+  "accumulated_window": [
+    0.0,
+    0.0069196088812698755
+  ],
+  "five_block_K_means": [
+    0.5425182230728833,
+    0.5425470662884593,
+    0.5425778229826451,
+    0.5426096602308581,
+    0.5426430958111528
+  ],
+  "uncertainty_status": "duration_too_short_for_error_estimate",
+  "block_independence": "not_established_by_this_script",
+  "block_duration": 0.0013839217762539751
+}

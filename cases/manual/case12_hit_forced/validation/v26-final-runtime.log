@@ -1,0 +1,109 @@
+{
+  "work": "D:\\program\\WCNS_v3\\wcns\\tmp\\v26-tests\\hit-a6v0kj7g",
+  "runs": {
+    "decay-serial": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 1.0887461000238545
+    },
+    "decay-part": {
+      "ranks": 1,
+      "steps": 1,
+      "seconds": 0.6768018999719061
+    },
+    "decay-resume": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.8421710999682546
+    },
+    "decay-mpi4": {
+      "ranks": 4,
+      "steps": 3,
+      "seconds": 0.5698561000172049
+    },
+    "decay-resume2": {
+      "ranks": 2,
+      "steps": 3,
+      "seconds": 0.6405323999933898
+    },
+    "decay-bad-n": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.12761719996342435
+    },
+    "decay-bad-seed": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.17358790000434965
+    },
+    "forced-serial": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.9994967000093311
+    },
+    "forced-part": {
+      "ranks": 1,
+      "steps": 1,
+      "seconds": 0.6111970000201836
+    },
+    "forced-resume": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.7551919000106864
+    },
+    "forced-mpi4": {
+      "ranks": 4,
+      "steps": 3,
+      "seconds": 0.5900696000317112
+    },
+    "forced-resume2": {
+      "ranks": 2,
+      "steps": 3,
+      "seconds": 0.6148315999889746
+    },
+    "forced-bad-n": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.13254700001562014
+    },
+    "forced-bad-seed": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.17674209998222068
+    },
+    "constant-power": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 1.0100498999818228
+    },
+    "constant-band": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 1.1345982999773696
+    },
+    "bad-forced-cutoff": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.06696829997235909
+    },
+    "one-zone-serial": {
+      "ranks": 1,
+      "steps": 3,
+      "seconds": 0.8860726999701001
+    },
+    "one-zone-split4": {
+      "ranks": 4,
+      "steps": 3,
+      "seconds": 0.519237200031057
+    }
+  },
+  "comparisons": {
+    "decay serial restart": 0,
+    "decay MPI4": 5.327231711316216e-13,
+    "decay repartition MPI2": 7.174608129822957e-13,
+    "forced serial restart": 0,
+    "forced MPI4": 5.567542954443283e-13,
+    "forced repartition MPI2": 5.48696504898416e-13,
+    "one-zone auto split MPI4": 1.7577814204194908e-12
+  }
+}

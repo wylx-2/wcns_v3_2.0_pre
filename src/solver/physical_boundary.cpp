@@ -1,4 +1,5 @@
 #include <wcns/solver/physical_boundary.hpp>
+#include <wcns/physics/chapter5.hpp>
 
 #include <cmath>
 #include <iomanip>
@@ -285,6 +286,7 @@ TemperaturePrimitiveState farfield_target_at(const BoundaryData& data,
     if (!data.target_state) {
         throw PhysicsConfigurationError("farfield target state is missing");
     }
+    if (data.compression_ramp_inlet) return ramp_inlet(face_coordinates[1]);
     auto target = *data.target_state;
     if (!data.farfield_point_vortex) return target;
     if (dimension != 2) {
@@ -321,6 +323,8 @@ void BoundaryData::validate(BoundaryType type, int dimension) const
     if (dimension == 2 && wall_velocity[2] != 0.0) {
         throw PhysicsConfigurationError("two-dimensional wall z velocity must be zero");
     }
+    if(compression_ramp_inlet && (type!=BoundaryType::Inflow || dimension!=3))
+        throw std::invalid_argument("ramp profile requires 3D inflow");
     const bool needs_target = type == BoundaryType::Farfield || type == BoundaryType::Inflow;
     const bool permits_target = needs_target || type == BoundaryType::Outflow;
     if ((needs_target && !target_state) || (!permits_target && target_state)) {

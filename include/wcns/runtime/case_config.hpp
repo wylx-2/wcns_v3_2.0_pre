@@ -291,11 +291,58 @@ struct CaseRunConfig {
     [[nodiscard]] std::string summary() const;
 };
 
+struct PeriodicHillConfig {
+    bool enabled = false;
+    Real bulk_velocity = 1.0;
+    Real density = 1.0;
+    Real controller_time = 1.0;
+    Real force_limit = 0.5;
+    Real statistics_start = 100.0;
+    Real statistics_end = 1000.0;
+    std::size_t write_every_steps = 100;
+    std::string signature() const;
+};
+
+struct Chapter5Config {
+    std::string type = "none";
+    Real statistics_start = 0, statistics_end = 100;
+    std::size_t write_every_steps = 1000, history_every_steps = 20;
+    // Physical Cartesian coordinates, triples x,y,z; nearest cell is recorded.
+    std::vector<Real> probes;
+    bool enabled() const { return type != "none"; }
+    std::string signature() const;
+};
+
+struct HitConfig {
+    std::string type = "none"; // decay or forced
+    int n = 32;
+    Real length = 6.2831853071795864769;
+    std::uint64_t seed = 20261003;
+    std::string spectrum_file; // dimensional scaling is done in the supplied data preparation tool
+    Real initial_energy = 0.705, peak_wave = 4, cutoff = 0;
+    std::string initialization = "shell_spectrum"; // or analytic_random_phase (Samtaney IC4)
+    Real spectrum_amplitude = 0.00013; // A in E(k)=A*k^4*exp(-2*k^2/k0^2)
+    Real preparation_time = 0; // separate decay stage, then mode-wise spectrum rematching
+    std::size_t preparation_max_steps = 10000000;
+    std::string forcing = "constant_power"; // constant_band_energy or jhtdb_shells also supported
+    Real forcing_power = 0.103, forcing_kmax = 2;
+    bool remove_mean_acceleration = true, thermostat = true;
+    Real statistics_start = 0, statistics_end = 100;
+    std::size_t sample_every_steps = 10, write_every_samples = 10;
+    std::vector<Real> sample_times;
+    bool enabled() const { return type != "none"; }
+    void validate() const;
+    std::string signature() const;
+};
+
 struct CaseConfig {
     static constexpr int minimum_schema_version = 1;
     static constexpr int supported_schema_version = 2;
 
     int schema_version = minimum_schema_version;
+    PeriodicHillConfig periodic_hill;
+    Chapter5Config chapter5;
+    HitConfig hit;
     std::string case_name;
     std::string mesh_path;
     AlgorithmProfileKind profile = AlgorithmProfileKind::PhengleiWcns;

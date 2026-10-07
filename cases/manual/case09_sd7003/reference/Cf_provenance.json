@@ -1,0 +1,29 @@
+{
+  "status": "approximate digitization of visible black reference squares; not original numerical data",
+  "document": "test_4.docx, chapter 5",
+  "figure": "图5.24_2.jpeg",
+  "reference": "Galbraith & Visbal 2010",
+  "source_file": "source_Cf.jpeg",
+  "source_sha256": "e2a45f1f0eae31e8d55cd36e824ff83e2a21a24a09e3e234615b950d30b1c624",
+  "native_pixels": [
+    1417,
+    1417
+  ],
+  "x_calibration": [
+    234,
+    1352,
+    0,
+    1
+  ],
+  "y_calibration": [
+    1014,
+    724,
+    0,
+    0.01
+  ],
+  "x_log10": false,
+  "pixel_error_estimate": 4.0,
+  "uncertainty_note": "coordinate/marker reading estimate only, not a rigorous bound on source-data uncertainty",
+  "marker_count": 28,
+  "selection": "hollow-square black border score > 0.58 (profile figures 0.43), nonmaximum suppression; visual-QA axis/tick exclusions; incomplete visible-marker subset; no curve interpolation"
+}

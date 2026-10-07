@@ -7,6 +7,9 @@
 #include <vector>
 
 namespace wcns {
+class PeriodicHillRuntime;
+class Chapter5Runtime;
+class HitRuntime;
 
 struct CheckpointRestoreResult {
     SimulationInitialState initial;
@@ -23,7 +26,10 @@ public:
                       const BlockMetricMap& metrics,
                       QuantityContext quantity_context,
                       std::string mesh_path,
-                      AcceptedTimeStatistics* time_statistics = nullptr);
+                      AcceptedTimeStatistics* time_statistics = nullptr,
+                      PeriodicHillRuntime* periodic_hill = nullptr,
+                      Chapter5Runtime* chapter5 = nullptr,
+                      HitRuntime* hit = nullptr);
 
     [[nodiscard]] std::vector<std::string> write(const SimulationState& state) const;
     [[nodiscard]] CheckpointRestoreResult restore(const std::string& path) const;
@@ -40,6 +46,9 @@ private:
     std::string mesh_signature_;
     FieldQuantityRegistry registry_;
     AcceptedTimeStatistics* time_statistics_ = nullptr;
+    PeriodicHillRuntime* periodic_hill_ = nullptr;
+    Chapter5Runtime* chapter5_ = nullptr;
+    HitRuntime* hit_ = nullptr;
 };
 
 } // namespace wcns

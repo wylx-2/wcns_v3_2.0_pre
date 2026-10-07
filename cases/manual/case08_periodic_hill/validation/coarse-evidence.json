@@ -1,0 +1,35 @@
+{
+  "serial": {
+    "ranks": 1,
+    "seconds": 14.341939899983117,
+    "last_sample": {
+      "step": 3.0,
+      "time": 0.0002692247602348853,
+      "force_next": 0.009997914650793686,
+      "mass_flux": 9.153703741497083,
+      "volume_flux": 9.153703633989142,
+      "Ub_mass": 0.9995854481569295,
+      "Ub_volume": 0.9995854364170507,
+      "Re_mass": 1399.4196274197013,
+      "statistics_weight": 0.0002692247602348853,
+      "samples": 3.0
+    }
+  },
+  "mpi4": {
+    "ranks": 4,
+    "seconds": 4.917150799999945,
+    "last_sample": {
+      "step": 3.0,
+      "time": 0.0002692247602348853,
+      "force_next": 0.009997914650793686,
+      "mass_flux": 9.153703741497083,
+      "volume_flux": 9.153703633989142,
+      "Ub_mass": 0.9995854481569295,
+      "Ub_volume": 0.9995854364170507,
+      "Re_mass": 1399.4196274197013,
+      "statistics_weight": 0.0002692247602348853,
+      "samples": 3.0
+    }
+  },
+  "field_comparison": "check=compare samples=608256 max_abs=2.7755575615628914e-17 tolerance=1e-10\n"
+}

@@ -1,0 +1,5 @@
+{
+  "unmodified_smoke": "MPI4, 3 steps, max_steps code 2",
+  "restart_helper": "strict checkpoint loaded with MPI2 dry-run",
+  "production_config": "MPI4 64^3 dry-run passed"
+}

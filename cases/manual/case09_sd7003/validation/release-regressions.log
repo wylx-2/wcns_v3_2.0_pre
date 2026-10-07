@@ -1,0 +1,24 @@
+Internal ctest changing into directory: D:/program/WCNS_v3/wcns/glm_test/build-serial
+Test project D:/program/WCNS_v3/wcns/glm_test/build-serial
+    Start  5: wcns.v2_5_release_contract
+1/9 Test  #5: wcns.v2_5_release_contract .........................   Passed    0.07 sec
+    Start 80: wcns.release.source.uniform.smoke.serial
+2/9 Test #80: wcns.release.source.uniform.smoke.serial ...........   Passed    0.46 sec
+    Start 81: wcns.release.source.manufactured_2d.smoke.serial
+3/9 Test #81: wcns.release.source.manufactured_2d.smoke.serial ...   Passed    0.28 sec
+    Start 82: wcns.release.output_restart.smoke.serial
+4/9 Test #82: wcns.release.output_restart.smoke.serial ...........   Passed    3.44 sec
+    Start 84: wcns.release.freestream.phenglei_wcns.2d.serial
+5/9 Test #84: wcns.release.freestream.phenglei_wcns.2d.serial ....   Passed    0.40 sec
+    Start 85: wcns.release.freestream.phenglei_wcns.3d.serial
+6/9 Test #85: wcns.release.freestream.phenglei_wcns.3d.serial ....   Passed    0.77 sec
+    Start 86: wcns.release.freestream.scmm6_wcns.2d.serial
+7/9 Test #86: wcns.release.freestream.scmm6_wcns.2d.serial .......   Passed    0.33 sec
+    Start 87: wcns.release.freestream.scmm6_wcns.3d.serial
+8/9 Test #87: wcns.release.freestream.scmm6_wcns.3d.serial .......   Passed    0.74 sec
+    Start 88: wcns.release.freestream.native_multizone.serial
+9/9 Test #88: wcns.release.freestream.native_multizone.serial ....   Passed    0.39 sec
+
+100% tests passed, 0 tests failed out of 9
+
+Total Test time (real) =   6.89 sec

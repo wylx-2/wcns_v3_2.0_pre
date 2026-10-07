@@ -14,6 +14,7 @@ enum class SourceModelKind {
     BodyForce,
     PressureGradient,
     ManufacturedSolution,
+    RampTrip,
 };
 
 [[nodiscard]] const char* source_model_name(SourceModelKind kind);
@@ -26,6 +27,8 @@ struct SourceTermConfig {
     // Constant force per unit volume G=-grad(p); energy source is u dot G.
     std::array<Real, 3> pressure_gradient {{0.0, 0.0, 0.0}};
     std::array<Real, 5> manufactured_amplitude {{0.0, 0.0, 0.0, 0.0, 0.0}};
+    Real ramp_trip_amplitude = 0.0;
+    Real ramp_trip_span = 6.0;
 
     void validate() const;
     [[nodiscard]] std::string summary() const;
@@ -44,6 +47,8 @@ public:
                                                const std::array<Real, 3>& coordinates,
                                                Real time,
                                                int dimension) const;
+
+    void set_pressure_gradient_x(Real force);
 
     [[nodiscard]] constexpr bool empty() const noexcept { return model_count_ == 0; }
     [[nodiscard]] constexpr std::size_t size() const noexcept { return model_count_; }

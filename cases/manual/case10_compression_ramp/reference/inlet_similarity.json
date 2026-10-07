@@ -1,0 +1,11 @@
+{
+  "Mach": 2.25,
+  "Pr": 0.72,
+  "S_over_Tinf": 0.6494117647058824,
+  "Tw_over_Tinf": 1.9,
+  "Re_delta0": 15800,
+  "Y99": 6.959979225304375,
+  "bvp_max_rms_residual": 9.967217727803314e-11,
+  "delta99_definition": "u/Uinf=0.99",
+  "outer_v_blend": "2<y/delta0<3"
+}

@@ -1,5 +1,7 @@
 #include <wcns/runtime/flow_initializer.hpp>
+#include <wcns/physics/chapter5.hpp>
 #include <wcns/physics/double_mach_reflection.hpp>
+#include <wcns/physics/periodic_hill.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -413,6 +415,47 @@ TemperaturePrimitiveState FlowInitializer::evaluate(const InitialConditionConfig
                                                     int dimension)
 {
     config.validate(dimension);
+    if (config.type == "sd7003") {
+        if(dimension!=3) throw FlowInitializationError("SD7003 ILES requires 3D");
+        const Real a=config.parameter("alpha_degrees",4)*pi/180;
+        const Real seed=config.parameter("perturbation_amplitude",1e-4)
+            * std::exp(-std::pow((coordinates[0]-.5)/.4,2)-std::pow(coordinates[1]/.2,2));
+        return from_temperature(1,std::cos(a),std::sin(a),
+            seed*std::sin(2*pi*coordinates[2]/.2),1,gas,reference,floors,dimension);
+    }
+    if (config.type == "compression_ramp") {
+        if(dimension!=3) throw FlowInitializationError("ramp ILES requires 3D");
+        const Real a=24*pi/180;
+        const Real distance=coordinates[0]>100 ? (coordinates[1]-(coordinates[0]-100)*std::tan(a))*std::cos(a) : coordinates[1];
+        auto p=ramp_inlet(distance);
+        if(coordinates[0]>100) { const Real u=p[1],v=p[2]; p[1]=u*std::cos(a)-v*std::sin(a); p[2]=u*std::sin(a)+v*std::cos(a); }
+        return from_temperature(p[0],p[1],p[2],0,p[4],gas,reference,floors,dimension);
+    }
+    if (config.type == "periodic_hill") {
+        const auto wall = periodic_hill_geometry(coordinates[0]);
+        const Real gap = 3.035 - wall[0];
+        const Real eta = (coordinates[1] - wall[0]) / gap;
+        // Cell centres of a piecewise-linear wall can lie just below the analytic
+        // curve. Clip that small geometry difference without inventing wall flow.
+        if (eta < -0.02 || eta > 1.0 + 1e-12)
+            throw FlowInitializationError("periodic-hill cell is outside the channel: x="
+                + std::to_string(coordinates[0]) + " y=" + std::to_string(coordinates[1])
+                + " wall=" + std::to_string(wall[0]) + " eta=" + std::to_string(eta));
+        const Real q = std::clamp(eta, Real{0}, Real{1});
+        const Real bulk = config.parameter("bulk_velocity", 1.0);
+        const Real u0 = 6.0 * bulk * 2.035 / gap * q * (1.0 - q);
+        // Streamfunction psi=Q(3 eta^2-2 eta^3): divergence-free base flow,
+        // constant crest flux, no slip at both walls and x periodicity.
+        const Real v0 = u0 * wall[1] * (1.0 - q);
+        const Real px = 2*pi*coordinates[0]/9.0, pz = 2*pi*coordinates[2]/4.5;
+        const Real a = config.parameter("perturbation_amplitude", 0.05) * bulk
+            * 16*q*q*(1-q)*(1-q);
+        return from_temperature(config.parameter("rho", 1.0),
+            u0 + a*std::sin(px)*std::cos(pz),
+            v0 + a*std::sin(2*px)*std::sin(pz),
+            a*std::cos(px)*std::sin(2*pz), config.parameter("temperature", 1.0),
+            gas, reference, floors, dimension);
+    }
     if (config.type == "uniform") {
         return uniform_state(config, gas, reference, floors, dimension);
     }

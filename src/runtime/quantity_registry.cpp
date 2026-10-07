@@ -21,6 +21,36 @@ namespace {
 using FieldEvaluator = std::function<Real(
     const StructuredBlock&, const MetricField&, Index3, const QuantityContext&)>;
 
+// Geometry-aware diagnostic derivatives. Interior centred secants, one-sided
+// at local edges; these are output diagnostics, never used in the residual.
+std::array<Real,9> diagnostic_velocity_gradient(const StructuredBlock& b,const MetricField& metric,
+                                               Index3 cell,const QuantityContext& c) {
+    const auto e=b.cell_extent();const int ext[3]={e.ni,e.nj,e.nk};
+    const int ijk[3]={cell.i,cell.j,cell.k};
+    Real a[3][3]{},d[3][3]{};
+    const auto& p=metric.cell_coordinates();
+    for(int axis=0;axis<3;++axis) {
+        if(ext[axis]<2) {a[axis][axis]=1;continue;}
+        int lo[3]={ijk[0],ijk[1],ijk[2]},hi[3]={ijk[0],ijk[1],ijk[2]};
+        lo[axis]=std::max(0,ijk[axis]-1);hi[axis]=std::min(ext[axis]-1,ijk[axis]+1);
+        const Index3 L{lo[0],lo[1],lo[2]},H{hi[0],hi[1],hi[2]};
+        a[axis][0]=p.x(H.i,H.j,H.k)-p.x(L.i,L.j,L.k);
+        a[axis][1]=p.y(H.i,H.j,H.k)-p.y(L.i,L.j,L.k);
+        a[axis][2]=p.z(H.i,H.j,H.k)-p.z(L.i,L.j,L.k);
+        const auto q0=temperature_primitive_from_conservative(load_conservative(b.flow.conservative,L),c.gas,c.reference,c.floors,b.cell_dimension());
+        const auto q1=temperature_primitive_from_conservative(load_conservative(b.flow.conservative,H),c.gas,c.reference,c.floors,b.cell_dimension());
+        for(int v=0;v<3;++v) d[axis][v]=q1[v+1]-q0[v+1];
+    }
+    const Real det=a[0][0]*(a[1][1]*a[2][2]-a[1][2]*a[2][1])-a[0][1]*(a[1][0]*a[2][2]-a[1][2]*a[2][0])+a[0][2]*(a[1][0]*a[2][1]-a[1][1]*a[2][0]);
+    if(!std::isfinite(det) || std::abs(det)<1e-40) throw PhysicsError("singular diagnostic gradient geometry");
+    std::array<Real,9> g{};
+    for(int v=0;v<3;++v) for(int x=0;x<3;++x) for(int axis=0;axis<3;++axis) {
+        const int r=(axis+1)%3,s=(axis+2)%3,u=(x+1)%3,w=(x+2)%3;
+        g[v*3+x]+=(a[r][u]*a[s][w]-a[r][w]*a[s][u])*d[axis][v]/det;
+    }
+    return g;
+}
+
 class FunctionalFieldQuantity final : public IFieldQuantity {
 public:
     FunctionalFieldQuantity(QuantityDescriptor descriptor, FieldEvaluator evaluator)
@@ -327,6 +357,8 @@ Real quantity_scale_factor(const QuantityDescriptor& information,
         return context.reference.velocity() * context.reference.length();
     case QuantityScale::InverseTime:
         return context.reference.velocity() / context.reference.length();
+    case QuantityScale::InverseTimeSquared:
+        return std::pow(context.reference.velocity() / context.reference.length(),2);
     case QuantityScale::Dissipation:
         return std::pow(context.reference.velocity(), 3) / context.reference.length();
     case QuantityScale::LengthPower:
@@ -339,6 +371,19 @@ Real quantity_scale_factor(const QuantityDescriptor& information,
 FieldQuantityRegistry FieldQuantityRegistry::create_builtin()
 {
     FieldQuantityRegistry result;
+    for(int component=0;component<4;++component) {
+        const char* names[4]={"vorticity_x","vorticity_y","vorticity_z","Q"};
+        result.register_quantity(field(make_descriptor(names[component],component==3?"1/s^2":"1/s",
+            component==3?QuantityScale::InverseTimeSquared:QuantityScale::InverseTime),
+            [component](const StructuredBlock& b,const MetricField& m,Index3 i,const QuantityContext& c) {
+                const auto g=diagnostic_velocity_gradient(b,m,i,c);
+                if(component==0) return g[7]-g[5];
+                if(component==1) return g[2]-g[6];
+                if(component==2) return g[3]-g[1];
+                Real q=0;for(int a=0;a<3;++a) for(int d=0;d<3;++d) q-=.5*g[a*3+d]*g[d*3+a];
+                return q;
+            }));
+    }
     const auto conservative = [](int component) {
         return [component](const StructuredBlock& block,
                            const MetricField&,

@@ -1,0 +1,9 @@
+zone=Zone1 maximum_relative_difference=0.010406107355468614 fallback=0
+zone=Zone2 maximum_relative_difference=0.13715351870183742 fallback=0
+zone=Zone3 maximum_relative_difference=0.0030526216586261256 fallback=0
+zone=Zone4 maximum_relative_difference=0.0088286696951478619 fallback=0
+zone=Zone5 maximum_relative_difference=0.0092564848312597248 fallback=0
+zone=Zone6 maximum_relative_difference=0.0030521716532514679 fallback=0
+zone=Zone7 maximum_relative_difference=0.11760350203631001 fallback=0
+zone=Zone8 maximum_relative_difference=0.17478288158708469 fallback=0
+PASS: zones=8 cells=1720320 min_scmm_jacobian=1.1078554920580271e-11 max_reference_difference=0.17478288158708469

@@ -1,0 +1,9 @@
+[
+  {
+    "url": "https://web.stanford.edu/~hjbae/ic_gen.tar",
+    "archive_sha256": "9fc177f42a36837a90810fda92cd5991a6cc9a0abdca16767b22a71ac4a2fe00",
+    "file": "CBC_exp.mat",
+    "sha256": "15a9d5aba5863b36a1baab806a2f3ed7f41f28c1676b4f8353729aa5c32b3506",
+    "attribution": "Public experimental-data transcription distributed by Hyun J. Bae; original CBC 1971 Tables 3 and 4."
+  }
+]
